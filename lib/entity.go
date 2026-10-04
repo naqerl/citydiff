@@ -54,6 +54,8 @@ func (e ImportEntry) Kind() Kind {
 type TypeEntry struct {
 	Name   string  `json:"name"`
 	Fields []Field `json:"fields,omitempty"`
+	// MethodsHash is the hex SHA-256 of this type's method body hashes, in source order.
+	MethodsHash string `json:"-"`
 }
 
 func (e TypeEntry) Kind() Kind {
@@ -72,6 +74,8 @@ type FunctionEntry struct {
 	Name       string      `json:"name"`
 	Parameters []Parameter `json:"parameters,omitempty"`
 	ReturnArgs []Parameter `json:"returnArgs,omitempty"`
+	// BodyHash is the hex SHA-256 of the function or method body source.
+	BodyHash string `json:"-"`
 }
 
 func (e FunctionEntry) Kind() Kind {

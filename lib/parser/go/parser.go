@@ -3,7 +3,10 @@
 package golang
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"betterdiff/lib"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -67,6 +70,7 @@ func walk(src []byte, root *tree_sitter.Node) []lib.Entity {
 			}
 		}
 	}
+	assignMethodHashes(entries)
 	return entries
 }
 
@@ -125,6 +129,7 @@ func parseMethodDeclaration(src []byte, methodDeclaration *tree_sitter.Node) lib
 			Name:       name.Utf8Text(src),
 			Parameters: parseParameters(src, params),
 			ReturnArgs: parseReturnArgs(src, returns),
+			BodyHash:   hashBody(src, methodDeclaration),
 		},
 		Type: &lib.TypeEntry{Name: receiver.Utf8Text(src)},
 	}
@@ -138,7 +143,71 @@ func parseFunctionDeclaration(src []byte, functionDeclaration *tree_sitter.Node)
 		Name:       name.Utf8Text(src),
 		Parameters: parseParameters(src, params),
 		ReturnArgs: parseReturnArgs(src, returns),
+		BodyHash:   hashBody(src, functionDeclaration),
 	}
+}
+
+// hashBody is the hex SHA-256 of the function or method body source.
+// A declaration with no body has an empty hash.
+func hashBody(src []byte, decl *tree_sitter.Node) string {
+	body := decl.ChildByFieldName("body")
+	if body == nil {
+		return ""
+	}
+	start, end := body.StartByte(), body.EndByte()
+	if end < start || int(end) > len(src) {
+		return ""
+	}
+	sum := sha256.Sum256(src[start:end])
+	return hex.EncodeToString(sum[:])
+}
+
+// assignMethodHashes sets each type's MethodsHash from its method body hashes.
+// Pointer and value receivers share the declared type name. Order follows source order.
+func assignMethodHashes(entries []lib.Entity) {
+	byType := map[string][]string{}
+	for _, entry := range entries {
+		method, ok := entry.(lib.MethodEntry)
+		if !ok || method.Type == nil || method.BodyHash == "" {
+			continue
+		}
+		name := receiverTypeName(method.Type.Name)
+		byType[name] = append(byType[name], method.BodyHash)
+	}
+	for i, entry := range entries {
+		typ, ok := entry.(lib.TypeEntry)
+		if !ok {
+			continue
+		}
+		parts := byType[typ.Name]
+		if len(parts) == 0 {
+			continue
+		}
+		typ.MethodsHash = cumulativeHash(parts)
+		entries[i] = typ
+	}
+}
+
+func receiverTypeName(name string) string {
+	name = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(name), "*"))
+	if i := strings.IndexByte(name, '['); i >= 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+// cumulativeHash is the hex SHA-256 of the method body hashes in source order.
+func cumulativeHash(hexHashes []string) string {
+	h := sha256.New()
+	for _, hexHash := range hexHashes {
+		raw, err := hex.DecodeString(hexHash)
+		if err != nil {
+			continue
+		}
+		h.Write(raw)
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func parseReturnArgs(src []byte, result *tree_sitter.Node) []lib.Parameter {
