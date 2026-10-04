@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 type Entry interface {
 	Kind() Kind
 }
@@ -14,6 +16,32 @@ const (
 	KindMethod
 )
 
+func (k Kind) String() string {
+	switch k {
+	case KindImport:
+		return "import"
+	case KindType:
+		return "type"
+	case KindVariable:
+		return "variable"
+	case KindFunction:
+		return "function"
+	case KindMethod:
+		return "method"
+	default:
+		return "unknown"
+	}
+}
+
+type Field struct {
+	Name string
+}
+
+type Parameter struct {
+	Name string
+	Type string
+}
+
 type ImportEntry struct {
 	Path string
 }
@@ -23,7 +51,7 @@ func (e ImportEntry) Kind() Kind {
 }
 
 type TypeEntry struct {
-	Name string
+	Name   string
 	Fields []Field
 }
 
@@ -40,8 +68,9 @@ func (e VariableEntry) Kind() Kind {
 }
 
 type FunctionEntry struct {
-	Name string
+	Name       string
 	Parameters []Parameter
+	ReturnArgs []Parameter
 }
 
 func (e FunctionEntry) Kind() Kind {
@@ -55,4 +84,12 @@ type MethodEntry struct {
 
 func (e MethodEntry) Kind() Kind {
 	return KindMethod
+}
+
+func (e MethodEntry) String() string {
+	receiver := ""
+	if e.Type != nil {
+		receiver = e.Type.Name
+	}
+	return fmt.Sprintf("{Name:%s Parameters:%+v ReturnArgs:%+v Type:{Name:%s}}", e.Name, e.Parameters, e.ReturnArgs, receiver)
 }

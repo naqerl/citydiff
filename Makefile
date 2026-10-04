@@ -5,4 +5,4 @@ fmt:
 	go fmt ./...
 
 run: vet
-	go run main.go
+	go run .
