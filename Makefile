@@ -4,5 +4,7 @@ vet: fmt
 fmt:
 	go fmt ./...
 
+FILE ?= /home/user/Work/barse/service/flashcard/flashcard.go
+
 run: vet
-	go run .
+	go run ./cmd/cli -path "$(FILE)" $(ARGS)

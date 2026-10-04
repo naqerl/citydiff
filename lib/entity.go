@@ -1,8 +1,9 @@
-package main
+package lib
 
 import "fmt"
 
-type Entry interface {
+// Entity is one language-agnostic declaration extracted from source.
+type Entity interface {
 	Kind() Kind
 }
 
@@ -34,16 +35,16 @@ func (k Kind) String() string {
 }
 
 type Field struct {
-	Name string
+	Name string `json:"name"`
 }
 
 type Parameter struct {
-	Name string
-	Type string
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 type ImportEntry struct {
-	Path string
+	Path string `json:"path"`
 }
 
 func (e ImportEntry) Kind() Kind {
@@ -51,8 +52,8 @@ func (e ImportEntry) Kind() Kind {
 }
 
 type TypeEntry struct {
-	Name   string
-	Fields []Field
+	Name   string  `json:"name"`
+	Fields []Field `json:"fields,omitempty"`
 }
 
 func (e TypeEntry) Kind() Kind {
@@ -60,7 +61,7 @@ func (e TypeEntry) Kind() Kind {
 }
 
 type VariableEntry struct {
-	Name string
+	Name string `json:"name"`
 }
 
 func (e VariableEntry) Kind() Kind {
@@ -68,9 +69,9 @@ func (e VariableEntry) Kind() Kind {
 }
 
 type FunctionEntry struct {
-	Name       string
-	Parameters []Parameter
-	ReturnArgs []Parameter
+	Name       string      `json:"name"`
+	Parameters []Parameter `json:"parameters,omitempty"`
+	ReturnArgs []Parameter `json:"returnArgs,omitempty"`
 }
 
 func (e FunctionEntry) Kind() Kind {
@@ -79,7 +80,7 @@ func (e FunctionEntry) Kind() Kind {
 
 type MethodEntry struct {
 	FunctionEntry
-	Type *TypeEntry
+	Type *TypeEntry `json:"type,omitempty"`
 }
 
 func (e MethodEntry) Kind() Kind {
