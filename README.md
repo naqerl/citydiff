@@ -116,6 +116,12 @@ Two modes, toggled by the `Overview` / `Changes` buttons, `m`, or keys `1` and `
 Selecting a package descends into it; selecting a tower opens its call path. The sidebar
 shows the change for whatever is selected, with the resolved calls in source order.
 
+The viewer keeps a **vim-style jump list** of every node you select. Press `o` to step to
+an older selection and `i` to step to a newer one — the same directions as vim's `<C-o>`
+and `<C-i>`. Selecting a new node after going back truncates the forward tail, exactly as
+vim does. The sidebar note shows your position (`jump 2/5`) once the list has more than one
+entry.
+
 | Key | Action |
 | --- | --- |
 | `/` | search for a package or function |
@@ -126,6 +132,7 @@ shows the change for whatever is selected, with the resolved calls in source ord
 | `click` | enter a package, open a tower |
 | `enter` | open a function |
 | `esc` | go back |
+| `o` `i` | jump back / forward through the selection history |
 | `b` | show / hide the sidebar |
 | `0` | reset the view |
 | `m`, `1`, `2` | overview / changes |
