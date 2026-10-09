@@ -51,6 +51,12 @@ let sceneDoc = null;
 let laid = null;
 let mode = "overview";
 let selected = null;
+// Vim-style jump list over the nodes the user has selected. `o` steps to the
+// older entry (vim's <C-o>), `i` to the newer one (<C-i>). Replaying an entry
+// must not record itself, so noteJump is a no-op while jumping.
+let jumps = [];
+let jumpIndex = -1;
+let jumping = false;
 let entered = null;
 let focus = null;
 let returnPose = null;
@@ -1269,6 +1275,7 @@ function selectPackage(id, fly) {
   arcSubject = { id, inbound: false };
   applyMode();
   if (fly) flyToPackage(id);
+  noteJump();
 }
 
 function selectExternal(id) {
@@ -1279,6 +1286,7 @@ function selectExternal(id) {
   applyMode();
   const ext = laid.externals.find((item) => item.id === id);
   if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
+  noteJump();
 }
 
 function selectEntity(id) {
@@ -1296,6 +1304,7 @@ function selectEntity(id) {
   const points = linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)];
   const pose = framePose(points, points[0]);
   flyTo(pose.pos, pose.target);
+  noteJump();
 }
 
 function enterFocus(found) {
@@ -1308,6 +1317,7 @@ function enterFocus(found) {
   applyMode();
   const cam = focusCamera();
   flyTo(cam.pos, cam.target);
+  noteJump();
 }
 
 function dropFocus() {
@@ -1699,13 +1709,17 @@ function updateHUD() {
   hud.title.textContent = root;
   hud.overview.classList.toggle("on", mode === "overview");
   hud.changes.classList.toggle("on", mode === "overlay");
+  let note = "";
   if (sceneDoc && !sceneDoc.diff) {
-    hud.note.textContent = mode === "overlay" ? "This view is one snapshot. Pass -range to lay a diff on the city." : "";
+    if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
   } else if (mode === "overlay") {
-    hud.note.textContent = "Added is green, deleted is red, changed is yellow.";
-  } else {
-    hud.note.textContent = "";
+    note = "Added is green, deleted is red, changed is yellow.";
   }
+  if (jumps.length > 1) {
+    const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
+    note = note ? note + "  ·  " + at : at;
+  }
+  hud.note.textContent = note;
   renderCrumb();
   renderDetail();
 }
@@ -2081,6 +2095,8 @@ function resetView() {
   entitySubject = null;
   arcSubject = null;
   selected = null;
+  jumps = [];
+  jumpIndex = -1;
   ring.visible = false;
   applyMode();
   cityPose = frameCity();
@@ -2089,6 +2105,11 @@ function resetView() {
 }
 
 function goBack() {
+  goBackInner();
+  noteJump();
+}
+
+function goBackInner() {
   if (focus) {
     exitFocus();
     return;
@@ -2110,6 +2131,96 @@ function goBack() {
   entitySubject = null;
   arcSubject = null;
   applyMode();
+}
+
+// What a jump restores: the whole navigation state, not just the camera.
+function subjectNow() {
+  return {
+    selected: selected ? { kind: selected.kind, id: selected.id } : null,
+    entered: entered || null,
+    entity: entitySubject || null,
+    arc: arcSubject ? { id: arcSubject.id, inbound: arcSubject.inbound } : null,
+    focus: focus ? focus.entity.id : null,
+  };
+}
+
+function sameSubject(a, b) {
+  if (!!a.selected !== !!b.selected) return false;
+  if (a.selected && (a.selected.kind !== b.selected.kind || a.selected.id !== b.selected.id)) return false;
+  if (a.entered !== b.entered || a.entity !== b.entity || a.focus !== b.focus) return false;
+  if (!!a.arc !== !!b.arc) return false;
+  if (a.arc && (a.arc.id !== b.arc.id || a.arc.inbound !== b.arc.inbound)) return false;
+  return true;
+}
+
+// Record the node the user just landed on. Consecutive identical states
+// collapse, and selecting after going back truncates the forward tail, the
+// same way vim's jump list behaves. The bare city is not a node.
+function noteJump() {
+  if (jumping) return;
+  const now = subjectNow();
+  if (!now.selected && !now.focus) return;
+  const current = jumps[jumpIndex];
+  if (current && sameSubject(current, now)) return;
+  jumps = jumps.slice(0, jumpIndex + 1);
+  jumps.push(now);
+  jumpIndex = jumps.length - 1;
+  updateHUD();
+}
+
+// Put the state back and fly the camera to it, the same way the original
+// selection did.
+function restoreSubject(entry) {
+  if (!entry) return;
+  if (focus) dropFocus();
+  selected = entry.selected ? { kind: entry.selected.kind, id: entry.selected.id } : null;
+  entered = entry.entered;
+  entitySubject = entry.entity;
+  arcSubject = entry.arc ? { id: entry.arc.id, inbound: entry.arc.inbound } : null;
+  ring.visible = false;
+  applyMode();
+  if (entry.focus) {
+    const found = byEntity.get(entry.focus);
+    if (found && found.box) {
+      enterFocus(found);
+      return;
+    }
+  }
+  if (!entry.selected) {
+    cityPose = frameCity();
+    applyFitLimits(cityPose);
+    flyTo(cityPose.pos, cityPose.target);
+    return;
+  }
+  if (entry.selected.kind === "package") {
+    flyToPackage(entry.selected.id);
+    return;
+  }
+  if (entry.selected.kind === "external") {
+    const ext = laid.externals.find((item) => item.id === entry.selected.id);
+    if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
+    return;
+  }
+  const found = byEntity.get(entry.selected.id);
+  if (!found || !found.box) return;
+  const points = linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)];
+  const pose = framePose(points, points[0]);
+  flyTo(pose.pos, pose.target);
+}
+
+// step is -1 for the older entry, +1 for the newer one.
+function jumpStep(step) {
+  if (!jumps.length) return;
+  const next = jumpIndex + step;
+  if (next < 0 || next >= jumps.length) return;
+  jumpIndex = next;
+  jumping = true;
+  try {
+    restoreSubject(jumps[jumpIndex]);
+  } finally {
+    jumping = false;
+  }
+  updateHUD();
 }
 
 function typingSearch() {
@@ -2389,6 +2500,16 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     mode = mode === "overlay" ? "overview" : "overlay";
     applyMode();
+    return;
+  }
+  if (event.key === "o" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    jumpStep(-1);
+    return;
+  }
+  if (event.key === "i" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    jumpStep(1);
     return;
   }
   if (event.key === "1") { mode = "overview"; applyMode(); }
