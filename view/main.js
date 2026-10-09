@@ -741,7 +741,7 @@ function buildArcs() {
       const from = packageAnchor(pkg.id);
       const to = packageAnchor(dep.to);
       if (!from || !to) continue;
-      addArc(arcGroup, from, to, changeColor(dep.change), clearLift(from, to), {
+      addArc(arcGroup, from, to, changeColor(dep.change), clearLift(from, to, [pkg.id, dep.to]), {
         kind: "dep", id: dep.to, label: dep.to, change: dep.change, from: pkg.id,
       });
     }
@@ -750,7 +750,7 @@ function buildArcs() {
 
 // The arc starts a little above the roof, so it is plainly leaving the
 // building rather than skimming it.
-const LAND = 0.8;
+const LAND = 0.25;
 
 let ownTopCache = null;
 function ownTop(id) {
@@ -779,6 +779,14 @@ function shownOwnTop(id) {
   return top;
 }
 
+function packageRoof(id) {
+  const box = laid.packages.find((item) => item.id === id);
+  if (box) return [box.x + box.w / 2, box.y + box.h, box.z + box.d / 2];
+  const ext = laid.externals.find((item) => item.id === id);
+  if (ext) return [ext.x, ext.y + ext.h, ext.z];
+  return null;
+}
+
 function packageAnchor(id) {
   const box = laid.packages.find((item) => item.id === id);
   if (!box) {
@@ -786,13 +794,11 @@ function packageAnchor(id) {
     if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
     return null;
   }
-  // The centre of the roof, but only as low as is safe: a treemap stacks child
-  // packages inside the parent's footprint, so the centre of a roof is often a
-  // child's tower field. Anchoring at the plate height put the start inside
-  // those towers and the arc left through them.
-  const cx = box.x + box.w / 2;
-  const cz = box.z + box.d / 2;
-  return [cx, localTop(cx, cz) + LAND, cz];
+  // Right on the roof: the arc starts and ends where the eye expects, and the
+  // curve's steep egress keeps it off the neighbours. Raising the anchor to the
+  // neighbourhood's skyline made the ends float above the buildings, which read
+  // worse than the collision it avoided.
+  return [box.x + box.w / 2, box.y + box.h + LAND, box.z + box.d / 2];
 }
 function rectContainsXZ(box, x, z) {
   return x >= box.x && x <= box.x + box.w && z >= box.z && z <= box.z + box.d;
@@ -845,7 +851,18 @@ function arcSamples(from, to, lift, n) {
 
 // How deep the path sinks into a building, in world units, and where. One
 // definition of a collision for the clearance loop and for ?check=1.
-function worstPenetration(points, margin = 0) {
+// The package and everything under it: the arc's own two buildings, which it is
+// allowed to cross — starting on a roof means starting in that roof's own tower
+// field. Everything else is an obstacle.
+function inSubtree(boxId, pkgId) {
+  if (!pkgId) return false;
+  // Same building: the package itself, everything stacked inside it, and the
+  // plates it stands on. In a treemap, reaching a nested package means crossing
+  // its ancestors' volumes, so they cannot count as obstacles either.
+  return boxId === pkgId || boxId.startsWith(pkgId + "/") || pkgId.startsWith(boxId + "/");
+}
+
+function worstPenetration(points, margin = 0, skip) {
   let worst = 0;
   let at = null;
   let atT = 0;
@@ -854,6 +871,7 @@ function worstPenetration(points, margin = 0) {
     const p = points[i];
     for (const box of laid.packages) {
       if (!rectContainsXZ(box, p[0], p[2])) continue;
+      if (skip && skip.some((id) => inSubtree(box.id, id))) continue;
       const top = shownOwnTop(box.id) + margin;
       if (p[1] >= top) continue;
       const depth = top - p[1];
@@ -872,7 +890,7 @@ function worstPenetration(points, margin = 0) {
 // Catmull-Rom through its samples, it skipped every box whose footprint held an
 // endpoint (which, in a treemap, is every child tower at the ends), and it
 // capped the result, turning every large requirement into a silent collision.
-function clearLift(from, to) {
+function clearLift(from, to, ends) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   let lift = Math.max(3, Math.min(dist * 0.2, 20));
   // Sampled finer than the tube is drawn, with a margin, so a thin tower cannot
@@ -881,7 +899,7 @@ function clearLift(from, to) {
   // contributes 3(u^2 t + u t^2), so dividing by it converges in a few passes
   // instead of creeping up by one unit and running out of iterations.
   for (let i = 0; i < 24; i++) {
-    const worst = worstPenetration(arcSamples(from, to, lift, 128), 1);
+    const worst = worstPenetration(arcSamples(from, to, lift, 128), 1, ends);
     if (worst.depth <= 0) return lift;
     // Right at an end nothing can be done by raising the apex: the endpoint is
     // fixed, and packageAnchor has already put it above that column.
@@ -911,17 +929,20 @@ function entityAnchor(found) {
   return null;
 }
 
-function makeLink(from, to, color, lift) {
+function makeLink(from, to, color, lift, roofFrom, roofTo) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  const [c1, c2] = arcControls(from, to, lift);
-  const curve = new THREE.CubicBezierCurve3(
-    new THREE.Vector3(from[0], from[1], from[2]),
-    new THREE.Vector3(c1[0], c1[1], c1[2]),
-    new THREE.Vector3(c2[0], c2[1], c2[2]),
-    new THREE.Vector3(to[0], to[1], to[2]),
-  );
+  // A riser at each end: the anchor sits as high as its neighbourhood demands,
+  // and without this the line began in mid-air beside the building. The riser
+  // runs up the building's own column from the roof to the anchor, so the arc
+  // reads as leaving a roof and landing on one.
+  const road = arcSamples(from, to, lift, 24).slice(1, -1);
+  const path = [];
+  for (const p of [roofFrom, from]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
+  for (const p of road) path.push(new THREE.Vector3(p[0], p[1], p[2]));
+  for (const p of [to, roofTo]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
+  const curve = new THREE.CatmullRomCurve3(path);
   const radius = Math.max(0.07, Math.min(dist * 0.0028, 0.22));
   const segs = Math.max(16, Math.min(64, Math.round(dist)));
   const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
@@ -1121,10 +1142,21 @@ function arcCollisions() {
     if (!attr) continue;
     let worst = null;
     let count = 0;
+    const ends = child.userData.ends || [];
     for (let i = 0; i < attr.count; i++) {
       v.fromBufferAttribute(attr, i);
       child.localToWorld(v);
+      // The riser is meant to run up its own building: skip the part of the
+      // path that is below the anchor and inside reach of either end.
+      let riser = false;
+      for (const e of ends) {
+        if (v.y > e[1]) continue;
+        if (Math.hypot(v.x - e[0], v.z - e[2]) <= ANCHOR_REACH + 0.6) riser = true;
+      }
+      if (riser) continue;
+      const skipIds = [child.userData.from, child.userData.id];
       for (const box of laid.packages) {
+        if (skipIds.some((id) => inSubtree(box.id, id))) continue;
         if (v.x < box.x || v.x > box.x + box.w || v.z < box.z || v.z > box.z + box.d) continue;
         const top = tops.get(box.id) || 0;
         if (v.y >= top) continue;
@@ -1154,7 +1186,7 @@ window.citydiffCheck = () => {
 };
 
 function addArc(group, from, to, color, lift, data) {
-  const mesh = makeLink(from, to, color, lift);
+  const mesh = makeLink(from, to, color, lift, packageRoof(data.from), packageRoof(data.id));
   if (!mesh) return;
   mesh.userData = data;
   group.add(mesh);
