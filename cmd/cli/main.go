@@ -12,7 +12,7 @@ import (
 	"citydiff/lib/diff"
 	"citydiff/lib/files"
 	"citydiff/lib/git"
-	"citydiff/lib/parser/go"
+	"citydiff/lib/parser"
 	"citydiff/lib/scene"
 	"citydiff/view"
 )
@@ -55,8 +55,8 @@ type jsonFileDiff struct {
 }
 
 func main() {
-	path := flag.String("path", "", "path to a Go file or directory")
-	flag.StringVar(path, "p", "", "path to a Go file or directory")
+	path := flag.String("path", "", "path to a Go or Rust file or directory")
+	flag.StringVar(path, "p", "", "path to a Go or Rust file or directory")
 	commitRange := flag.String("range", "", "commit range to diff, A..B or A...B")
 	flag.StringVar(commitRange, "r", "", "commit range to diff, A..B or A...B")
 	asJSON := flag.Bool("json", false, "print entries as JSON")
@@ -104,13 +104,13 @@ func main() {
 
 func load(path, commitRange string) (left, right []lib.ParsedFile, err error) {
 	if commitRange != "" {
-		return git.Versions(path, commitRange, golang.New())
+		return git.Versions(path, commitRange, parser.New())
 	}
 	src, err := files.Tree(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	right, err = golang.New().Parse(src)
+	right, err = parser.New().Parse(src)
 	return nil, right, err
 }
 
