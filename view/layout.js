@@ -10,9 +10,9 @@ export function towerHeight(bytes) {
   return 1.25 + Math.log2(n + 1) * 1.3;
 }
 
-// A method is laid on the type's full roof. The view draws that roof shorter
-// until the camera is close. Drop the method by the height the type has not
-// grown yet, so its base stays on the roof that is actually drawn.
+// A method is laid on the type's full roof. The view draws that roof flat
+// while a selection shuts the type. Drop the method by the height the type
+// is not drawn at, so its base stays on the roof that is actually drawn.
 export function methodDrawY(layoutY, typeLayoutH, typeDrawH) {
   return layoutY - typeLayoutH + typeDrawH;
 }
@@ -88,11 +88,11 @@ export function layoutCity(packages, options = {}) {
 
 function placePackage(node, x, z, w, d, y, depth, out) {
   const locals = blocksOf(node.pkg);
-  const pad = Math.min(w, d) * 0.05 + 0.55;
+  const pad = Math.min(Math.min(w, d) * 0.05 + 0.55, Math.min(w, d) / 4);
   const ix = x + pad;
   const iz = z + pad;
-  const iw = Math.max(1, w - pad * 2);
-  const id = Math.max(1, d - pad * 2);
+  const iw = w - pad * 2;
+  const id = d - pad * 2;
   const plinthH = 3.1 + Math.log2(locals.length + 1) * 1.55;
   const kids = node.children || [];
 
@@ -104,10 +104,10 @@ function placePackage(node, x, z, w, d, y, depth, out) {
     childRect = { x: ix, z: iz, w: iw, d: id };
   } else {
     const share = clamp((locals.length * 3.4) / (iw * id), 0.2, 0.56);
-    const band = Math.max(2.2, id * share);
+    const band = Math.min(Math.max(2.2, id * share), id * 0.6);
     const gap = Math.min(1.4, id * 0.05);
     entityRect = { x: ix, z: iz + id - band, w: iw, d: band };
-    childRect = { x: ix, z: iz, w: iw, d: Math.max(1, id - band - gap) };
+    childRect = { x: ix, z: iz, w: iw, d: Math.max(0, id - band - gap) };
   }
 
   const record = {
@@ -183,9 +183,9 @@ function placeEntities(items, rect, y) {
           x: item.x + 0.42 * sx + col * (item.mw + GAP) * sx,
           y: y + typeH,
           z: item.z + 0.42 * sz + row * (item.md + GAP) * sz,
-          w: Math.max(0.35, mw),
+          w: mw,
           h: towerHeight(displayBytes(method)),
-          d: Math.max(0.35, md),
+          d: md,
         });
       });
       continue;
@@ -227,14 +227,13 @@ function shelfPack(items, x, z, w, d) {
     const usedD = out.reduce((max, item) => Math.max(max, item.z + item.d), 0);
     return { out, usedW, usedD };
   };
-  let packed = packAt(1, Math.max(w, 0.1));
-  if (packed.usedW > w || packed.usedD > d) {
-    let scale = Math.min(w / Math.max(packed.usedW, 0.001), d / Math.max(packed.usedD, 0.001));
-    packed = packAt(Math.max(scale, 0.08), Math.max(w, 0.1));
-    if (packed.usedD > d || packed.usedW > w) {
-      scale *= Math.min(w / Math.max(packed.usedW, 0.001), d / Math.max(packed.usedD, 0.001)) * 0.98;
-      packed = packAt(Math.max(scale, 0.05), Math.max(w, 0.1));
-    }
+  // Shrink until the shelves fit the rectangle. There is no floor on the
+  // scale: a floor lets a crowded package spill onto its neighbours.
+  let scale = 1;
+  let packed = packAt(scale, w);
+  for (let i = 0; i < 40 && (packed.usedW > w || packed.usedD > d); i++) {
+    scale *= Math.min(w / Math.max(packed.usedW, 1e-9), d / Math.max(packed.usedD, 1e-9), 0.98);
+    packed = packAt(scale, w);
   }
   const ox = x + Math.max(0, (w - packed.usedW) / 2);
   const oz = z + Math.max(0, (d - packed.usedD) / 2);
@@ -361,29 +360,4 @@ function projectPoint(point, eye, target, fovDeg, aspect) {
     x: (camX / -camZ) / (aspect * tanHalf),
     y: (camY / -camZ) / tanHalf,
   };
-}
-
-// arcBetween is a quadratic bow from one point to another.
-// t = 0 is `from` and t = 1 is `to`, so the curve meets both ends.
-// liftMin raises the middle. Call bows leave it empty. Dependency bows pass the clearance they need.
-export function arcBetween(from, to, liftMin = 0) {
-  const dx = to[0] - from[0];
-  const dy = to[1] - from[1];
-  const dz = to[2] - from[2];
-  const dist = Math.hypot(dx, dy, dz);
-  const bow = Math.max(3, Math.min(dist * 0.22, 26));
-  const lift = Math.max(bow, liftMin || 0);
-  const mid = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift, (from[2] + to[2]) / 2];
-  const n = dist > 48 ? 28 : 16;
-  const points = [];
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    const u = 1 - t;
-    points.push([
-      u * u * from[0] + 2 * u * t * mid[0] + t * t * to[0],
-      u * u * from[1] + 2 * u * t * mid[1] + t * t * to[1],
-      u * u * from[2] + 2 * u * t * mid[2] + t * t * to[2],
-    ]);
-  }
-  return points;
 }

@@ -130,9 +130,19 @@ func serve(addr string, sc scene.Scene) error {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(payload)
 	})
-	mux.Handle("/", http.FileServer(http.FS(view.FS)))
+	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+// The embedded viewer files carry no modification time, so a browser has
+// nothing to revalidate against and can keep running an old build from cache.
+// They are small, so serve them fresh.
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func printFiles(files []lib.ParsedFile, asJSON bool) error {

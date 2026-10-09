@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { layoutCity, arcBetween, methodDrawY, fitDistance } from "./layout.js";
+import { layoutCity, methodDrawY, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { packageCallEdges } from "./edges.js";
@@ -122,6 +122,9 @@ let lastActivity = 0;
 const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
+// The search box swallows the fly keys while it has focus. The idle orbit is
+// not a fly key: it keeps turning in every focus, this box included.
+const NO_KEYS = new Set();
 let idleSpin = false;
 // The city turns as soon as it appears. A click, a move key, or a zoom ends that turn.
 // b and ? do not. After the view has been still, the slow orbit returns in every
@@ -142,11 +145,12 @@ function endIntro() {
   introSpin = false;
 }
 
-function requestFrame() {
+function requestFrame(delay = 0) {
   if (frameQueued) return;
   frameQueued = true;
   clearTimeout(idleTimer);
-  requestAnimationFrame(animate);
+  if (delay > 0) idleTimer = setTimeout(() => requestAnimationFrame(animate), delay);
+  else requestAnimationFrame(animate);
 }
 
 function parkLoop() {
@@ -157,7 +161,6 @@ function parkLoop() {
 const plinths = [];
 const entitySlots = [];
 const slotById = new Map();
-const openByPkg = new Map();
 
 const viewEl = document.querySelector("#view");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -174,6 +177,10 @@ scene.fog = new THREE.FogExp2(0x09090b, 0.004);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 
+// The particle material is built further down, next to the path texture. The
+// resize hook is assigned there; until then resizing has nothing to rescale.
+let updatePointScale = () => {};
+
 function resizeView() {
   const w = viewEl.clientWidth;
   const h = viewEl.clientHeight;
@@ -189,6 +196,7 @@ function resizeView() {
   }
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+  updatePointScale();
   placeResults();
   viewDirty = true;
   requestFrame();
@@ -209,6 +217,83 @@ const city = new THREE.Group();
 scene.add(city);
 const arcGroup = new THREE.Group();
 scene.add(arcGroup);
+
+// The selected node wears a halo on its sides: a bright rim where the wall
+// turns away from the eye, plus a band that travels up the box. Cheap, one
+// draw call, and it runs on the same clock as the particles — it advances
+// while the scene is driven and freezes when the loop parks.
+const haloMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(ARC) },
+    uHeight: { value: 1 },
+    uStrength: { value: 1 },
+  },
+  vertexShader: `
+    varying vec3 vNormal;
+    varying vec3 vView;
+    varying float vY;
+    uniform float uHeight;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vView = normalize(-mv.xyz);
+      vY = clamp(position.y / max(0.001, uHeight) + 0.5, 0.0, 1.0);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vNormal;
+    varying vec3 vView;
+    varying float vY;
+    uniform float uTime;
+    uniform vec3 uColor;
+    uniform float uStrength;
+    void main() {
+      float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 2.4);
+      float wave = abs(fract(vY - uTime * 0.22) - 0.5) * 2.0;
+      float band = pow(max(0.0, 1.0 - wave * 3.2), 2.0);
+      float a = (rim * 0.5 + band * 0.42) * uStrength;
+      if (a < 0.004) discard;
+      gl_FragColor = vec4(uColor, a);
+      #include <colorspace_fragment>
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  fog: false,
+});
+const halo = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), haloMaterial);
+halo.visible = false;
+halo.frustumCulled = false;
+scene.add(halo);
+
+function updateHalo() {
+  if (!selected || focus) {
+    halo.visible = false;
+    return;
+  }
+  let box = null;
+  if (selected.kind === "entity") {
+    const slot = slotById.get(selected.id);
+    if (slot) box = visualBox(slot, slotOpen(slot));
+  } else if (selected.kind === "package") {
+    box = laid.packages.find((item) => item.id === selected.id) || null;
+  }
+  if (!box) {
+    halo.visible = false;
+    return;
+  }
+  const pad = 0.35;
+  halo.geometry.dispose();
+  halo.geometry = new THREE.BoxGeometry(box.w + pad, box.h + pad, box.d + pad);
+  halo.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
+  haloMaterial.uniforms.uHeight.value = box.h;
+  const change = (byPackage.get(selected.kind === "package" ? selected.id : "") || {}).change;
+  haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : ARC);
+  halo.visible = true;
+}
 const selectArcs = new THREE.Group();
 scene.add(selectArcs);
 const focusGroup = new THREE.Group();
@@ -643,14 +728,17 @@ function vary(id, color) {
 // The overview draws an arc for every import that was added or deleted, and
 // for every pair of modules whose calls changed while the import stayed.
 function buildArcs() {
+  // An edge runs from the centre of the top of the package the calls come
+  // from to the centre of the top of the package they go to.
   const drawn = new Set();
   const draw = (from, to, change) => {
-    const ends = depEnds(from, to);
-    if (!ends) return;
+    const start = packageAnchor(from);
+    const end = packageAnchor(to);
+    if (!start || !end) return;
     drawn.add(from + "\0" + to);
-    addArc(arcGroup, ends.from, ends.to, changeColor(change), ends.lift, {
-      kind: "dep", id: to, label: to, change,
-    });
+    addArc(arcGroup, start, end, changeColor(change), clearLift(start, end, [from, to]), {
+      kind: "dep", id: to, label: to, change, from,
+    }, from, to);
   };
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
@@ -676,16 +764,11 @@ function changedCalls() {
   return calls;
 }
 
-// The arc meets each module. Clearance lifts only the middle, and only enough
-// to pass the roofs between the two ends.
-const LAND = 0.85;
-
-function roofClear(box) {
-  return Math.max(1.2, Math.min(Math.max(box.w, box.d) * 0.045, 3));
-}
+// The arc starts a little above the roof, so it is plainly leaving the
+// building rather than skimming it.
+const LAND = 0.25;
 
 let ownTopCache = null;
-
 function ownTop(id) {
   if (!ownTopCache) {
     ownTopCache = new Map();
@@ -712,89 +795,159 @@ function shownOwnTop(id) {
   return top;
 }
 
-function packageAnchor(id) {
+function packageRoof(id) {
   const box = laid.packages.find((item) => item.id === id);
-  // Own roof only. A parent's district top sits on its tallest child, so the
-  // arc would stop in the air instead of on the module that was imported.
-  if (box) return [box.x + box.w / 2, shownOwnTop(id) + LAND, box.z + box.d / 2];
+  if (box) return [box.x + box.w / 2, box.y + box.h, box.z + box.d / 2];
   const ext = laid.externals.find((item) => item.id === id);
-  if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
+  if (ext) return [ext.x, ext.y + ext.h, ext.z];
   return null;
 }
 
+function packageAnchor(id) {
+  const box = laid.packages.find((item) => item.id === id);
+  if (!box) {
+    const ext = laid.externals.find((item) => item.id === id);
+    if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
+    return null;
+  }
+  // Right on the roof: the arc starts and ends where the eye expects, and the
+  // curve's steep egress keeps it off the neighbours. Raising the anchor to the
+  // neighbourhood's skyline made the ends float above the buildings, which read
+  // worse than the collision it avoided.
+  return [box.x + box.w / 2, box.y + box.h + LAND, box.z + box.d / 2];
+}
 function rectContainsXZ(box, x, z) {
   return x >= box.x && x <= box.x + box.w && z >= box.z && z <= box.z + box.d;
 }
 
 // t along the ground segment where the line is over the rectangle.
-function segmentRectSpan(from, to, box) {
-  const dx = to[0] - from[0];
-  const dz = to[2] - from[2];
-  let t0 = 0;
-  let t1 = 1;
-  const slabs = [
-    [dx, from[0], box.x, box.x + box.w],
-    [dz, from[2], box.z, box.z + box.d],
-  ];
-  for (const [d, p, min, max] of slabs) {
-    if (Math.abs(d) < 1e-9) {
-      if (p < min || p > max) return null;
-      continue;
-    }
-    let a = (min - p) / d;
-    let b = (max - p) / d;
-    if (a > b) {
-      const swap = a;
-      a = b;
-      b = swap;
-    }
-    t0 = Math.max(t0, a);
-    t1 = Math.min(t1, b);
-    if (t0 > t1) return null;
-  }
-  if (t1 <= 0 || t0 >= 1) return null;
-  return [t0, t1];
-}
-
-// lift is the quadratic control offset. The bow already used by arcBetween is
-// the floor. Extra lift is only what a roof along the span still needs, and it
-// is capped so one tall neighbor cannot throw the whole fan into the sky.
-function clearanceLift(from, to) {
-  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  const bow = Math.max(3, Math.min(dist * 0.22, 18));
-  let lift = bow;
-  const y0 = from[1];
-  const y1 = to[1];
+function localTop(x, z) {
+  let top = 0;
   for (const box of laid.packages) {
-    if (rectContainsXZ(box, from[0], from[2]) || rectContainsXZ(box, to[0], to[2])) continue;
-    const span = segmentRectSpan(from, to, box);
-    if (!span) continue;
-    const floor = shownOwnTop(box.id) + roofClear(box);
-    const t0 = Math.max(span[0], 0.08);
-    const t1 = Math.min(span[1], 0.92);
-    if (t0 > t1) continue;
-    for (let k = 0; k <= 5; k++) {
-      const t = t0 + (t1 - t0) * (k / 5);
-      const u = 1 - t;
-      const base = u * u * y0 + 2 * u * t * ((y0 + y1) / 2) + t * t * y1;
-      const coef = 2 * u * t;
-      if (coef < 0.08) continue;
-      const need = (floor - base) / coef;
-      if (need > lift) lift = need;
+    if (!rectContainsXZ(box, x, z)) continue;
+    top = Math.max(top, shownOwnTop(box.id));
+  }
+  return top;
+}
+
+// The two control points of the arc. They sit directly above the ends, so the
+// curve leaves its roof steeply instead of crawling out flat — a quadratic
+// pinned at the midpoint could not clear a tower standing right beside an
+// endpoint, however high its apex was raised, and the clearance loop used to
+// run away to a lift of 350 without gaining a metre.
+// This is the curve: makeLink draws it, the particles ride it, and the
+// clearance loop measures it, so there is no second interpretation to disagree
+// with.
+function arcControls(from, to, lift) {
+  return [
+    [from[0], from[1] + lift, from[2]],
+    [to[0], to[1] + lift, to[2]],
+  ];
+}
+
+function arcSamples(from, to, lift, n) {
+  const steps = n || 48;
+  const [c1, c2] = arcControls(from, to, lift);
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const u = 1 - t;
+    const a = u * u * u;
+    const b = 3 * u * u * t;
+    const c = 3 * u * t * t;
+    const d = t * t * t;
+    out.push([
+      a * from[0] + b * c1[0] + c * c2[0] + d * to[0],
+      a * from[1] + b * c1[1] + c * c2[1] + d * to[1],
+      a * from[2] + b * c1[2] + c * c2[2] + d * to[2],
+    ]);
+  }
+  return out;
+}
+
+// How deep the path sinks into a building, in world units, and where. One
+// definition of a collision for the clearance loop and for ?check=1.
+// The package and everything under it: the arc's own two buildings, which it is
+// allowed to cross — starting on a roof means starting in that roof's own tower
+// field. Everything else is an obstacle.
+function inSubtree(boxId, pkgId) {
+  if (!pkgId) return false;
+  // Same building: the package itself, everything stacked inside it, and the
+  // plates it stands on. In a treemap, reaching a nested package means crossing
+  // its ancestors' volumes, so they cannot count as obstacles either.
+  return boxId === pkgId || boxId.startsWith(pkgId + "/") || pkgId.startsWith(boxId + "/");
+}
+
+function worstPenetration(points, margin = 0, skip) {
+  let worst = 0;
+  let at = null;
+  let atT = 0;
+  const steps = Math.max(1, points.length - 1);
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    for (const box of laid.packages) {
+      if (!rectContainsXZ(box, p[0], p[2])) continue;
+      if (skip && skip.some((id) => inSubtree(box.id, id))) continue;
+      const top = shownOwnTop(box.id) + margin;
+      if (p[1] >= top) continue;
+      const depth = top - p[1];
+      if (depth > worst) {
+        worst = depth;
+        at = box.id;
+        atT = i / steps;
+      }
     }
   }
-  return Math.min(lift, 22);
+  return { depth: worst, box: at, t: atT };
 }
 
-function depEnds(fromId, toId) {
-  const from = packageAnchor(fromId);
-  const to = packageAnchor(toId);
-  if (!from || !to) return null;
-  return { from, to, lift: clearanceLift(from, to) };
+// Raise the apex until the curve is measured clear. There used to be a closed
+// form here: it reasoned about a quadratic while the tube was drawn along a
+// Catmull-Rom through its samples, it skipped every box whose footprint held an
+// endpoint (which, in a treemap, is every child tower at the ends), and it
+// capped the result, turning every large requirement into a silent collision.
+function clearLift(from, to, ends) {
+  return Math.min(measuredLift(from, to, ends), liftCap(from, to));
 }
 
-// The call leaves the rendered top of the caller and lands on the callee.
-// Layout height is the open tower; a shut sibling is not an endpoint.
+// The lift that puts the middle of the arc a little above the tallest roof in
+// the city, or a fair bow for the distance, whichever is more. A loop that
+// chases an obstacle beside an endpoint can ask for several times that and
+// send the arc far out of frame.
+function liftCap(from, to) {
+  const dist = Math.hypot(to[0] - from[0], to[2] - from[2]);
+  const base = Math.min(from[1], to[1]);
+  const over = (laid.bounds.maxY + 2 - base) / 0.75;
+  return Math.max(3, dist * 0.25, over);
+}
+
+// A call arc bows like main's call arcs did: a fifth of the distance, between
+// 3 and 26.
+function callLift(from, to) {
+  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  return Math.max(3, Math.min(dist * 0.22, 26)) / 0.75;
+}
+
+function measuredLift(from, to, ends) {
+  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  let lift = Math.max(3, Math.min(dist * 0.2, 20));
+  // Sampled finer than the tube is drawn, with a margin, so a thin tower cannot
+  // slip between two samples and the tube radius stays clear as well. The step
+  // is the exact lift the worst point still needs: at parameter t the lift
+  // contributes 3(u^2 t + u t^2), so dividing by it converges in a few passes
+  // instead of creeping up by one unit and running out of iterations.
+  for (let i = 0; i < 24; i++) {
+    const worst = worstPenetration(arcSamples(from, to, lift, 128), 1, ends);
+    if (worst.depth <= 0) return lift;
+    // Right at an end nothing can be done by raising the apex: the endpoint is
+    // fixed, and packageAnchor has already put it above that column.
+    if (worst.t <= 0.004 || worst.t >= 0.996) return lift;
+    const u = 1 - worst.t;
+    const coef = 3 * (u * u * worst.t + u * worst.t * worst.t);
+    lift += worst.depth / Math.max(coef, 0.05) + 0.1;
+  }
+  return lift;
+}
 function towerTop(found) {
   if (!found || !found.entity) return null;
   const slot = slotById.get(found.entity.id);
@@ -814,21 +967,30 @@ function entityAnchor(found) {
   return null;
 }
 
-function makeLink(from, to, color, lift) {
+function makeLink(from, to, color, lift, roofFrom, roofTo) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  const points = arcBetween(from, to, lift).map((p) => new THREE.Vector3(p[0], p[1], p[2]));
-  const curve = new THREE.CatmullRomCurve3(points);
+  // A riser at each end: the anchor sits as high as its neighbourhood demands,
+  // and without this the line began in mid-air beside the building. The riser
+  // runs up the building's own column from the roof to the anchor, so the arc
+  // reads as leaving a roof and landing on one.
+  const road = arcSamples(from, to, lift, 24).slice(1, -1);
+  const path = [];
+  for (const p of [roofFrom, from]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
+  for (const p of road) path.push(new THREE.Vector3(p[0], p[1], p[2]));
+  for (const p of [to, roofTo]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
+  const curve = new THREE.CatmullRomCurve3(path);
   const radius = Math.max(0.07, Math.min(dist * 0.0028, 0.22));
-  const geo = new THREE.TubeGeometry(curve, Math.max(10, points.length), radius, 5, false);
+  // As many segments as main's bows had. Twice that doubled the triangles the
+  // overview draws and bought nothing visible at this radius.
+  const segs = (dist > 48 ? 28 : 16) + (roofFrom ? 2 : 0) + (roofTo ? 2 : 0);
+  const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
   const mat = new THREE.MeshBasicMaterial({ color, fog: false });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.frustumCulled = false;
-  return mesh;
+  // The tube has real vertices, so its bounds are right and it can be culled
+  // when the camera is inside the city.
+  return new THREE.Mesh(geo, mat);
 }
-
-// Go's standard library is an external import whose first path element has no dot.
 function isStdPackage(id) {
   const pkg = byPackage.get(id);
   if (!pkg || !pkg.external) return false;
@@ -838,6 +1000,115 @@ function isStdPackage(id) {
 
 const flows = [];
 const flowScratch = [0, 0, 0];
+
+// Particles run on the GPU. Each flow is one row of a path texture; the vertex
+// shader walks the row and the fragment shader cuts a disc out of the sprite.
+// The CPU writes a path once and never touches a position again, and the point
+// is round instead of the square a bare PointsMaterial draws.
+const FLOW_SAMPLES = 64;
+let flowTexture = null;
+let flowData = null;
+let flowRows = 0;
+
+const flowMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uPath: { value: null },
+    uRows: { value: 1 },
+    uTime: { value: 0 },
+    uScale: { value: 800 },
+  },
+  vertexShader: `
+    #define SAMPLES ${FLOW_SAMPLES}.0
+    attribute float aRow;
+    attribute float aU;
+    attribute float aSpeed;
+    attribute float aSize;
+    attribute vec3 aColor;
+    uniform sampler2D uPath;
+    uniform float uRows;
+    uniform float uTime;
+    uniform float uScale;
+    varying vec3 vColor;
+    void main() {
+      float u = fract(aU + uTime * aSpeed);
+      float x = u * (SAMPLES - 1.0);
+      float i0 = floor(x);
+      float f = x - i0;
+      float row = (aRow + 0.5) / uRows;
+      vec3 p0 = texture2D(uPath, vec2((i0 + 0.5) / SAMPLES, row)).xyz;
+      vec3 p1 = texture2D(uPath, vec2((i0 + 1.5) / SAMPLES, row)).xyz;
+      vec4 mv = modelViewMatrix * vec4(mix(p0, p1, f), 1.0);
+      // The dot rides the centre of the arc's tube. Bring it out in front of
+      // the tube so the tube does not hide it.
+      mv.xyz += normalize(-mv.xyz) * aSize * 0.6;
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = clamp(aSize * uScale / max(0.001, -mv.z), 4.0, 12.0);
+      vColor = aColor;
+    }
+  `,
+  fragmentShader: `
+    uniform float uTime;
+    varying vec3 vColor;
+    void main() {
+      vec2 d = gl_PointCoord - vec2(0.5);
+      float r = dot(d, d) * 4.0;
+      if (r > 1.0) discard;
+      float a = (1.0 - r * r) * 0.95;
+      gl_FragColor = vec4(vColor, a);
+      #include <colorspace_fragment>
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  fog: false,
+});
+
+// Particle sizes are in world units: the scale is the drawing buffer height
+// over the height of the view frustum at distance 1.
+updatePointScale = () => {
+  const h = renderer.domElement.height || 1;
+  flowMaterial.uniforms.uScale.value = h / (2 * Math.tan((camera.fov * Math.PI) / 360));
+};
+updatePointScale();
+
+function ensureFlowTexture(height) {
+  if (flowTexture && flowTexture.image.height === height) return flowTexture;
+  const data = new Float32Array(FLOW_SAMPLES * 4 * height);
+  if (flowData) data.set(flowData.subarray(0, Math.min(flowData.length, data.length)));
+  flowData = data;
+  flowTexture = new THREE.DataTexture(data, FLOW_SAMPLES, height, THREE.RGBAFormat, THREE.FloatType);
+  flowTexture.minFilter = THREE.NearestFilter;
+  flowTexture.magFilter = THREE.NearestFilter;
+  flowTexture.needsUpdate = true;
+  flowMaterial.uniforms.uPath.value = flowTexture;
+  flowMaterial.uniforms.uRows.value = height;
+  return flowTexture;
+}
+
+function writeFlowRow(flow, row) {
+  ensureFlowTexture(Math.max(1, flowRows));
+  flow.row = row;
+  const base = row * FLOW_SAMPLES * 4;
+  for (let i = 0; i < FLOW_SAMPLES; i++) {
+    const s = i * 3;
+    const o = base + i * 4;
+    flowData[o] = flow.samples[s] || 0;
+    flowData[o + 1] = flow.samples[s + 1] || 0;
+    flowData[o + 2] = flow.samples[s + 2] || 0;
+    flowData[o + 3] = 1;
+  }
+  flowTexture.needsUpdate = true;
+}
+function syncFlowTexture() {
+  flowRows = Math.max(1, flows.length);
+  ensureFlowTexture(flowRows);
+  for (let i = 0; i < flows.length; i++) {
+    writeFlowRow(flows[i].userData.flow, i);
+    const rows = flows[i].geometry.getAttribute("aRow");
+    rows.array.fill(i);
+    rows.needsUpdate = true;
+  }
+}
 
 function wrapUnit(value) {
   if (!Number.isFinite(value)) return 0;
@@ -852,86 +1123,42 @@ function makeFlow(from, to, color, lift) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  const raw = arcBetween(from, to, lift);
-  const pathCount = raw.length;
-  if (pathCount < 2) return null;
-  const path = new Float32Array(pathCount * 3);
-  const lengths = new Float32Array(pathCount);
-  let total = 0;
-  for (let i = 0; i < pathCount; i++) {
-    const p = raw[i];
-    path[i * 3] = p[0];
-    path[i * 3 + 1] = p[1];
-    path[i * 3 + 2] = p[2];
-    if (i > 0) {
-      total += Math.hypot(p[0] - raw[i - 1][0], p[1] - raw[i - 1][1], p[2] - raw[i - 1][2]);
-    }
-    lengths[i] = total;
-  }
-  if (!(total > 0)) return null;
-  const count = Math.max(5, Math.min(18, Math.round(dist / 5)));
-  const positions = new Float32Array(count * 3);
+  // The particle path is the same curve the line is drawn along, sampled evenly.
+  // writeFlowRow reads x, y, z flat, three numbers per sample.
+  const samples = arcSamples(from, to, lift, FLOW_SAMPLES - 1).flat();
+  const count = Math.max(3, Math.min(8, Math.round(dist / 9)));
+  const size = Math.max(1.2, Math.min(dist * 0.016, 2.4));
+  const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.PointsMaterial({
-    color,
-    size: Math.max(0.7, Math.min(dist * 0.014, 2.1)),
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.95,
-    depthWrite: false,
-    fog: false,
-  });
-  const mesh = new THREE.Points(geo, mat);
-  mesh.frustumCulled = false;
-  const flow = {
-    path, lengths, pathCount, total, count, time: 0,
-    speed: Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1))),
-  };
-  mesh.userData.flow = flow;
-  const attr = geo.attributes.position;
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  const rows = new Float32Array(count);
+  const params = new Float32Array(count);
+  const speeds = new Float32Array(count);
+  const sizes = new Float32Array(count);
+  const colors = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
-    flowAt(flow, i / count, flowScratch);
-    attr.setXYZ(i, flowScratch[0], flowScratch[1], flowScratch[2]);
+    rows[i] = flows.length;
+    params[i] = i / count;
+    speeds[i] = speed;
+    sizes[i] = size;
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
   }
+  geo.setAttribute("aRow", new THREE.BufferAttribute(rows, 1));
+  geo.setAttribute("aU", new THREE.BufferAttribute(params, 1));
+  geo.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
+  geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+  geo.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
+  const mesh = new THREE.Points(geo, flowMaterial);
+  mesh.frustumCulled = false;
+  mesh.userData.flow = { samples, count, speed, row: flows.length };
   flows.push(mesh);
+  flowRows = Math.max(1, flows.length);
+  ensureFlowTexture(flowRows);
+  writeFlowRow(mesh.userData.flow, flowRows - 1);
   return mesh;
 }
-
-function flowAt(flow, u, out) {
-  const pos = flow.path;
-  const lengths = flow.lengths;
-  const n = flow.pathCount;
-  let d = u * flow.total;
-  if (!(d > 0)) {
-    out[0] = pos[0];
-    out[1] = pos[1];
-    out[2] = pos[2];
-    return;
-  }
-  if (d >= flow.total) {
-    const last = (n - 1) * 3;
-    out[0] = pos[last];
-    out[1] = pos[last + 1];
-    out[2] = pos[last + 2];
-    return;
-  }
-  let lo = 0;
-  let hi = n - 1;
-  while (lo + 1 < hi) {
-    const mid = (lo + hi) >> 1;
-    if (lengths[mid] < d) lo = mid;
-    else hi = mid;
-  }
-  const span = lengths[hi] - lengths[lo] || 1;
-  const t = (d - lengths[lo]) / span;
-  const a = lo * 3;
-  const b = hi * 3;
-  out[0] = pos[a] + (pos[b] - pos[a]) * t;
-  out[1] = pos[a + 1] + (pos[b + 1] - pos[a + 1]) * t;
-  out[2] = pos[a + 2] + (pos[b + 2] - pos[a + 2]) * t;
-}
-
 function flowShown(mesh) {
   let node = mesh;
   while (node) {
@@ -941,26 +1168,84 @@ function flowShown(mesh) {
   return true;
 }
 
+// Particles march while they are on screen; the shader does the walking, so
+// this only reports whether anything needs a frame.
 function tickFlows(dt) {
-  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
   let shown = false;
   for (const mesh of flows) {
     if (!flowShown(mesh)) continue;
     shown = true;
-    const flow = mesh.userData.flow;
-    flow.time = wrapUnit(flow.time + step * flow.speed);
-    const attr = mesh.geometry.attributes.position;
-    for (let i = 0; i < flow.count; i++) {
-      flowAt(flow, wrapUnit(flow.time + i / flow.count), flowScratch);
-      attr.setXYZ(i, flowScratch[0], flowScratch[1], flowScratch[2]);
-    }
-    attr.needsUpdate = true;
+    break;
   }
+  if (shown) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   return shown;
 }
 
-function addArc(group, from, to, color, lift, data) {
-  const mesh = makeLink(from, to, color, lift);
+// Collision check for the arcs. The clearance maths is a closed-form guess and
+// nothing ever verified the geometry that gets drawn, so every collision so far
+// was found by eye. This walks the real mesh vertices against the real boxes:
+// open the viewer with ?check=1 and it prints one COLLIDE line per offending
+// arc to the console. No cost when it is not asked for.
+function arcCollisions() {
+  const hits = [];
+  const v = new THREE.Vector3();
+  const tops = new Map();
+  for (const box of laid.packages) tops.set(box.id, shownOwnTop(box.id));
+  for (const child of arcGroup.children) {
+    // Particles compute their positions in the shader, so their buffer is all
+    // zeros: only the tube meshes are real geometry to test.
+    if (!child.isMesh) continue;
+    const attr = child.geometry && child.geometry.attributes && child.geometry.attributes.position;
+    if (!attr) continue;
+    let worst = null;
+    let count = 0;
+    const ends = child.userData.ends || [];
+    for (let i = 0; i < attr.count; i++) {
+      v.fromBufferAttribute(attr, i);
+      child.localToWorld(v);
+      // The riser is meant to run up its own building: skip the part of the
+      // path that is below the anchor and inside reach of either end.
+      let riser = false;
+      for (const e of ends) {
+        if (v.y > e[1]) continue;
+        if (Math.hypot(v.x - e[0], v.z - e[2]) <= ANCHOR_REACH + 0.6) riser = true;
+      }
+      if (riser) continue;
+      const skipIds = [child.userData.from, child.userData.to || child.userData.id];
+      for (const box of laid.packages) {
+        if (skipIds.some((id) => inSubtree(box.id, id))) continue;
+        if (v.x < box.x || v.x > box.x + box.w || v.z < box.z || v.z > box.z + box.d) continue;
+        const top = tops.get(box.id) || 0;
+        if (v.y >= top) continue;
+        count++;
+        const depth = top - v.y;
+        if (!worst || depth > worst.depth) {
+          worst = { depth: Math.round(depth * 100) / 100, box: box.id, y: Math.round(v.y * 100) / 100, top: Math.round(top * 100) / 100 };
+        }
+      }
+    }
+    if (count) {
+      const d = child.userData || {};
+      hits.push({ arc: (d.from || "?") + " -> " + (d.label || d.id || "?"), verts: attr.count, inside: count, worst });
+    }
+  }
+  hits.sort((a, b) => b.worst.depth - a.worst.depth);
+  return hits;
+}
+
+window.citydiffCheck = () => {
+  const hits = arcCollisions();
+  console.log("COLLIDE total=" + hits.length + " of " + arcGroup.children.length + " arcs");
+  for (const hit of hits.slice(0, 25)) {
+    console.log("COLLIDE " + JSON.stringify(hit));
+  }
+  return hits.length;
+};
+
+// fromId and toId name the packages whose roofs the arc rises from and lands
+// on. A call arc between towers has neither.
+function addArc(group, from, to, color, lift, data, fromId, toId) {
+  const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null);
   if (!mesh) return;
   mesh.userData = data;
   group.add(mesh);
@@ -970,6 +1255,7 @@ function addArc(group, from, to, color, lift, data) {
 
 function applyMode() {
   syncLit();
+  updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
     const change = (byPackage.get(plinth.id) || {}).change || "same";
@@ -1202,7 +1488,7 @@ function drawCallLinks(group, links) {
     const std = !!(link.target.pkg && isStdPackage(link.target.pkg.id));
     const color = linkColor(link.change, std);
     const data = { kind: "call", entityId: link.target.entity.id, step: link.step, label: entityLabel(link.target.entity) };
-    addArc(group, from, to, color, undefined, data);
+    addArc(group, from, to, color, callLift(from, to), data);
     points.push(to);
   }
   linkPoints = points;
@@ -1227,33 +1513,16 @@ function recolor(mesh) {
   mesh.instanceColor.needsUpdate = true;
 }
 
-function openness(box) {
-  if (!lit && entered === box.id) return 1;
-  const center = scratch.a.set(box.x + box.w / 2, box.y + box.h, box.z + box.d / 2);
-  const dist = camera.position.distanceTo(center);
-  const span = Math.max(box.w, box.d, 4);
-  const near = span * 0.9;
-  const far = span * 1.75;
-  if (dist <= near) return 1;
-  if (dist >= far) return 0;
-  const t = (dist - near) / (far - near);
-  const s = t * t * (3 - 2 * t);
-  return 1 - s;
-}
-
 // One called function does not open the rest of its package.
 // Only the functions on the call stay up. The others shut.
 function slotOpen(slot) {
-  if (!lit) return openByPkg.get(slot.pkgId) || 0;
+  if (!lit) return 1;
   if (lit.entities) return lit.entities.has(slot.id) ? 1 : 0;
   if (lit.browse && slot.pkgId === lit.browse) return 1;
   return 0;
 }
 
 function refreshInstances() {
-  if (!lit) {
-    for (const box of laid.packages) openByPkg.set(box.id, openness(box));
-  }
   if (!solidMesh) return;
   let changed = false;
   solidMesh.userData.slots.forEach((slot, index) => {
@@ -1358,8 +1627,7 @@ function linkColor(change, std) {
 
 function drawSelectionArcs(id, inbound) {
   clearGroup(selectArcs);
-  // One point for the whole fan. Per-edge clearance used to raise each end to
-  // a different height, so the arcs neither met nor landed on the far module.
+  // The whole fan meets at the centre of the top of the selected package.
   const hub = packageAnchor(id);
   if (!hub) return;
   const edges = packageEdges(id, inbound);
@@ -1371,12 +1639,16 @@ function drawSelectionArcs(id, inbound) {
     const to = inbound ? hub : far;
     const color = linkColor(edge.change, isStdPackage(edge.to));
     const target = byPackage.get(farId);
-    addArc(selectArcs, from, to, color, clearanceLift(from, to), {
+    const fromId = inbound ? farId : id;
+    const toId = inbound ? id : farId;
+    addArc(selectArcs, from, to, color, clearLift(from, to, [fromId, toId]), {
       kind: "dep",
       id: farId,
       label: (target && (target.name || target.id)) || farId,
       external: !!(target && target.external),
-    });
+      from: fromId,
+      to: toId,
+    }, fromId, toId);
   }
 }
 
@@ -1526,16 +1798,19 @@ function focusCamera() {
 }
 
 function clearGroup(group) {
+  let dropped = false;
   for (const child of [...group.children]) {
     child.traverse((obj) => {
       if (obj.userData && obj.userData.flow) {
         const index = flows.indexOf(obj);
         if (index >= 0) flows.splice(index, 1);
+        dropped = true;
       }
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
         const list = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const mat of list) {
+          if (mat === flowMaterial || mat === haloMaterial) continue;
           if (mat.map) mat.map.dispose();
           mat.dispose();
         }
@@ -1543,6 +1818,7 @@ function clearGroup(group) {
     });
     group.remove(child);
   }
+  if (dropped) syncFlowTexture();
 }
 
 function hitTest() {
@@ -2128,24 +2404,24 @@ function flyToken(key) {
   return "wasdqe".includes(lower) ? lower : "";
 }
 
-function axis(positive, negative) {
-  const pos = positive.some((key) => held.has(key));
-  const neg = negative.some((key) => held.has(key));
+function axis(positive, negative, keys = held) {
+  const pos = positive.some((key) => keys.has(key));
+  const neg = negative.some((key) => keys.has(key));
   return (pos ? 1 : 0) - (neg ? 1 : 0);
 }
 
 function flyCamera(dt, now) {
-  if (typingSearch()) {
-    idleSpin = false;
-    return false;
-  }
-  // ArrowUp is W. ArrowRight is D. Looking down −z, right is +x.
-  const forward = axis(["w", "arrowup"], ["s", "arrowdown"]);
-  const strafe = axis(["d", "arrowright"], ["a", "arrowleft"]);
-  let yaw = (held.has("q") ? 1 : 0) - (held.has("e") ? 1 : 0);
-  const zoom = (held.has("+") ? 1 : 0) - (held.has("-") ? 1 : 0);
+  // A focused search box must not steer the camera, but it must not stop the
+  // city either: the idle orbit is global, so only the keys are dropped.
+  const keys = typingSearch() ? NO_KEYS : held;
+  const forward = axis(["w", "arrowup"], ["s", "arrowdown"], keys);
+  const strafe = axis(["d", "arrowright"], ["a", "arrowleft"], keys);
+  const yaw = (keys.has("q") ? 1 : 0) - (keys.has("e") ? 1 : 0);
+  const zoom = (keys.has("+") ? 1 : 0) - (keys.has("-") ? 1 : 0);
   const userMove = forward || strafe || yaw || zoom;
   if (userMove) endIntro();
+  // Any focus counts: overview, a selected package, a call focus, or the search
+  // box. Fifteen seconds after the last real input, the city turns again.
   const idleReady = !introSpin && lastActivity && now - lastActivity >= IDLE_SPIN_MS;
   idleSpin = !userMove && !tween && ((introSpin && !!cityPose) || idleReady);
   const yawRate = idleSpin ? IDLE_YAW : yaw * 1.4;
@@ -2174,25 +2450,38 @@ function animate(now) {
   const moved = tweening || flying ||
     camera.position.distanceToSquared(settledPos) > 1e-6 ||
     controls.target.distanceToSquared(settledTarget) > 1e-6;
-  if ((moved || viewDirty) && laid) {
-    refreshInstances();
+  if (viewDirty && laid) refreshInstances();
+  if (moved) {
     settledPos.copy(camera.position);
     settledTarget.copy(controls.target);
   }
+  // Particles are decoration. They advance while the scene is being driven —
+  // Decoration never stops: particles march and the halo travels whenever they
+  // are on screen. It is cheap — one uniform write each, all of it on the GPU —
+  // so the only cost is the frame itself, and a frame that carries nothing but
+  // decoration is paced lower than one the user is driving.
+  const motion = tweening || viewDirty || (flying && !idleSpin);
   const flowing = tickFlows(dt);
+  if (halo.visible) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  let hovered = false;
   if (idleSpin) {
+    hovered = pointerDirty;
     if (pointerDirty) onHover(null);
     pointerDirty = false;
-  } else if (pointerDirty || moved) {
+  } else if (pointerDirty && !pointerDown) {
     onHover(hitTest());
+    hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (moved || flowing || viewDirty) {
+  if (moved || flowing || viewDirty || hovered || halo.visible) {
     renderer.render(scene, camera);
     viewDirty = false;
   }
-  if (moved || flowing || introSpin || tween || held.size) requestFrame();
-  else parkLoop();
+  if (motion || idleSpin || flowing || halo.visible || introSpin) {
+    requestFrame();
+  } else {
+    parkLoop();
+  }
 }
 
 hud.overview.addEventListener("click", () => { mode = "overview"; applyMode(); });
@@ -2314,7 +2603,8 @@ function goToResult(item) {
 hud.search.addEventListener("input", onSearch);
 
 window.addEventListener("pointerdown", () => { noteActivity(); endIntro(); requestFrame(); });
-window.addEventListener("pointermove", noteActivity);
+// A moving cursor is not activity: it redraws the hover it is over, but it must
+// not reset the idle clock, or the orbit and the animations would never settle.
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
 window.addEventListener("keydown", (event) => {
@@ -2428,3 +2718,9 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 window.addEventListener("resize", resizeView);
 
 main();
+
+// ?check=1 reports arcs that pass through buildings.
+if (new URLSearchParams(location.search).has("check")) {
+  setTimeout(() => window.citydiffCheck(), 3000);
+}
+
