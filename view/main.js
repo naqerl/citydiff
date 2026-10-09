@@ -121,6 +121,12 @@ let lastActivity = 0;
 const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
+// The idle orbit is slow and the scene is static, so it does not need every
+// frame. 30fps halves the render cost and reads the same.
+const IDLE_FRAME_MS = 33;
+// The search box swallows the fly keys while it has focus. The idle orbit is
+// not a fly key: it keeps turning in every focus, this box included.
+const NO_KEYS = new Set();
 let idleSpin = false;
 // The city turns as soon as it appears. A click, a move key, or a zoom ends that turn.
 // b and ? do not. After the view has been still, the slow orbit returns in every
@@ -141,11 +147,12 @@ function endIntro() {
   introSpin = false;
 }
 
-function requestFrame() {
+function requestFrame(delay = 0) {
   if (frameQueued) return;
   frameQueued = true;
   clearTimeout(idleTimer);
-  requestAnimationFrame(animate);
+  if (delay > 0) idleTimer = setTimeout(() => requestAnimationFrame(animate), delay);
+  else requestAnimationFrame(animate);
 }
 
 function parkLoop() {
@@ -2105,24 +2112,24 @@ function flyToken(key) {
   return "wasdqe".includes(lower) ? lower : "";
 }
 
-function axis(positive, negative) {
-  const pos = positive.some((key) => held.has(key));
-  const neg = negative.some((key) => held.has(key));
+function axis(positive, negative, keys = held) {
+  const pos = positive.some((key) => keys.has(key));
+  const neg = negative.some((key) => keys.has(key));
   return (pos ? 1 : 0) - (neg ? 1 : 0);
 }
 
 function flyCamera(dt, now) {
-  if (typingSearch()) {
-    idleSpin = false;
-    return false;
-  }
-  // ArrowUp is W. ArrowRight is D. Looking down −z, right is +x.
-  const forward = axis(["w", "arrowup"], ["s", "arrowdown"]);
-  const strafe = axis(["d", "arrowright"], ["a", "arrowleft"]);
-  let yaw = (held.has("q") ? 1 : 0) - (held.has("e") ? 1 : 0);
-  const zoom = (held.has("+") ? 1 : 0) - (held.has("-") ? 1 : 0);
+  // A focused search box must not steer the camera, but it must not stop the
+  // city either: the idle orbit is global, so only the keys are dropped.
+  const keys = typingSearch() ? NO_KEYS : held;
+  const forward = axis(["w", "arrowup"], ["s", "arrowdown"], keys);
+  const strafe = axis(["d", "arrowright"], ["a", "arrowleft"], keys);
+  const yaw = (keys.has("q") ? 1 : 0) - (keys.has("e") ? 1 : 0);
+  const zoom = (keys.has("+") ? 1 : 0) - (keys.has("-") ? 1 : 0);
   const userMove = forward || strafe || yaw || zoom;
   if (userMove) endIntro();
+  // Any focus counts: overview, a selected package, a call focus, or the search
+  // box. Fifteen seconds after the last real input, the city turns again.
   const idleReady = !introSpin && lastActivity && now - lastActivity >= IDLE_SPIN_MS;
   idleSpin = !userMove && !tween && ((introSpin && !!cityPose) || idleReady);
   const yawRate = idleSpin ? IDLE_YAW : yaw * 1.4;
@@ -2156,7 +2163,12 @@ function animate(now) {
     settledPos.copy(camera.position);
     settledTarget.copy(controls.target);
   }
-  const flowing = tickFlows(dt);
+  // Particles are decoration. They advance while the scene is being driven —
+  // a tween, a fly key, pointer input, a rebuild — and freeze once it is not.
+  // Left running, every visible arc rewrites its points every frame and the
+  // loop never parks, which is what pegged the CPU with the scene at rest.
+  const userActive = tweening || pointerDirty || viewDirty || (flying && !idleSpin);
+  const flowing = userActive ? tickFlows(dt) : false;
   if (idleSpin) {
     if (pointerDirty) onHover(null);
     pointerDirty = false;
@@ -2168,8 +2180,12 @@ function animate(now) {
     renderer.render(scene, camera);
     viewDirty = false;
   }
-  if (moved || flowing || introSpin || tween || held.size) requestFrame();
-  else parkLoop();
+  // Only the orbit is running: keep it, but not at the full frame rate.
+  if (moved || flowing || introSpin || tween || held.size) {
+    requestFrame(userActive ? 0 : IDLE_FRAME_MS);
+  } else {
+    parkLoop();
+  }
 }
 
 hud.overview.addEventListener("click", () => { mode = "overview"; applyMode(); });
