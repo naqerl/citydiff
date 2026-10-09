@@ -15,6 +15,8 @@ const REMOVE = new THREE.Color(0xcd0000);
 const MODIFY = new THREE.Color(0xcdcd00);
 const MOVED = new THREE.Color(0xcd00cd);
 const ARC = new THREE.Color(0x00cdcd);
+// A standard-library edge is quieter than a project edge.
+const STD_LINE = new THREE.Color(0xd4d4d8);
 
 const scratch = {
   pos: new THREE.Vector3(),
@@ -40,6 +42,7 @@ const hud = {
   legend: document.querySelector("#legend"),
   side: document.querySelector("#side"),
   collapse: document.querySelector("#side-toggle"),
+  help: document.querySelector("#side-help"),
   logo: document.querySelector("#side-logo"),
 };
 
@@ -119,9 +122,36 @@ const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
 let idleSpin = false;
+// The city turns as soon as it appears. A click, a move key, or a zoom ends that turn.
+// b and ? do not. After the view has been still, the slow orbit returns in every
+// view: overview, a selected package, and a call focus.
+let introSpin = true;
+let viewDirty = true;
+let pointerDirty = false;
+let frameQueued = false;
+let idleTimer = 0;
+const settledPos = new THREE.Vector3();
+const settledTarget = new THREE.Vector3();
 
 function noteActivity() {
   lastActivity = performance.now();
+}
+
+function endIntro() {
+  introSpin = false;
+}
+
+function requestFrame() {
+  if (frameQueued) return;
+  frameQueued = true;
+  clearTimeout(idleTimer);
+  requestAnimationFrame(animate);
+}
+
+function parkLoop() {
+  clearTimeout(idleTimer);
+  const remain = lastActivity ? IDLE_SPIN_MS - (performance.now() - lastActivity) : IDLE_SPIN_MS;
+  idleTimer = setTimeout(requestFrame, Math.max(40, remain));
 }
 const plinths = [];
 const entitySlots = [];
@@ -148,8 +178,19 @@ function resizeView() {
   const h = viewEl.clientHeight;
   if (w < 2 || h < 2) return;
   camera.aspect = w / h;
+  const side = document.querySelector("#side");
+  const cover = side && !side.classList.contains("is-collapsed") ? side.getBoundingClientRect().width : 0;
+  if (cover > 8 && w > cover + 40) {
+    // Look-at screen X is w/2 - offsetX. The open viewbox center is (w + cover) / 2.
+    camera.setViewOffset(w, h, -cover / 2, 0, w, h);
+  } else {
+    camera.clearViewOffset();
+  }
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+  placeResults();
+  viewDirty = true;
+  requestFrame();
 }
 
 resizeView();
@@ -211,7 +252,7 @@ async function main() {
     sceneDoc = await response.json();
   } catch (err) {
     hud.note.textContent = "Could not read the scene. " + err.message;
-    animate();
+    requestFrame();
     return;
   }
   laid = layoutCity(sceneDoc.packages || []);
@@ -225,7 +266,7 @@ async function main() {
   controls.update();
   applyMode();
   applyQuery();
-  animate();
+  requestFrame();
 }
 
 function applyQuery() {
@@ -456,6 +497,7 @@ function makeInstances(geo, material, slots) {
     writeSlot(mesh, index, slot, 1);
   });
   mesh.instanceColor.needsUpdate = true;
+  mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   mesh.userData.slots = slots;
   return mesh;
@@ -497,10 +539,16 @@ function visualBox(slot, open) {
 
 function writeSlot(mesh, index, slot, open) {
   const box = visualBox(slot, open);
+  const drawn = slot.drawn;
+  if (drawn && drawn[0] === box.x && drawn[1] === box.y && drawn[2] === box.z && drawn[3] === box.w && drawn[4] === box.h && drawn[5] === box.d) {
+    return false;
+  }
+  slot.drawn = [box.x, box.y, box.z, box.w, box.h, box.d];
   scratch.pos.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
   scratch.scale.set(box.w, box.h, box.d);
   scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
   mesh.setMatrixAt(index, scratch.mat);
+  return true;
 }
 
 function signTexture(label) {
@@ -598,27 +646,22 @@ function buildArcs() {
       if (dep.change !== "added" && dep.change !== "removed") continue;
       const ends = depEnds(pkg.id, dep.to);
       if (!ends) continue;
-      const mesh = makeLink(ends[0], ends[1], changeColor(dep.change));
-      if (!mesh) continue;
-      mesh.userData = { kind: "dep", id: dep.to, label: dep.to, change: dep.change };
-      arcGroup.add(mesh);
-      const pin = makePin(ends[1], changeColor(dep.change));
-      if (pin) {
-        pin.userData = mesh.userData;
-        arcGroup.add(pin);
-      }
+      addArc(arcGroup, ends.from, ends.to, changeColor(dep.change), ends.lift, {
+        kind: "dep", id: dep.to, label: dep.to, change: dep.change,
+      });
     }
   }
 }
 
-// A dependency leaves from above its district and lands above the other.
-// Clearance grows with the district so the line stays over the towers, not in them.
+// The arc meets each module. Clearance lifts only the middle, and only enough
+// to pass the roofs between the two ends.
+const LAND = 0.85;
+
 function roofClear(box) {
-  return Math.max(12, Math.min(Math.max(box.w, box.d) * 0.42, 32));
+  return Math.max(1.2, Math.min(Math.max(box.w, box.d) * 0.045, 3));
 }
 
 let ownTopCache = null;
-let childCache = null;
 
 function ownTop(id) {
   if (!ownTopCache) {
@@ -631,73 +674,100 @@ function ownTop(id) {
   return ownTopCache.get(id) || 0;
 }
 
-function childIds(id) {
-  if (!childCache) {
-    childCache = new Map();
-    for (const pkg of sceneDoc.packages || []) {
-      if (pkg.external || !pkg.parent) continue;
-      const list = childCache.get(pkg.parent) || [];
-      list.push(pkg.id);
-      childCache.set(pkg.parent, list);
-    }
-  }
-  return childCache.get(id) || [];
-}
-
-function districtTop(id) {
-  let top = 0;
-  const stack = [id];
-  const seen = new Set();
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    top = Math.max(top, ownTop(current));
-    for (const child of childIds(current)) stack.push(child);
+// While a module is selected, other towers are shut. Land on the roof that is
+// actually drawn. With nothing selected, use the laid tower tops.
+function shownOwnTop(id) {
+  const box = laid.packages.find((item) => item.id === id);
+  const plinth = box ? box.y + box.h : 0;
+  if (!lit) return Math.max(plinth, ownTop(id));
+  let top = plinth;
+  for (const slot of entitySlots) {
+    if (slot.pkgId !== id) continue;
+    const drawn = visualBox(slot, slotOpen(slot));
+    top = Math.max(top, drawn.y + drawn.h);
   }
   return top;
 }
 
 function packageAnchor(id) {
   const box = laid.packages.find((item) => item.id === id);
-  if (box) return [box.x + box.w / 2, districtTop(id) + roofClear(box), box.z + box.d / 2];
+  // Own roof only. A parent's district top sits on its tallest child, so the
+  // arc would stop in the air instead of on the module that was imported.
+  if (box) return [box.x + box.w / 2, shownOwnTop(id) + LAND, box.z + box.d / 2];
   const ext = laid.externals.find((item) => item.id === id);
-  if (ext) return [ext.x, ext.y + ext.h + 12, ext.z];
+  if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
   return null;
 }
 
-function segmentCrossesRect(from, to, x, z, w, d) {
-  const dx = to[0] - from[0];
-  const dz = to[2] - from[2];
-  const dist = Math.hypot(dx, dz);
-  const steps = Math.max(1, Math.ceil(dist / 1.5));
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const px = from[0] + dx * t;
-    const pz = from[2] + dz * t;
-    if (px >= x && px <= x + w && pz >= z && pz <= z + d) return true;
-  }
-  return false;
+function rectContainsXZ(box, x, z) {
+  return x >= box.x && x <= box.x + box.w && z >= box.z && z <= box.z + box.d;
 }
 
-function pathFloor(from, to) {
-  let floor = 0;
-  for (const box of laid.packages) {
-    if (!segmentCrossesRect(from, to, box.x, box.z, box.w, box.d)) continue;
-    floor = Math.max(floor, ownTop(box.id) + roofClear(box));
+// t along the ground segment where the line is over the rectangle.
+function segmentRectSpan(from, to, box) {
+  const dx = to[0] - from[0];
+  const dz = to[2] - from[2];
+  let t0 = 0;
+  let t1 = 1;
+  const slabs = [
+    [dx, from[0], box.x, box.x + box.w],
+    [dz, from[2], box.z, box.z + box.d],
+  ];
+  for (const [d, p, min, max] of slabs) {
+    if (Math.abs(d) < 1e-9) {
+      if (p < min || p > max) return null;
+      continue;
+    }
+    let a = (min - p) / d;
+    let b = (max - p) / d;
+    if (a > b) {
+      const swap = a;
+      a = b;
+      b = swap;
+    }
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, b);
+    if (t0 > t1) return null;
   }
-  return floor;
+  if (t1 <= 0 || t0 >= 1) return null;
+  return [t0, t1];
+}
+
+// lift is the quadratic control offset. The bow already used by arcBetween is
+// the floor. Extra lift is only what a roof along the span still needs, and it
+// is capped so one tall neighbor cannot throw the whole fan into the sky.
+function clearanceLift(from, to) {
+  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  const bow = Math.max(3, Math.min(dist * 0.22, 18));
+  let lift = bow;
+  const y0 = from[1];
+  const y1 = to[1];
+  for (const box of laid.packages) {
+    if (rectContainsXZ(box, from[0], from[2]) || rectContainsXZ(box, to[0], to[2])) continue;
+    const span = segmentRectSpan(from, to, box);
+    if (!span) continue;
+    const floor = shownOwnTop(box.id) + roofClear(box);
+    const t0 = Math.max(span[0], 0.08);
+    const t1 = Math.min(span[1], 0.92);
+    if (t0 > t1) continue;
+    for (let k = 0; k <= 5; k++) {
+      const t = t0 + (t1 - t0) * (k / 5);
+      const u = 1 - t;
+      const base = u * u * y0 + 2 * u * t * ((y0 + y1) / 2) + t * t * y1;
+      const coef = 2 * u * t;
+      if (coef < 0.08) continue;
+      const need = (floor - base) / coef;
+      if (need > lift) lift = need;
+    }
+  }
+  return Math.min(lift, 22);
 }
 
 function depEnds(fromId, toId) {
   const from = packageAnchor(fromId);
   const to = packageAnchor(toId);
   if (!from || !to) return null;
-  const floor = pathFloor(from, to);
-  return [
-    [from[0], Math.max(from[1], floor), from[2]],
-    [to[0], Math.max(to[1], floor), to[2]],
-  ];
+  return { from, to, lift: clearanceLift(from, to) };
 }
 
 // The call leaves the rendered top of the caller and lands on the callee.
@@ -735,15 +805,144 @@ function makeLink(from, to, color, lift) {
   return mesh;
 }
 
-function makePin(at, color) {
-  if (!at) return null;
-  const mesh = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.42, 0),
-    new THREE.MeshBasicMaterial({ color, fog: false }),
-  );
-  mesh.position.set(at[0], at[1] + 0.5, at[2]);
+// Go's standard library is an external import whose first path element has no dot.
+function isStdPackage(id) {
+  const pkg = byPackage.get(id);
+  if (!pkg || !pkg.external) return false;
+  const head = String(pkg.id || "").split("/")[0];
+  return head.length > 0 && !head.includes(".");
+}
+
+const flows = [];
+const flowScratch = [0, 0, 0];
+
+function wrapUnit(value) {
+  if (!Number.isFinite(value)) return 0;
+  const wrapped = value % 1;
+  return wrapped < 0 ? wrapped + 1 : wrapped;
+}
+
+// Particles run from the caller (t = 0) to the callee (t = 1).
+// The bow is stored as numbers. CatmullRomCurve3 keeps one shared scratch
+// vector and throws once many arcs are sampled in the same frame.
+function makeFlow(from, to, color, lift) {
+  if (!from || !to) return null;
+  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  if (dist < 0.35) return null;
+  const raw = arcBetween(from, to, lift);
+  const pathCount = raw.length;
+  if (pathCount < 2) return null;
+  const path = new Float32Array(pathCount * 3);
+  const lengths = new Float32Array(pathCount);
+  let total = 0;
+  for (let i = 0; i < pathCount; i++) {
+    const p = raw[i];
+    path[i * 3] = p[0];
+    path[i * 3 + 1] = p[1];
+    path[i * 3 + 2] = p[2];
+    if (i > 0) {
+      total += Math.hypot(p[0] - raw[i - 1][0], p[1] - raw[i - 1][1], p[2] - raw[i - 1][2]);
+    }
+    lengths[i] = total;
+  }
+  if (!(total > 0)) return null;
+  const count = Math.max(5, Math.min(18, Math.round(dist / 5)));
+  const positions = new Float32Array(count * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color,
+    size: Math.max(0.7, Math.min(dist * 0.014, 2.1)),
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+    fog: false,
+  });
+  const mesh = new THREE.Points(geo, mat);
   mesh.frustumCulled = false;
+  const flow = {
+    path, lengths, pathCount, total, count, time: 0,
+    speed: Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1))),
+  };
+  mesh.userData.flow = flow;
+  const attr = geo.attributes.position;
+  for (let i = 0; i < count; i++) {
+    flowAt(flow, i / count, flowScratch);
+    attr.setXYZ(i, flowScratch[0], flowScratch[1], flowScratch[2]);
+  }
+  flows.push(mesh);
   return mesh;
+}
+
+function flowAt(flow, u, out) {
+  const pos = flow.path;
+  const lengths = flow.lengths;
+  const n = flow.pathCount;
+  let d = u * flow.total;
+  if (!(d > 0)) {
+    out[0] = pos[0];
+    out[1] = pos[1];
+    out[2] = pos[2];
+    return;
+  }
+  if (d >= flow.total) {
+    const last = (n - 1) * 3;
+    out[0] = pos[last];
+    out[1] = pos[last + 1];
+    out[2] = pos[last + 2];
+    return;
+  }
+  let lo = 0;
+  let hi = n - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (lengths[mid] < d) lo = mid;
+    else hi = mid;
+  }
+  const span = lengths[hi] - lengths[lo] || 1;
+  const t = (d - lengths[lo]) / span;
+  const a = lo * 3;
+  const b = hi * 3;
+  out[0] = pos[a] + (pos[b] - pos[a]) * t;
+  out[1] = pos[a + 1] + (pos[b + 1] - pos[a + 1]) * t;
+  out[2] = pos[a + 2] + (pos[b + 2] - pos[a + 2]) * t;
+}
+
+function flowShown(mesh) {
+  let node = mesh;
+  while (node) {
+    if (!node.visible) return false;
+    node = node.parent;
+  }
+  return true;
+}
+
+function tickFlows(dt) {
+  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  let shown = false;
+  for (const mesh of flows) {
+    if (!flowShown(mesh)) continue;
+    shown = true;
+    const flow = mesh.userData.flow;
+    flow.time = wrapUnit(flow.time + step * flow.speed);
+    const attr = mesh.geometry.attributes.position;
+    for (let i = 0; i < flow.count; i++) {
+      flowAt(flow, wrapUnit(flow.time + i / flow.count), flowScratch);
+      attr.setXYZ(i, flowScratch[0], flowScratch[1], flowScratch[2]);
+    }
+    attr.needsUpdate = true;
+  }
+  return shown;
+}
+
+function addArc(group, from, to, color, lift, data) {
+  const mesh = makeLink(from, to, color, lift);
+  if (!mesh) return;
+  mesh.userData = data;
+  group.add(mesh);
+  const flow = makeFlow(from, to, color, lift);
+  if (flow) group.add(flow);
 }
 
 function applyMode() {
@@ -754,23 +953,32 @@ function applyMode() {
     const removed = change === "removed";
     const show = plinth.external || !removed || overlay;
     plinth.mesh.visible = show;
+    const role = packageRole(plinth.id);
+    const marked = overlay && change !== "same";
     if (plinth.external) {
-      plinth.material.emissive = new THREE.Color(overlay && change !== "same" ? changeColor(change) : 0x000000);
-      plinth.material.color.set(overlay && change !== "same" ? changeColor(change) : 0x3f3f46);
-      if (!packageIsLit(plinth.id)) plinth.material.color.multiplyScalar(0.22);
+      if (marked) plinth.material.color.copy(changeColor(change));
+      else if (role === "dep") plinth.material.color.copy(ARC);
+      else plinth.material.color.set(0x3f3f46);
+      if (role === "dep" || marked) plinth.material.emissive.copy(plinth.material.color);
+      else plinth.material.emissive.set(0x000000);
+      plinth.material.emissiveIntensity = role === "dep" ? 0.7 : 0.2;
+      if (role === "dim") {
+        plinth.material.color.multiplyScalar(0.22);
+        plinth.material.emissive.multiplyScalar(0.22);
+      }
       continue;
     }
     if (!plinth.material) continue;
-    const marked = overlay && change !== "same";
-    plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
+    if (role === "dep" && !marked) plinth.material.color.copy(ARC);
+    else plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
     plinth.material.emissive.set(0xffffff);
-    plinth.material.emissiveIntensity = marked ? 0.22 : 0.06;
+    plinth.material.emissiveIntensity = role === "dep" ? 0.62 : (marked ? 0.22 : 0.06);
     plinth.material.transparent = false;
     plinth.material.opacity = 1;
     plinth.material.depthWrite = true;
     plinth.material.wireframe = false;
     if (plinth.plate) plinth.plate.visible = !removed || overlay;
-    if (!packageIsLit(plinth.id)) {
+    if (role === "dim") {
       plinth.material.color.multiplyScalar(0.2);
       plinth.material.emissiveIntensity = 0.02;
       setPlateOpacity(plinth.plate, 0.35);
@@ -805,23 +1013,31 @@ function applyMode() {
     else clearGroup(selectArcs);
   }
   updateHUD();
+  viewDirty = true;
+  requestFrame();
 }
 
-function packageIsLit(id) {
-  if (!lit) return true;
-  if (lit.packages && lit.packages.has(id)) return true;
+// "dep" is a module on the other end of a module arc. It stays bright and
+// takes the arc color. "dim" is everyone else while a selection is up.
+function packageRole(id) {
+  if (!lit) return "idle";
+  if (lit.packages && lit.packages.has(id)) {
+    if (arcSubject && arcSubject.id === id) return "subject";
+    return "dep";
+  }
   if (lit.entities) {
     for (const entityId of lit.entities) {
       const found = byEntity.get(entityId);
-      if (found && found.pkg && found.pkg.id === id) return true;
+      if (found && found.pkg && found.pkg.id === id) return "subject";
     }
   }
-  return false;
+  return "dim";
 }
 
 function entityIsLit(id, pkgId) {
   if (!lit) return true;
   if (lit.entities) return lit.entities.has(id);
+  if (lit.packages && lit.packages.has(pkgId)) return true;
   if (lit.browse && pkgId === lit.browse) return true;
   return false;
 }
@@ -960,18 +1176,10 @@ function drawCallLinks(group, links) {
     const to = towerTop(link.target);
     if (!from || !to) continue;
     if (points.length === 0) points.push(from);
-    const color = linkColor(link.change);
+    const std = !!(link.target.pkg && isStdPackage(link.target.pkg.id));
+    const color = linkColor(link.change, std);
     const data = { kind: "call", entityId: link.target.entity.id, step: link.step, label: entityLabel(link.target.entity) };
-    const mesh = makeLink(from, to, color);
-    if (mesh) {
-      mesh.userData = data;
-      group.add(mesh);
-    }
-    const pin = makePin(to, color);
-    if (pin) {
-      pin.userData = data;
-      group.add(pin);
-    }
+    addArc(group, from, to, color, undefined, data);
     points.push(to);
   }
   linkPoints = points;
@@ -1024,10 +1232,11 @@ function refreshInstances() {
     for (const box of laid.packages) openByPkg.set(box.id, openness(box));
   }
   if (!solidMesh) return;
+  let changed = false;
   solidMesh.userData.slots.forEach((slot, index) => {
-    writeSlot(solidMesh, index, slot, slotOpen(slot));
+    if (writeSlot(solidMesh, index, slot, slotOpen(slot))) changed = true;
   });
-  solidMesh.instanceMatrix.needsUpdate = true;
+  if (changed) solidMesh.instanceMatrix.needsUpdate = true;
 }
 
 function selectPackage(id, fly) {
@@ -1118,34 +1327,33 @@ function placeRing(id) {
   ring.visible = true;
 }
 
-function linkColor(change) {
+function linkColor(change, std) {
   if (mode === "overlay" && change && change !== "same") return changeColor(change);
+  if (std) return STD_LINE;
   return ARC;
 }
 
 function drawSelectionArcs(id, inbound) {
   clearGroup(selectArcs);
+  // One point for the whole fan. Per-edge clearance used to raise each end to
+  // a different height, so the arcs neither met nor landed on the far module.
+  const hub = packageAnchor(id);
+  if (!hub) return;
   const edges = packageEdges(id, inbound);
   for (const edge of edges) {
-    const ends = depEnds(edge.from, edge.to);
-    if (!ends) continue;
-    const color = linkColor(edge.change);
-    const mesh = makeLink(ends[0], ends[1], color);
-    if (!mesh) continue;
     const farId = inbound ? edge.from : edge.to;
+    const far = packageAnchor(farId);
+    if (!far) continue;
+    const from = inbound ? far : hub;
+    const to = inbound ? hub : far;
+    const color = linkColor(edge.change, isStdPackage(edge.to));
     const target = byPackage.get(farId);
-    mesh.userData = {
+    addArc(selectArcs, from, to, color, clearanceLift(from, to), {
       kind: "dep",
       id: farId,
       label: (target && (target.name || target.id)) || farId,
       external: !!(target && target.external),
-    };
-    selectArcs.add(mesh);
-    const pin = makePin(ends[1], color);
-    if (pin) {
-      pin.userData = mesh.userData;
-      selectArcs.add(pin);
-    }
+    });
   }
 }
 
@@ -1174,8 +1382,33 @@ function flyToPackage(id) {
     points.push([box.x, box.y + box.h, box.z]);
     points.push([box.x + box.w, box.y + box.h, box.z + box.d]);
   }
-  const pose = framePose(points, origin);
+  // The bow crowns above the higher end. Keep it inside the frame with the landings.
+  let top = origin[1];
+  for (const p of points) top = Math.max(top, p[1]);
+  points.push([origin[0], top + 14, origin[2]]);
+  const pose = frameFan(points);
   flyTo(pose.pos, pose.target);
+}
+
+function frameFan(points) {
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (const p of points) {
+    cx += p[0];
+    cy += p[1];
+    cz += p[2];
+  }
+  const n = points.length || 1;
+  const look = { x: cx / n, y: cy / n, z: cz / n };
+  const dir = { x: 0.32, y: 0.48, z: 0.78 };
+  const aspect = camera.aspect > 0.05 ? camera.aspect : 1;
+  const dist = fitDistance(points.map((p) => ({ x: p[0], y: p[1], z: p[2] })), look, dir, camera.fov, aspect, 0.84);
+  const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
+  return {
+    pos: new THREE.Vector3(look.x + (dir.x / len) * dist, look.y + (dir.y / len) * dist, look.z + (dir.z / len) * dist),
+    target: new THREE.Vector3(look.x, look.y, look.z),
+  };
 }
 
 function framePose(points, lookAt) {
@@ -1217,12 +1450,13 @@ function flyTo(pos, target) {
 }
 
 function tickTween(now) {
-  if (!tween) return;
+  if (!tween) return false;
   const k = Math.min(1, (now - tween.t0) / tween.ms);
   const s = k * k * (3 - 2 * k);
   camera.position.lerpVectors(tween.fromPos, tween.toPos, s);
   controls.target.lerpVectors(tween.fromTarget, tween.toTarget, s);
   if (k === 1) tween = null;
+  return true;
 }
 
 function strongerChange(a, b) {
@@ -1271,6 +1505,10 @@ function focusCamera() {
 function clearGroup(group) {
   for (const child of [...group.children]) {
     child.traverse((obj) => {
+      if (obj.userData && obj.userData.flow) {
+        const index = flows.indexOf(obj);
+        if (index >= 0) flows.splice(index, 1);
+      }
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
         const list = Array.isArray(obj.material) ? obj.material : [obj.material];
@@ -1346,12 +1584,11 @@ function onHover(hit) {
     return;
   }
   if (found.kind === "call") {
-    const step = found.step;
-    showTag(found.point, found.label || (step && (step.expr || step.name)) || "call");
+    showTag(found.point, entityInfo(found.entityId) || found.label || "call");
     return;
   }
   if (found.kind === "dep") {
-    showTag(found.point, found.label || found.id);
+    showTag(found.point, packageInfo(found.id));
     return;
   }
   const pkg = byPackage.get(found.id);
@@ -1413,6 +1650,25 @@ function activate(found) {
 function entityLabel(entity) {
   if (entity.kind === "method" && entity.recv) return entity.recv + "." + entity.name;
   return entity.name || entity.kind;
+}
+
+function packageInfo(id) {
+  const pkg = byPackage.get(id);
+  if (!pkg) return id || "";
+  const name = pkg.name || pkg.id;
+  if (isStdPackage(id)) return name + "  ·  std";
+  if (pkg.id && pkg.id !== name) return name + "  ·  " + pkg.id;
+  return name;
+}
+
+function entityInfo(id) {
+  const found = byEntity.get(id);
+  if (!found) return "";
+  const label = entityLabel(found.entity);
+  const kind = found.entity.kind || "";
+  const pkg = found.pkg && (found.pkg.id || found.pkg.name);
+  const head = [kind, label].filter(Boolean).join(" ");
+  return pkg ? head + "  ·  " + pkg : head;
 }
 
 function updateHUD() {
@@ -1856,18 +2112,21 @@ function axis(positive, negative) {
 }
 
 function flyCamera(dt, now) {
-  if (typingSearch()) return;
+  if (typingSearch()) {
+    idleSpin = false;
+    return false;
+  }
   // ArrowUp is W. ArrowRight is D. Looking down −z, right is +x.
   const forward = axis(["w", "arrowup"], ["s", "arrowdown"]);
   const strafe = axis(["d", "arrowright"], ["a", "arrowleft"]);
   let yaw = (held.has("q") ? 1 : 0) - (held.has("e") ? 1 : 0);
   const zoom = (held.has("+") ? 1 : 0) - (held.has("-") ? 1 : 0);
   const userMove = forward || strafe || yaw || zoom;
-  // Left orbit, once the view has been still for 15s. Slower than Q, and the
-  // hover title stays hidden so names do not pop as the city turns.
-  idleSpin = !userMove && !tween && hud.legend.hidden && lastActivity && now - lastActivity >= IDLE_SPIN_MS;
+  if (userMove) endIntro();
+  const idleReady = !introSpin && lastActivity && now - lastActivity >= IDLE_SPIN_MS;
+  idleSpin = !userMove && !tween && ((introSpin && !!cityPose) || idleReady);
   const yawRate = idleSpin ? IDLE_YAW : yaw * 1.4;
-  if (!forward && !strafe && !yawRate && !zoom) return;
+  if (!forward && !strafe && !yawRate && !zoom) return false;
   if (userMove) tween = null;
   camera.getWorldDirection(flyDir);
   const next = flyStep(camera.position, controls.target, flyDir, { forward, strafe, yaw: yawRate, zoom }, dt, {
@@ -1876,22 +2135,41 @@ function flyCamera(dt, now) {
   });
   camera.position.set(next.position.x, next.position.y, next.position.z);
   controls.target.set(next.target.x, next.target.y, next.target.z);
+  return true;
 }
 
 function animate(now) {
-  requestAnimationFrame(animate);
+  frameQueued = false;
   const t = now || performance.now();
-  const dt = lastFrame ? Math.min(0.05, (t - lastFrame) / 1000) : 0.016;
+  const dt = lastFrame ? Math.min(0.05, Math.max(0, (t - lastFrame) / 1000)) : 0.016;
   lastFrame = t;
   if (!lastActivity) lastActivity = t;
   if (held.size && !typingSearch()) tween = null;
-  tickTween(t);
-  flyCamera(dt, t);
+  const tweening = tickTween(t);
+  const flying = flyCamera(dt, t);
   controls.update();
-  if (laid) refreshInstances();
-  const hit = hitTest();
-  onHover(hit);
-  renderer.render(scene, camera);
+  const moved = tweening || flying ||
+    camera.position.distanceToSquared(settledPos) > 1e-6 ||
+    controls.target.distanceToSquared(settledTarget) > 1e-6;
+  if ((moved || viewDirty) && laid) {
+    refreshInstances();
+    settledPos.copy(camera.position);
+    settledTarget.copy(controls.target);
+  }
+  const flowing = tickFlows(dt);
+  if (idleSpin) {
+    if (pointerDirty) onHover(null);
+    pointerDirty = false;
+  } else if (pointerDirty || moved) {
+    onHover(hitTest());
+    pointerDirty = false;
+  }
+  if (moved || flowing || viewDirty) {
+    renderer.render(scene, camera);
+    viewDirty = false;
+  }
+  if (moved || flowing || introSpin || tween || held.size) requestFrame();
+  else parkLoop();
 }
 
 hud.overview.addEventListener("click", () => { mode = "overview"; applyMode(); });
@@ -1905,6 +2183,8 @@ renderer.domElement.addEventListener("pointermove", (event) => {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  pointerDirty = true;
+  requestFrame();
 });
 renderer.domElement.addEventListener("pointerup", (event) => {
   if (!pointerDown) return;
@@ -1929,6 +2209,7 @@ function renderSearch() {
     return;
   }
   hud.results.hidden = false;
+  placeResults();
   searchHits.forEach((item, index) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1946,6 +2227,34 @@ function renderSearch() {
     button.addEventListener("click", () => goToResult(item));
     hud.results.append(button);
   });
+  revealSearchCursor();
+}
+
+function revealSearchCursor() {
+  const list = hud.results;
+  const current = list.querySelector("button.on");
+  if (!current) return;
+  const top = current.offsetTop;
+  const bottom = top + current.offsetHeight;
+  const viewTop = list.scrollTop;
+  const viewBottom = viewTop + list.clientHeight;
+  if (top < viewTop) list.scrollTop = top;
+  else if (bottom > viewBottom) list.scrollTop = bottom - list.clientHeight;
+}
+
+// The menu is outside the sidebar. A backdrop-filter inside that panel
+// cannot frost the list drawn behind it.
+function placeResults() {
+  const list = hud.results;
+  if (list.hidden) return;
+  const box = hud.search.getBoundingClientRect();
+  if (box.width < 2 || box.height < 2) {
+    closeSearch();
+    return;
+  }
+  list.style.left = box.left + "px";
+  list.style.top = (box.bottom + 2) + "px";
+  list.style.width = box.width + "px";
 }
 
 function onSearch() {
@@ -1981,13 +2290,19 @@ function goToResult(item) {
 
 hud.search.addEventListener("input", onSearch);
 
-window.addEventListener("pointerdown", noteActivity);
+window.addEventListener("pointerdown", () => { noteActivity(); endIntro(); requestFrame(); });
 window.addEventListener("pointermove", noteActivity);
-window.addEventListener("wheel", noteActivity, { passive: true });
+window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
 window.addEventListener("keydown", (event) => {
-  noteActivity();
+  requestFrame();
   const typing = event.target === hud.search;
+  const sidebarKey = !typing && event.key === "b" && !event.metaKey && !event.ctrlKey && !event.altKey;
+  const helpKey = !typing && event.key === "?";
+  if (!sidebarKey && !helpKey) {
+    noteActivity();
+    endIntro();
+  }
   if (event.key === "/" && !typing) {
     event.preventDefault();
     setSide(true);
@@ -2064,13 +2379,15 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => {
   const flyKey = flyToken(event.key);
   if (flyKey) held.delete(flyKey);
+  requestFrame();
 });
-window.addEventListener("blur", () => held.clear());
+window.addEventListener("blur", () => { held.clear(); requestFrame(); });
 function setLegend(open) {
   hud.legend.hidden = !open;
 }
 
 hud.collapse.addEventListener("mouseenter", () => setSide(false));
+hud.help.addEventListener("click", () => setLegend(hud.legend.hidden));
 hud.logo.addEventListener("click", () => setSide(true));
 document.querySelector("#legend-close").addEventListener("click", () => setLegend(false));
 hud.legend.addEventListener("click", (event) => {
