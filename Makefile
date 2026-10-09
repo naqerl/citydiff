@@ -21,3 +21,18 @@ VIEW_PATH ?= /home/user/Work/barse
 
 view: vet
 	go run ./cmd/cli -path "$(VIEW_PATH)" -view $(ARGS)
+
+IMAGE ?= citydiff:$(shell git rev-parse --short HEAD 2>/dev/null || echo latest)
+PORT ?= 8787
+DOCKER_PATH ?= $(VIEW_PATH)
+DOCKER_RANGE ?=
+
+run-docker:
+	@test -d "$(DOCKER_PATH)" || { printf 'run-docker: %s is not a directory\n' "$(DOCKER_PATH)" >&2; exit 1; }
+	docker build -t "$(IMAGE)" .
+	@printf 'citydiff %s: http://127.0.0.1:%s\n' "$(IMAGE)" "$(PORT)"
+	docker run --rm --name "citydiff-$(PORT)" \
+		-p "$(PORT):8787" \
+		-v "$(abspath $(DOCKER_PATH)):/work" \
+		"$(IMAGE)" \
+		-path /work -view -addr 0.0.0.0:8787 $(if $(DOCKER_RANGE),-range "$(DOCKER_RANGE)") $(ARGS)
