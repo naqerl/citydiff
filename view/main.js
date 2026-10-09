@@ -180,6 +180,10 @@ scene.fog = new THREE.FogExp2(0x09090b, 0.004);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 
+// The particle material is built further down, next to the path texture. The
+// resize hook is assigned there; until then resizing has nothing to rescale.
+let updatePointScale = () => {};
+
 function resizeView() {
   const w = viewEl.clientWidth;
   const h = viewEl.clientHeight;
@@ -195,6 +199,7 @@ function resizeView() {
   }
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+  updatePointScale();
   placeResults();
   viewDirty = true;
   requestFrame();
@@ -215,6 +220,83 @@ const city = new THREE.Group();
 scene.add(city);
 const arcGroup = new THREE.Group();
 scene.add(arcGroup);
+
+// The selected node wears a halo on its sides: a bright rim where the wall
+// turns away from the eye, plus a band that travels up the box. Cheap, one
+// draw call, and it runs on the same clock as the particles — it advances
+// while the scene is driven and freezes when the loop parks.
+const haloMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(ARC) },
+    uHeight: { value: 1 },
+    uStrength: { value: 1 },
+  },
+  vertexShader: `
+    varying vec3 vNormal;
+    varying vec3 vView;
+    varying float vY;
+    uniform float uHeight;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vView = normalize(-mv.xyz);
+      vY = clamp(position.y / max(0.001, uHeight) + 0.5, 0.0, 1.0);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vNormal;
+    varying vec3 vView;
+    varying float vY;
+    uniform float uTime;
+    uniform vec3 uColor;
+    uniform float uStrength;
+    void main() {
+      float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 2.4);
+      float wave = abs(fract(vY - uTime * 0.22) - 0.5) * 2.0;
+      float band = pow(max(0.0, 1.0 - wave * 3.2), 2.0);
+      float a = (rim * 0.5 + band * 0.42) * uStrength;
+      if (a < 0.004) discard;
+      gl_FragColor = vec4(uColor, a);
+      #include <colorspace_fragment>
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  fog: false,
+});
+const halo = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), haloMaterial);
+halo.visible = false;
+halo.frustumCulled = false;
+scene.add(halo);
+
+function updateHalo() {
+  if (!selected || focus) {
+    halo.visible = false;
+    return;
+  }
+  let box = null;
+  if (selected.kind === "entity") {
+    const slot = slotById.get(selected.id);
+    if (slot) box = visualBox(slot, slotOpen(slot));
+  } else if (selected.kind === "package") {
+    box = laid.packages.find((item) => item.id === selected.id) || null;
+  }
+  if (!box) {
+    halo.visible = false;
+    return;
+  }
+  const pad = 0.35;
+  halo.geometry.dispose();
+  halo.geometry = new THREE.BoxGeometry(box.w + pad, box.h + pad, box.d + pad);
+  halo.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
+  haloMaterial.uniforms.uHeight.value = box.h;
+  const change = (byPackage.get(selected.kind === "package" ? selected.id : "") || {}).change;
+  haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : ARC);
+  halo.visible = true;
+}
 const selectArcs = new THREE.Group();
 scene.add(selectArcs);
 const focusGroup = new THREE.Group();
@@ -647,16 +729,32 @@ function vary(id, color) {
 }
 
 function buildArcs() {
+  // The initial diff view speaks about districts, not about files: every
+  // outgoing dependency leaves from one hub over the high-level packages and
+  // lands on the district it points at. One origin, one fan.
+  const hub = nodeHub();
+  const districts = new Map();
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
     for (const dep of pkg.deps || []) {
       if (dep.change !== "added" && dep.change !== "removed") continue;
-      const ends = depEnds(pkg.id, dep.to);
-      if (!ends) continue;
-      addArc(arcGroup, ends.from, ends.to, changeColor(dep.change), ends.lift, {
-        kind: "dep", id: dep.to, label: dep.to, change: dep.change,
+      const target = topLevelId(dep.to);
+      if (!target || target === topLevelId(pkg.id)) continue;
+      const to = packageAnchor(target);
+      if (!to) continue;
+      const known = districts.get(target);
+      districts.set(target, {
+        to,
+        id: target,
+        change: known ? strongerChange(known.change, dep.change) : dep.change,
+        from: known ? known.from : topLevelId(pkg.id),
       });
     }
+  }
+  for (const entry of districts.values()) {
+    addArc(arcGroup, hub, entry.to, changeColor(entry.change), clearanceLift(hub, entry.to), {
+      kind: "dep", id: entry.id, label: entry.id, from: entry.from, change: entry.change, district: true,
+    });
   }
 }
 
@@ -669,6 +767,56 @@ function roofClear(box) {
 }
 
 let ownTopCache = null;
+let hubCache = null;
+let topLevelsCache = null;
+
+// The high-level packages: the districts directly under the root, the level
+// below it. Anything deeper rolls up to one of these.
+function topLevels() {
+  if (!topLevelsCache) {
+    let boxes = laid.packages.filter((box) => box.depth === 1);
+    if (!boxes.length && laid.packages.length) {
+      let shallow = Infinity;
+      for (const box of laid.packages) shallow = Math.min(shallow, box.depth);
+      boxes = laid.packages.filter((box) => box.depth === shallow);
+    }
+    topLevelsCache = boxes;
+  }
+  return topLevelsCache;
+}
+
+function topLevelId(id) {
+  if (typeof id !== "string") return id;
+  for (const box of topLevels()) {
+    if (id === box.id || id.startsWith(`${box.id}/`)) return box.id;
+  }
+  return id;
+}
+
+// The single origin for outgoing edges: the lowest point that is still above
+// every high-level package, centred over them. "Minimal" means no more height
+// than the tallest district roof demands. Layout heights only, so the point
+// does not jump when towers open and close.
+function nodeHub() {
+  if (hubCache) return hubCache;
+  let top = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const box of topLevels()) {
+    top = Math.max(top, ownTop(box.id));
+    minX = Math.min(minX, box.x);
+    maxX = Math.max(maxX, box.x + box.w);
+    minZ = Math.min(minZ, box.z);
+    maxZ = Math.max(maxZ, box.z + box.d);
+  }
+  for (const ext of laid.externals) top = Math.max(top, ext.y + ext.h);
+  const cx = Number.isFinite(minX) ? (minX + maxX) / 2 : 0;
+  const cz = Number.isFinite(minZ) ? (minZ + maxZ) / 2 : 0;
+  hubCache = [cx, top + LAND, cz];
+  return hubCache;
+}
 
 function ownTop(id) {
   if (!ownTopCache) {
@@ -770,13 +918,6 @@ function clearanceLift(from, to) {
   return Math.min(lift, 22);
 }
 
-function depEnds(fromId, toId) {
-  const from = packageAnchor(fromId);
-  const to = packageAnchor(toId);
-  if (!from || !to) return null;
-  return { from, to, lift: clearanceLift(from, to) };
-}
-
 // The call leaves the rendered top of the caller and lands on the callee.
 // Layout height is the open tower; a shut sibling is not an endpoint.
 function towerTop(found) {
@@ -823,6 +964,108 @@ function isStdPackage(id) {
 const flows = [];
 const flowScratch = [0, 0, 0];
 
+// Particles run on the GPU. Each flow is one row of a path texture; the vertex
+// shader walks the row and the fragment shader cuts a disc out of the sprite.
+// The CPU writes a path once and never touches a position again, and the point
+// is round instead of the square a bare PointsMaterial draws.
+const FLOW_SAMPLES = 64;
+let flowTexture = null;
+let flowData = null;
+let flowRows = 0;
+
+const flowMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uPath: { value: null },
+    uRows: { value: 1 },
+    uTime: { value: 0 },
+    uScale: { value: 800 },
+  },
+  vertexShader: `
+    #define SAMPLES ${FLOW_SAMPLES}.0
+    attribute float aRow;
+    attribute float aU;
+    attribute float aSpeed;
+    attribute float aSize;
+    attribute vec3 aColor;
+    uniform sampler2D uPath;
+    uniform float uRows;
+    uniform float uTime;
+    uniform float uScale;
+    varying vec3 vColor;
+    void main() {
+      float u = fract(aU + uTime * aSpeed);
+      float x = u * (SAMPLES - 1.0);
+      float i0 = floor(x);
+      float f = x - i0;
+      float row = (aRow + 0.5) / uRows;
+      vec3 p0 = texture2D(uPath, vec2((i0 + 0.5) / SAMPLES, row)).xyz;
+      vec3 p1 = texture2D(uPath, vec2((i0 + 1.5) / SAMPLES, row)).xyz;
+      vec4 mv = modelViewMatrix * vec4(mix(p0, p1, f), 1.0);
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = max(1.5, aSize * uScale / max(0.001, -mv.z));
+      vColor = aColor;
+    }
+  `,
+  fragmentShader: `
+    uniform float uTime;
+    varying vec3 vColor;
+    void main() {
+      vec2 d = gl_PointCoord - vec2(0.5);
+      float r = dot(d, d) * 4.0;
+      if (r > 1.0) discard;
+      float a = (1.0 - r * r) * 0.95;
+      gl_FragColor = vec4(vColor, a);
+      #include <colorspace_fragment>
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  fog: false,
+});
+
+function ensureFlowTexture(height) {
+  if (flowTexture && flowTexture.image.height === height) return flowTexture;
+  const data = new Float32Array(FLOW_SAMPLES * 4 * height);
+  if (flowData) data.set(flowData.subarray(0, Math.min(flowData.length, data.length)));
+  flowData = data;
+  flowTexture = new THREE.DataTexture(data, FLOW_SAMPLES, height, THREE.RGBAFormat, THREE.FloatType);
+  flowTexture.minFilter = THREE.NearestFilter;
+  flowTexture.magFilter = THREE.NearestFilter;
+  flowTexture.needsUpdate = true;
+  flowMaterial.uniforms.uPath.value = flowTexture;
+  flowMaterial.uniforms.uRows.value = height;
+  return flowTexture;
+}
+
+function writeFlowRow(flow, row) {
+  ensureFlowTexture(Math.max(1, flowRows));
+  flow.row = row;
+  const base = row * FLOW_SAMPLES * 4;
+  for (let i = 0; i < FLOW_SAMPLES; i++) {
+    flowAt(flow, i / (FLOW_SAMPLES - 1), flowScratch);
+    const o = base + i * 4;
+    flowData[o] = flowScratch[0];
+    flowData[o + 1] = flowScratch[1];
+    flowData[o + 2] = flowScratch[2];
+    flowData[o + 3] = 1;
+  }
+  flowTexture.needsUpdate = true;
+}
+
+// Point sprites are sized in device pixels from the vertical field of view.
+updatePointScale = () => {
+  flowMaterial.uniforms.uScale.value =
+    renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
+};
+updatePointScale();
+
+// Rows are renumbered whenever flows are dropped, so the texture stays dense.
+function syncFlowTexture() {
+  flowRows = Math.max(1, flows.length);
+  ensureFlowTexture(flowRows);
+  for (let i = 0; i < flows.length; i++) writeFlowRow(flows[i].userData.flow, i);
+}
+
 function wrapUnit(value) {
   if (!Number.isFinite(value)) return 0;
   const wrapped = value % 1;
@@ -854,31 +1097,36 @@ function makeFlow(from, to, color, lift) {
   }
   if (!(total > 0)) return null;
   const count = Math.max(5, Math.min(18, Math.round(dist / 5)));
-  const positions = new Float32Array(count * 3);
+  const size = Math.max(0.7, Math.min(dist * 0.014, 2.1));
+  const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.PointsMaterial({
-    color,
-    size: Math.max(0.7, Math.min(dist * 0.014, 2.1)),
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.95,
-    depthWrite: false,
-    fog: false,
-  });
-  const mesh = new THREE.Points(geo, mat);
-  mesh.frustumCulled = false;
-  const flow = {
-    path, lengths, pathCount, total, count, time: 0,
-    speed: Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1))),
-  };
-  mesh.userData.flow = flow;
-  const attr = geo.attributes.position;
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  const rows = new Float32Array(count);
+  const params = new Float32Array(count);
+  const speeds = new Float32Array(count);
+  const sizes = new Float32Array(count);
+  const colors = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
-    flowAt(flow, i / count, flowScratch);
-    attr.setXYZ(i, flowScratch[0], flowScratch[1], flowScratch[2]);
+    rows[i] = flows.length;
+    params[i] = i / count;
+    speeds[i] = speed;
+    sizes[i] = size;
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
   }
+  geo.setAttribute("aRow", new THREE.BufferAttribute(rows, 1));
+  geo.setAttribute("aU", new THREE.BufferAttribute(params, 1));
+  geo.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
+  geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+  geo.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
+  const mesh = new THREE.Points(geo, flowMaterial);
+  mesh.frustumCulled = false;
+  mesh.userData.flow = { path, lengths, pathCount, total, count, speed, row: flows.length };
   flows.push(mesh);
+  flowRows = Math.max(1, flows.length);
+  ensureFlowTexture(flowRows);
+  writeFlowRow(mesh.userData.flow, flowRows - 1);
   return mesh;
 }
 
@@ -925,21 +1173,15 @@ function flowShown(mesh) {
   return true;
 }
 
-function tickFlows(dt) {
-  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+function tickFlows(dt, advance) {
   let shown = false;
   for (const mesh of flows) {
     if (!flowShown(mesh)) continue;
     shown = true;
-    const flow = mesh.userData.flow;
-    flow.time = wrapUnit(flow.time + step * flow.speed);
-    const attr = mesh.geometry.attributes.position;
-    for (let i = 0; i < flow.count; i++) {
-      flowAt(flow, wrapUnit(flow.time + i / flow.count), flowScratch);
-      attr.setXYZ(i, flowScratch[0], flowScratch[1], flowScratch[2]);
-    }
-    attr.needsUpdate = true;
+    break;
   }
+  // One uniform write animates every particle on screen.
+  if (shown && advance) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   return shown;
 }
 
@@ -954,6 +1196,7 @@ function addArc(group, from, to, color, lift, data) {
 
 function applyMode() {
   syncLit();
+  updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
     const change = (byPackage.get(plinth.id) || {}).change || "same";
@@ -1342,9 +1585,10 @@ function linkColor(change, std) {
 
 function drawSelectionArcs(id, inbound) {
   clearGroup(selectArcs);
-  // One point for the whole fan. Per-edge clearance used to raise each end to
-  // a different height, so the arcs neither met nor landed on the far module.
-  const hub = packageAnchor(id);
+  // One point for the whole fan. An outgoing fan leaves from the node hub, the
+  // single point above every package, so the outgoing arcs share one origin
+  // too. Inbound arcs still land on the module that was selected.
+  const hub = inbound ? packageAnchor(id) : nodeHub();
   if (!hub) return;
   const edges = packageEdges(id, inbound);
   for (const edge of edges) {
@@ -1510,11 +1754,13 @@ function focusCamera() {
 }
 
 function clearGroup(group) {
+  let dropped = false;
   for (const child of [...group.children]) {
     child.traverse((obj) => {
       if (obj.userData && obj.userData.flow) {
         const index = flows.indexOf(obj);
         if (index >= 0) flows.splice(index, 1);
+        dropped = true;
       }
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
@@ -1527,6 +1773,7 @@ function clearGroup(group) {
     });
     group.remove(child);
   }
+  if (dropped) syncFlowTexture();
 }
 
 function hitTest() {
@@ -2168,7 +2415,10 @@ function animate(now) {
   // Left running, every visible arc rewrites its points every frame and the
   // loop never parks, which is what pegged the CPU with the scene at rest.
   const userActive = tweening || pointerDirty || viewDirty || (flying && !idleSpin);
-  const flowing = userActive ? tickFlows(dt) : false;
+  const flowing = tickFlows(dt, userActive || idleSpin);
+  // The halo runs on the same clock: it moves while the scene is alive and
+  // holds still when the loop parks, so a selection never wakes the loop.
+  if (userActive || idleSpin) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   if (idleSpin) {
     if (pointerDirty) onHover(null);
     pointerDirty = false;
@@ -2421,3 +2671,4 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 window.addEventListener("resize", resizeView);
 
 main();
+
