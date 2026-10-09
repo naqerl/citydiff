@@ -748,9 +748,9 @@ function buildArcs() {
   }
 }
 
-// The arc leaves just above the roof: the centre of the top face of the node,
-// plus a hair so the line does not z-fight with the roof itself.
-const LAND = 0.35;
+// The arc starts at the top face itself: the centre of the roof plus a hair,
+// so the line does not z-fight with the roof and reads as leaving the building.
+const LAND = 0.12;
 
 function roofClear(box) {
   return Math.max(1.2, Math.min(Math.max(box.w, box.d) * 0.045, 3));
@@ -832,9 +832,9 @@ function segmentRectSpan(from, to, box) {
 // is capped so one tall neighbor cannot throw the whole fan into the sky.
 function clearanceLift(from, to) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  // A low bow: arcs skim the roofs instead of sweeping over the city. The loop
-  // below still raises any arc that would otherwise pass through a building.
-  const bow = Math.max(2, Math.min(dist * 0.1, 8));
+  // Curved, but not a dome: the arc bends enough to read as a swoop from roof
+  // to roof. The loop below raises any arc whose path crosses a building.
+  const bow = Math.max(2.5, Math.min(dist * 0.16, 14));
   let lift = bow;
   const y0 = from[1];
   const y1 = to[1];
@@ -856,7 +856,7 @@ function clearanceLift(from, to) {
       if (need > lift) lift = need;
     }
   }
-  return Math.min(lift, 13);
+  return Math.min(lift, 18);
 }
 
 // The call leaves the rendered top of the caller and lands on the callee.

@@ -371,11 +371,10 @@ export function arcBetween(from, to, liftMin = 0) {
   const dy = to[1] - from[1];
   const dz = to[2] - from[2];
   const dist = Math.hypot(dx, dy, dz);
-  // A low bow. This used to be max(3, min(dist * 0.22, 26)) and it overrode
-  // every caller's clearance, so arcs swept over the city no matter what the
-  // caller asked for. Keep it near the skyline; callers raise it when a roof
-  // is actually in the way.
-  const bow = Math.max(1.5, Math.min(dist * 0.08, 7));
+  // The bow a caller gets when it asks for nothing: curved enough to read as a
+  // swoop from roof to roof, without becoming a dome over the city. Callers
+  // pass clearance when a roof is actually in the way.
+  const bow = Math.max(2.5, Math.min(dist * 0.16, 14));
   const lift = Math.max(bow, liftMin || 0);
   const mid = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift, (from[2] + to[2]) / 2];
   const n = dist > 48 ? 28 : 16;
