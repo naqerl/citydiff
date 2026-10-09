@@ -1008,7 +1008,7 @@ const flowMaterial = new THREE.ShaderMaterial({
       vec3 p1 = texture2D(uPath, vec2((i0 + 1.5) / SAMPLES, row)).xyz;
       vec4 mv = modelViewMatrix * vec4(mix(p0, p1, f), 1.0);
       gl_Position = projectionMatrix * mv;
-      gl_PointSize = max(1.5, aSize * uScale / max(0.001, -mv.z));
+      gl_PointSize = max(1.0, aSize * uScale / max(0.001, -mv.z));
       vColor = aColor;
     }
   `,
@@ -1102,8 +1102,9 @@ function makeFlow(from, to, color, lift) {
     lengths[i] = total;
   }
   if (!(total > 0)) return null;
-  const count = Math.max(4, Math.min(12, Math.round(dist / 7)));
-  const size = Math.max(0.7, Math.min(dist * 0.014, 2.1));
+  // Few and small: the march is a hint about direction, not a light show.
+  const count = Math.max(2, Math.min(6, Math.round(dist / 12)));
+  const size = Math.max(0.32, Math.min(dist * 0.0055, 0.85));
   const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
