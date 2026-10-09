@@ -299,9 +299,9 @@ jq '.[] | {path, entries: [.entries[] | {name, kind, calls}]}' /tmp/diff.json
 Diff the last N commits of the current branch:
 
 \`\`\`sh
-cd "$REPO_DIR"
-base=$(git rev-parse HEAD~20)
-$BIN_NAME -path . -range "$base..HEAD" -json > /tmp/range.json
+cd "\$REPO_DIR"
+base=\$(git rev-parse HEAD~20)
+$BIN_NAME -path . -range "\$base..HEAD" -json > /tmp/range.json
 \`\`\`
 
 ### Launch the 3D viewer in the background
