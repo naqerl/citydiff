@@ -124,6 +124,9 @@ const IDLE_YAW = 0.28;
 // The idle orbit is slow and the scene is static, so it does not need every
 // frame. 30fps halves the render cost and reads the same.
 const IDLE_FRAME_MS = 33;
+// A frame that carries only decoration — marching particles, the halo band —
+// runs slower still. 20fps is plenty for a 0.2 rad/s orbit and a slow march.
+const DECOR_FRAME_MS = 50;
 // The search box swallows the fly keys while it has focus. The idle orbit is
 // not a fly key: it keeps turning in every focus, this box included.
 const NO_KEYS = new Set();
@@ -729,29 +732,31 @@ function vary(id, color) {
 }
 
 function buildArcs() {
-  // The initial diff view speaks about districts, not about files: every
-  // outgoing dependency leaves from one hub over the high-level packages and
-  // lands on the district it points at. One origin, one fan.
-  const hub = nodeHub();
+  // Dependencies are read between districts. An arc leaves the hub of the
+  // district that imports and lands on the district it points at, so the fan
+  // stands over the source it belongs to instead of over the whole city.
   const districts = new Map();
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
     for (const dep of pkg.deps || []) {
       if (dep.change !== "added" && dep.change !== "removed") continue;
+      const from = topLevelId(pkg.id);
       const target = topLevelId(dep.to);
-      if (!target || target === topLevelId(pkg.id)) continue;
+      if (!target || target === from) continue;
       const to = packageAnchor(target);
       if (!to) continue;
-      const known = districts.get(target);
-      districts.set(target, {
+      const key = `${from}->${target}`;
+      const known = districts.get(key);
+      districts.set(key, {
+        from,
         to,
         id: target,
         change: known ? strongerChange(known.change, dep.change) : dep.change,
-        from: known ? known.from : topLevelId(pkg.id),
       });
     }
   }
   for (const entry of districts.values()) {
+    const hub = districtHub(entry.from);
     addArc(arcGroup, hub, entry.to, changeColor(entry.change), clearanceLift(hub, entry.to), {
       kind: "dep", id: entry.id, label: entry.id, from: entry.from, change: entry.change, district: true,
     });
@@ -767,7 +772,6 @@ function roofClear(box) {
 }
 
 let ownTopCache = null;
-let hubCache = null;
 let topLevelsCache = null;
 
 // The high-level packages: the districts directly under the root, the level
@@ -797,25 +801,27 @@ function topLevelId(id) {
 // every high-level package, centred over them. "Minimal" means no more height
 // than the tallest district roof demands. Layout heights only, so the point
 // does not jump when towers open and close.
-function nodeHub() {
-  if (hubCache) return hubCache;
+// The hub of a district: the centre of the district itself, lifted to the
+// lowest height that still clears every package inside it. Outgoing edges of
+// anything in the district leave from here, so the origin is over the source
+// it belongs to, not over the middle of the city.
+const districtHubs = new Map();
+
+function districtHub(id) {
+  const district = topLevelId(id);
+  const cached = districtHubs.get(district);
+  if (cached) return cached;
+  const box = laid.packages.find((item) => item.id === district);
   let top = 0;
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  for (const box of topLevels()) {
-    top = Math.max(top, ownTop(box.id));
-    minX = Math.min(minX, box.x);
-    maxX = Math.max(maxX, box.x + box.w);
-    minZ = Math.min(minZ, box.z);
-    maxZ = Math.max(maxZ, box.z + box.d);
+  for (const item of laid.packages) {
+    if (item.id !== district && !item.id.startsWith(`${district}/`)) continue;
+    top = Math.max(top, ownTop(item.id));
   }
-  for (const ext of laid.externals) top = Math.max(top, ext.y + ext.h);
-  const cx = Number.isFinite(minX) ? (minX + maxX) / 2 : 0;
-  const cz = Number.isFinite(minZ) ? (minZ + maxZ) / 2 : 0;
-  hubCache = [cx, top + LAND, cz];
-  return hubCache;
+  const cx = box ? box.x + box.w / 2 : 0;
+  const cz = box ? box.z + box.d / 2 : 0;
+  const hub = [cx, top + LAND, cz];
+  districtHubs.set(district, hub);
+  return hub;
 }
 
 function ownTop(id) {
@@ -1096,7 +1102,7 @@ function makeFlow(from, to, color, lift) {
     lengths[i] = total;
   }
   if (!(total > 0)) return null;
-  const count = Math.max(5, Math.min(18, Math.round(dist / 5)));
+  const count = Math.max(4, Math.min(12, Math.round(dist / 7)));
   const size = Math.max(0.7, Math.min(dist * 0.014, 2.1));
   const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
   const geo = new THREE.BufferGeometry();
@@ -1173,20 +1179,17 @@ function flowShown(mesh) {
   return true;
 }
 
-function tickFlows(dt, advance) {
+// Particles march while they are on screen; the shader does the walking, so
+// this only reports whether anything needs a frame.
+function tickFlows(dt) {
   let shown = false;
   for (const mesh of flows) {
     if (!flowShown(mesh)) continue;
     shown = true;
     break;
   }
-  // One uniform write animates every particle on screen. Report "animating",
-  // not "visible": a frozen particle needs no frame, so the loop can park.
-  if (shown && advance) {
-    flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
-    return true;
-  }
-  return false;
+  if (shown) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  return shown;
 }
 
 function addArc(group, from, to, color, lift, data) {
@@ -1589,10 +1592,9 @@ function linkColor(change, std) {
 
 function drawSelectionArcs(id, inbound) {
   clearGroup(selectArcs);
-  // One point for the whole fan. An outgoing fan leaves from the node hub, the
-  // single point above every package, so the outgoing arcs share one origin
-  // too. Inbound arcs still land on the module that was selected.
-  const hub = inbound ? packageAnchor(id) : nodeHub();
+  // One point for the whole fan, at the centre of the district the node lives
+  // in. Outgoing arcs leave that hub; inbound arcs land on it.
+  const hub = districtHub(id);
   if (!hub) return;
   const edges = packageEdges(id, inbound);
   for (const edge of edges) {
@@ -2415,15 +2417,13 @@ function animate(now) {
     settledTarget.copy(controls.target);
   }
   // Particles are decoration. They advance while the scene is being driven —
-  // a tween, a fly key, a rebuild, the orbit — and freeze once it is not.
-  // Moving the pointer is not one of them: a hover redraws one frame for the
-  // tooltip and then leaves the clock alone, so a wandering cursor cannot keep
-  // the particles and the halo running forever.
-  const animating = tweening || viewDirty || (flying && !idleSpin) || idleSpin;
-  const flowing = tickFlows(dt, animating);
-  // The halo runs on the same clock: it moves while the scene is alive and
-  // holds still when the loop parks, so a selection never wakes the loop.
-  if (animating) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  // Decoration never stops: particles march and the halo travels whenever they
+  // are on screen. It is cheap — one uniform write each, all of it on the GPU —
+  // so the only cost is the frame itself, and a frame that carries nothing but
+  // decoration is paced lower than one the user is driving.
+  const motion = tweening || viewDirty || (flying && !idleSpin);
+  const flowing = tickFlows(dt);
+  if (halo.visible) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   let hovered = false;
   if (idleSpin) {
     hovered = pointerDirty;
@@ -2434,15 +2434,12 @@ function animate(now) {
     hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (moved || flowing || viewDirty || hovered) {
+  if (moved || flowing || viewDirty || hovered || halo.visible) {
     renderer.render(scene, camera);
     viewDirty = false;
   }
-  // Only the orbit is running: keep it, but not at the full frame rate. A held
-  // key does not keep the loop alive by itself — if it moves nothing, the view
-  // parks until the next event.
-  if (animating || flowing || introSpin) {
-    requestFrame(animating && !idleSpin ? 0 : IDLE_FRAME_MS);
+  if (motion || idleSpin || flowing || halo.visible || introSpin) {
+    requestFrame(motion ? 0 : (idleSpin ? IDLE_FRAME_MS : DECOR_FRAME_MS));
   } else {
     parkLoop();
   }
