@@ -144,8 +144,10 @@ func splitPath(s string) []string {
 }
 
 // assignModules places each file in a crate namespace and module path.
-// src/lib.rs and src/main.rs are the crate root of the Cargo package. Files
-// under src/bin, tests, examples and benches are each their own root.
+// src/lib.rs and src/main.rs are the crate root of the Cargo package. A file
+// directly under src/bin, tests, examples or benches is its own crate root.
+// A file in a subdirectory there, such as tests/common/mod.rs, is a module
+// shared by the crates of that directory.
 func assignModules(drafts []*draft, crates []crateRoot) {
 	for _, d := range drafts {
 		root, ok := bestCrate(crates, path.Dir(d.path))
@@ -158,17 +160,33 @@ func assignModules(drafts []*draft, crates []crateRoot) {
 		}
 		d.ns = root.dir
 		stem := strings.TrimSuffix(rel, ".rs")
+		var target string
 		switch {
 		case ok && strings.HasPrefix(rel, "src/bin/"):
-			d.ns += "\x00" + stem
-			d.module = nil
+			target = "src/bin"
 		case ok && strings.HasPrefix(rel, "src/"):
 			d.module = moduleSegs(strings.TrimPrefix(stem, "src/"))
+		case ok && strings.Contains(rel, "/"):
+			target = rel[:strings.IndexByte(rel, '/')]
 		case ok:
-			d.ns += "\x00" + stem
-			d.module = nil
+			target = "."
 		default:
 			d.module = moduleSegs(strings.TrimPrefix(stem, "src/"))
+		}
+		var targetPath []string
+		if target != "" {
+			d.ns += "\x00" + target
+			rest := strings.TrimPrefix(stem, target+"/")
+			segs := strings.Split(rest, "/")
+			if len(segs) == 1 || (target == "src/bin" && len(segs) == 2 && segs[1] == "main") {
+				targetPath = append(strings.Split(target, "/"), segs[0])
+			} else {
+				d.module = moduleSegs(rest)
+				targetPath = strings.Split(target, "/")
+			}
+			if target == "." {
+				targetPath = targetPath[1:]
+			}
 		}
 		for i := range d.uses {
 			d.uses[i].mod = append(append([]string{}, d.module...), d.uses[i].mod...)
@@ -179,11 +197,7 @@ func assignModules(drafts []*draft, crates []crateRoot) {
 			}
 			continue
 		}
-		parts := []string{d.crate}
-		if strings.Contains(d.ns, "\x00") {
-			parts = append(parts, strings.Split(stem, "/")...)
-		}
-		parts = append(parts, d.module...)
+		parts := append(append([]string{d.crate}, targetPath...), d.module...)
 		d.importPath = strings.Join(parts, "/")
 		d.pkg = parts[len(parts)-1]
 	}

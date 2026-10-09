@@ -114,3 +114,24 @@ func name(e lib.Entity) string {
 	}
 	return ""
 }
+
+func TestParseTestHelperModuleIsSharedByTestCrates(t *testing.T) {
+	files := mustParseFiles(t,
+		lib.File{Path: "Cargo.toml", Src: []byte("[package]\nname = \"acme\"\n")},
+		lib.File{Path: "tests/tests.rs", Src: []byte("mod testenv;\nuse testenv::TestEnv;\nfn t() { TestEnv::new(); }\n")},
+		lib.File{Path: "tests/testenv/mod.rs", Src: []byte("pub struct TestEnv;\nimpl TestEnv { pub fn new() -> Self { TestEnv } }\n")},
+		lib.File{Path: "src/bin/tool/main.rs", Src: []byte("fn main() {}\n")},
+	)
+	got := []string{files[0].ImportPath, files[1].ImportPath, files[1].Package, files[2].ImportPath}
+	want := []string{"acme/tests/tests", "acme/tests/testenv", "testenv", "acme/src/bin/tool"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("import paths = %v", got)
+	}
+	if imp := files[0].Entities[0].(lib.ImportEntry); imp.Path != "acme/tests/testenv" {
+		t.Fatalf("use = %v", imp)
+	}
+	want2 := []lib.Call{{Expr: "TestEnv::new", Ref: &lib.CallRef{Path: "tests/testenv/mod.rs", Name: "new", Recv: "TestEnv"}}}
+	if got := callRefs(t, files, "tests/tests.rs", "t"); !reflect.DeepEqual(got, want2) {
+		t.Fatalf("t calls = %+v", got)
+	}
+}
