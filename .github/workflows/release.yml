@@ -25,6 +25,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          - ubuntu-24.04-arm
           - macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,10 +42,14 @@ jobs:
 
       - name: Build
         # CGO is required: the parser links the tree-sitter C bindings, so this
-        # matrix is native-arch per runner instead of cross-compiling.
+        # matrix is native-arch per runner instead of cross-compiling. That is
+        # why linux/arm64 needs an arm64 runner (ubuntu-24.04-arm, free for
+        # public repos) rather than GOARCH=arm64 on the amd64 one.
         env:
           CGO_ENABLED: '1'
-        run: go build -trimpath -ldflags "-s -w" -o "dist/${BIN_NAME}" ./cmd/cli
+        run: |
+          echo "building $(go env GOOS)/$(go env GOARCH) on ${{ matrix.os }}"
+          go build -trimpath -ldflags "-s -w" -o "dist/${BIN_NAME}" ./cmd/cli
 
       - name: Smoke test
         run: |
