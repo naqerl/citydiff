@@ -104,3 +104,24 @@ test("an empty tour does nothing", () => {
   player.play();
   assert.deepEqual(shown, []);
 });
+
+import { reloadFor, rangeLabel } from "./tour.js";
+
+test("a tour that switched the range reloads without ?tour", () => {
+  const reply = { scene: { switched: true, range: "a..b" } };
+  assert.equal(reloadFor(reply, "http://h/?tour=x.json&mode=changes"), "http://h/?mode=changes");
+  assert.equal(reloadFor(reply, "http://h/"), "http://h/");
+});
+
+test("a tour on the current range does not reload", () => {
+  assert.equal(reloadFor({ scene: { switched: false } }, "http://h/?tour=x"), null);
+  assert.equal(reloadFor({}, "http://h/"), null);
+  assert.equal(reloadFor(null, "http://h/"), null);
+});
+
+test("the range line", () => {
+  assert.equal(rangeLabel("a..b", "a..b"), "a..b");
+  assert.equal(rangeLabel("a..b", "aaaa..bbbb"), "a..b (scene aaaa..bbbb)");
+  assert.equal(rangeLabel("", "x..y"), "x..y");
+  assert.equal(rangeLabel("", ""), "");
+});

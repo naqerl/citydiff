@@ -5,6 +5,8 @@ import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { packageCallEdges } from "./edges.js";
 import { mountTour } from "./tourui.js";
+import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
+import { KEYBINDS } from "./keys.js";
 
 // shadcn zinc. The city stays in this grayscale.
 const STONE = new THREE.Color(0xf4f4f5);
@@ -130,6 +132,9 @@ let tourLit = null;
 let tourLinks = null;
 let tourUI = null;
 let linkPoints = null;
+// The other points a fit of the current links must keep in view: tower
+// bases and arc crowns.
+let linkFrame = [];
 const held = new Set();
 const flyDir = new THREE.Vector3();
 let lastFrame = 0;
@@ -196,19 +201,41 @@ const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 // resize hook is assigned there; until then resizing has nothing to rescale.
 let updatePointScale = () => {};
 
+let viewInsets = { left: 0, right: 0, free: 1, width: 1, height: 1 };
+
+function coverOf(selector) {
+  const el = document.querySelector(selector);
+  if (!el || el.hidden || el.classList.contains("is-collapsed")) return 0;
+  return el.getBoundingClientRect().width;
+}
+
+// The camera fit for a box, in the free area between the sidebars.
+function fitTo(points, dir = FIT_DIR) {
+  const pose = fitPose(boxOf(points), dir, {
+    fov: camera.fov,
+    width: viewInsets.width,
+    height: viewInsets.height,
+    left: viewInsets.left,
+    right: viewInsets.right,
+  });
+  return { pos: new THREE.Vector3(...pose.pos), target: new THREE.Vector3(...pose.target) };
+}
+// In front of the city (+z), a little to the right (+x), above the arcs.
+const FIT_DIR = [0.32, 0.48, 0.78];
+
 function resizeView() {
   const w = viewEl.clientWidth;
   const h = viewEl.clientHeight;
   if (w < 2 || h < 2) return;
   camera.aspect = w / h;
-  const side = document.querySelector("#side");
-  const cover = side && !side.classList.contains("is-collapsed") ? side.getBoundingClientRect().width : 0;
-  if (cover > 8 && w > cover + 40) {
-    // Look-at screen X is w/2 - offsetX. The open viewbox center is (w + cover) / 2.
-    camera.setViewOffset(w, h, -cover / 2, 0, w, h);
-  } else {
-    camera.clearViewOffset();
-  }
+  // The city is drawn between the two sidebars: the look-at point sits in
+  // the middle of the free area, and fits use only its width.
+  viewInsets = insets(w, coverOf("#side"), coverOf("#tour-side"));
+  viewInsets.width = w;
+  viewInsets.height = h;
+  const offset = viewOffsetX(viewInsets.left, viewInsets.right);
+  if (offset) camera.setViewOffset(w, h, offset, 0, w, h);
+  else camera.clearViewOffset();
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
   updatePointScale();
@@ -368,7 +395,7 @@ async function main() {
   applyMode();
   applyQuery();
   requestFrame();
-  tourUI = mountTour({ apply: applyTourStep, clear: clearTour });
+  tourUI = mountTour({ apply: applyTourStep, clear: clearTour, layout: () => requestAnimationFrame(resizeView) });
   const wanted = new URLSearchParams(location.search).get("tour");
   tourUI.loadURL(wanted || "./tour.json");
 }
@@ -409,7 +436,7 @@ function applyTourStep(step) {
         entities.add(node.id);
         if (found.pkg) packages.add(found.pkg.id);
         const at = entityAnchor(found);
-        if (at) points.push(at);
+        if (at) points.push(at, ...entityExtent(found));
       } else if (byPackage.has(node.id)) {
         packages.add(node.id);
         points.push(...packagePoints(node.id));
@@ -481,18 +508,10 @@ function packagePoints(id) {
 // Frame a step's nodes with room for the arcs that bow above them. A
 // single node gets a neighbourhood around it, not a close-up of one roof.
 function tourPose(points) {
-  const pts = points.slice();
   let top = -Infinity;
   for (const p of points) top = Math.max(top, p[1]);
   const c = points[0];
-  if (points.length === 1) {
-    for (const [dx, dz] of [[-12, -12], [12, 12]]) pts.push([c[0] + dx, c[1], c[2] + dz]);
-  }
-  pts.push([c[0], top + 10, c[2]]);
-  const pose = frameFan(pts);
-  // Back off a little so a tall package in front does not fill the frame.
-  pose.pos.sub(pose.target).multiplyScalar(1.3).add(pose.target);
-  return pose;
+  return framePose(points.concat([[c[0], top + 10, c[2]]]));
 }
 
 // The camera the select or focus just set up, as points to frame.
@@ -634,7 +653,7 @@ function frameCity() {
   for (const ext of laid.externals) {
     points.push({ x: ext.x, y: ext.y + ext.h, z: ext.z });
   }
-  const aspect = camera.aspect > 0.05 ? camera.aspect : 1;
+  const aspect = (camera.aspect > 0.05 ? camera.aspect : 1) * (viewInsets.free / Math.max(1, viewInsets.width));
   const dist = fitDistance(points, look, dir, camera.fov, aspect, 0.92);
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   return {
@@ -1127,6 +1146,15 @@ function towerTop(found) {
   return [box.x + box.w / 2, box.y + box.h + 0.55, box.z + box.d / 2];
 }
 
+// entityExtent is the top and the base of an entity's drawn block.
+function entityExtent(found) {
+  if (!found || !found.entity) return [];
+  const slot = slotById.get(found.entity.id);
+  const box = slot ? visualBox(slot, slotOpen(slot)) : found.box;
+  if (!box) return [];
+  return [[box.x, box.y, box.z], [box.x + box.w, box.y + box.h + 0.55, box.z + box.d]];
+}
+
 function entityAnchor(found) {
   const top = towerTop(found);
   if (top) return top;
@@ -1421,6 +1449,7 @@ function addArc(group, from, to, color, lift, data, fromId, toId) {
 }
 
 function applyMode() {
+  linkFrame = [];
   syncLit();
   updateHalo();
   const overlay = mode === "overlay";
@@ -1487,7 +1516,10 @@ function applyMode() {
     if (arcSubject && lit && lit.links && lit.links.length) drawCallLinks(selectArcs, lit.links);
     else if (arcSubject) drawSelectionArcs(arcSubject.id, arcSubject.inbound);
     else if (tourLinks) drawCallLinks(selectArcs, tourLinks);
-    else clearGroup(selectArcs);
+    else {
+      clearGroup(selectArcs);
+      linkFrame = [];
+    }
   }
   updateHUD();
   viewDirty = true;
@@ -1649,6 +1681,7 @@ function drawEntityLinks(group, found) {
 function drawCallLinks(group, links) {
   clearGroup(group);
   const points = [];
+  const frame = [];
   for (const link of links) {
     const from = towerTop(link.from);
     const to = towerTop(link.target);
@@ -1657,10 +1690,14 @@ function drawCallLinks(group, links) {
     const std = !!(link.target.pkg && isStdPackage(link.target.pkg.id));
     const color = linkColor(link.change, std);
     const data = { kind: "call", entityId: link.target.entity.id, step: link.step, label: entityLabel(link.target.entity) };
-    addArc(group, from, to, color, callLift(from, to), data);
+    const lift = callLift(from, to);
+    addArc(group, from, to, color, lift, data);
     points.push(to);
+    frame.push(...entityExtent(link.from), ...entityExtent(link.target));
+    frame.push([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift * 0.75, (from[2] + to[2]) / 2]);
   }
   linkPoints = points;
+  linkFrame = frame;
 }
 
 function changeColor(change) {
@@ -1733,8 +1770,8 @@ function selectEntity(id) {
   entitySubject = id;
   arcSubject = null;
   applyMode();
-  const points = linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)];
-  const pose = framePose(points, points[0]);
+  const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
+  const pose = framePose(points);
   flyTo(pose.pos, pose.target);
   noteJump();
 }
@@ -1849,6 +1886,7 @@ function flyToPackage(id) {
   if (box) {
     points.push([box.x, box.y + box.h, box.z]);
     points.push([box.x + box.w, box.y + box.h, box.z + box.d]);
+    points.push([box.x, box.y, box.z + box.d], [box.x + box.w, box.y, box.z]);
   }
   // The bow crowns above the higher end. Keep it inside the frame with the landings.
   let top = origin[1];
@@ -1859,51 +1897,14 @@ function flyToPackage(id) {
 }
 
 function frameFan(points) {
-  let cx = 0;
-  let cy = 0;
-  let cz = 0;
-  for (const p of points) {
-    cx += p[0];
-    cy += p[1];
-    cz += p[2];
-  }
-  const n = points.length || 1;
-  const look = { x: cx / n, y: cy / n, z: cz / n };
-  const dir = { x: 0.32, y: 0.48, z: 0.78 };
-  const aspect = camera.aspect > 0.05 ? camera.aspect : 1;
-  const dist = fitDistance(points.map((p) => ({ x: p[0], y: p[1], z: p[2] })), look, dir, camera.fov, aspect, 0.84);
-  const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
-  return {
-    pos: new THREE.Vector3(look.x + (dir.x / len) * dist, look.y + (dir.y / len) * dist, look.z + (dir.z / len) * dist),
-    target: new THREE.Vector3(look.x, look.y, look.z),
-  };
+  return fitTo(points);
 }
 
-function framePose(points, lookAt) {
-  let minX = Infinity;
-  let minY = Infinity;
-  let minZ = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let maxZ = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p[0]);
-    minY = Math.min(minY, p[1]);
-    minZ = Math.min(minZ, p[2]);
-    maxX = Math.max(maxX, p[0]);
-    maxY = Math.max(maxY, p[1]);
-    maxZ = Math.max(maxZ, p[2]);
-  }
-  const span = Math.max(maxX - minX, maxZ - minZ, (maxY - minY) * 1.4, points.length < 2 ? 24 : 18);
-  const look = lookAt
-    ? new THREE.Vector3(lookAt[0], lookAt[1] + span * 0.08, lookAt[2])
-    : new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
-  const dist = span * 0.92;
-  // In front of the city (+z) and a little to the right (+x), above the arcs.
-  return {
-    pos: new THREE.Vector3(look.x + dist * 0.32, look.y + dist * 0.48, look.z + dist * 0.78),
-    target: look,
-  };
+// framePose fits the camera to every point, plus the bases of the towers
+// and the crowns of the arcs the current links draw, so the whole subject
+// is in view from roof to ground.
+function framePose(points) {
+  return fitTo(points.concat(linkFrame));
 }
 
 function flyTo(pos, target) {
@@ -1965,9 +1966,8 @@ function addBodyBars(origin, entity, overlay) {
 }
 
 function focusCamera() {
-  const points = (focus && focus.points) || [];
-  const look = points[0] || [0, 0, 0];
-  return framePose(points.length ? points : [look], look);
+  const points = ((focus && focus.points) || []).concat(entityExtent(focus));
+  return framePose(points.length ? points : [[0, 0, 0]]);
 }
 
 function clearGroup(group) {
@@ -2643,8 +2643,8 @@ function restoreSubject(entry) {
   }
   const found = byEntity.get(entry.selected.id);
   if (!found || !found.box) return;
-  const points = linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)];
-  const pose = framePose(points, points[0]);
+  const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
+  const pose = framePose(points);
   flyTo(pose.pos, pose.target);
 }
 
@@ -2981,6 +2981,12 @@ window.addEventListener("keyup", (event) => {
   requestFrame();
 });
 window.addEventListener("blur", () => { held.clear(); requestFrame(); });
+// The legend's key list is written from KEYBINDS, the same list the tour
+// keys and the README are checked against.
+document.querySelector("#keys").innerHTML = KEYBINDS.map(
+  (b) => "<li>" + b.keys.map((k) => "<kbd>" + k.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</kbd>").join(" ") + " " + b.does + "</li>",
+).join("");
+
 function setLegend(open) {
   hud.legend.hidden = !open;
 }

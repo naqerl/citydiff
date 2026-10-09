@@ -1,39 +1,16 @@
-// The tour panels: the note in the top-right corner, the roadmap under it
-// and the player bar. Everything here runs on a step change or a click,
+// The tour sidebar on the right: title and range, the note, the code, the
+// roadmap, and the player controls at the bottom. It mirrors the left
+// sidebar: t hides and shows it like b does the left one. Everything here
+// runs on a step change or a click,
 // never per frame. The step itself is applied by the scene through apply().
 
-import { createPlayer } from "./tour.js";
+import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
+import { tourAction } from "./keys.js";
 import { renderMarkdown, lineDiff, escapeHTML } from "./markdown.js";
 
-export function mountTour({ apply, clear }) {
-  const root = document.createElement("div");
-  root.id = "tour";
-  root.hidden = true;
-  root.innerHTML = `
-    <section class="tour-card" id="tour-note">
-      <header><span id="tour-count"></span><h2 id="tour-step-title"></h2></header>
-      <div id="tour-body"></div>
-      <div id="tour-code" hidden></div>
-    </section>
-    <section class="tour-card" id="tour-road">
-      <header><h3 id="tour-title"></h3><button type="button" id="tour-close" title="Close the tour">×</button></header>
-      <ol id="tour-steps"></ol>
-    </section>`;
-  const bar = document.createElement("div");
-  bar.id = "tour-bar";
-  bar.hidden = true;
-  bar.innerHTML = `
-    <button type="button" id="tour-prev" title="Previous step (←)">‹</button>
-    <button type="button" id="tour-play" title="Play or pause (space)">▶</button>
-    <button type="button" id="tour-next" title="Next step (→)">›</button>
-    <span id="tour-counter"></span>
-    <div id="tour-progress"><i></i></div>`;
-  const drop = document.createElement("div");
-  drop.id = "tour-drop";
-  drop.hidden = true;
-  drop.textContent = "Drop a tour script";
-  document.body.append(root, bar, drop);
-
+export function mountTour({ apply, clear, layout }) {
+  const root = document.getElementById("tour-side");
+  const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
   const ui = {
     count: el("tour-count"),
@@ -41,10 +18,11 @@ export function mountTour({ apply, clear }) {
     body: el("tour-body"),
     code: el("tour-code"),
     title: el("tour-title"),
+    range: el("tour-range"),
     steps: el("tour-steps"),
     play: el("tour-play"),
     counter: el("tour-counter"),
-    progress: bar.querySelector("#tour-progress i"),
+    progress: root.querySelector("#tour-progress i"),
   };
 
   let tour = null;
@@ -73,7 +51,7 @@ export function mountTour({ apply, clear }) {
   function change(state) {
     ui.counter.textContent = `${state.index + 1} / ${state.count}`;
     ui.play.textContent = state.playing ? "❚❚" : "▶";
-    bar.classList.toggle("is-playing", state.playing);
+    root.classList.toggle("is-playing", state.playing);
     el("tour-prev").disabled = state.index <= 0;
     el("tour-next").disabled = state.index >= state.count - 1;
     // The progress bar is a CSS animation restarted per step: no frame work here.
@@ -116,6 +94,9 @@ export function mountTour({ apply, clear }) {
     if (player) player.stop();
     tour = resolved;
     ui.title.textContent = resolved.title || "Tour";
+    ui.title.title = resolved.title || "";
+    const label = rangeLabel(resolved.range, resolved.scene && resolved.scene.range);
+    ui.range.innerHTML = label ? `range <code>${escapeHTML(label)}</code>` : "no range: the plain tree";
     ui.steps.innerHTML = "";
     resolved.steps.forEach((step, i) => {
       const li = document.createElement("li");
@@ -126,9 +107,7 @@ export function mountTour({ apply, clear }) {
       li.append(btn);
       ui.steps.append(li);
     });
-    root.hidden = false;
-    bar.hidden = false;
-    document.body.classList.add("has-tour");
+    show$(true);
     player = createPlayer(resolved.steps, { show, change });
     player.start();
   }
@@ -137,15 +116,27 @@ export function mountTour({ apply, clear }) {
     if (player) player.stop();
     player = null;
     tour = null;
-    root.hidden = true;
-    bar.hidden = true;
-    document.body.classList.remove("has-tour");
+    show$(false);
     clear();
   }
 
+  // show$ puts the sidebar up or takes it away, and tells the scene its
+  // width changed so the camera re-centres in the free area.
+  function show$(on) {
+    root.hidden = !on;
+    if (on) root.classList.remove("is-collapsed");
+    layout();
+  }
+
+  function setOpen(open) {
+    if (root.hidden) return;
+    root.classList.toggle("is-collapsed", !open);
+    layout();
+  }
+
   function problems(list, source) {
-    root.hidden = false;
-    bar.hidden = true;
+    show$(true);
+    el("tour-controls").hidden = true;
     ui.count.textContent = "";
     ui.stepTitle.textContent = "This tour does not fit the scene";
     ui.body.innerHTML =
@@ -154,6 +145,7 @@ export function mountTour({ apply, clear }) {
       "</ul>";
     ui.code.hidden = true;
     ui.title.textContent = "Tour";
+    ui.range.textContent = "";
     ui.steps.innerHTML = "";
   }
 
@@ -172,6 +164,15 @@ export function mountTour({ apply, clear }) {
       problems(doc.problems || [{ field: "script", message: res.statusText }], source);
       return false;
     }
+    // A tour for another range moved the server's scene: reload to draw it.
+    const next = reloadFor(doc, location.href);
+    if (next) {
+      problems([], "Loading the tour's range " + (doc.scene.range || "") + "…");
+      ui.stepTitle.textContent = "Switching the scene";
+      location.replace(next);
+      return true;
+    }
+    el("tour-controls").hidden = false;
     start(doc);
     return true;
   }
@@ -195,20 +196,21 @@ export function mountTour({ apply, clear }) {
   el("tour-play").addEventListener("click", () => player && player.toggle());
   el("tour-close").addEventListener("click", close);
 
-  const typing = (target) => target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
-  // Capture phase: these keys belong to the tour while it is open, ahead of
-  // the fly keys bound on the window.
+  el("tour-toggle").addEventListener("mouseenter", () => setOpen(false));
+  el("tour-toggle").addEventListener("click", () => setOpen(false));
+  el("tour-logo").addEventListener("click", () => setOpen(true));
+
+  // Capture phase, ahead of the scene's own keys on the window.
   window.addEventListener("keydown", (event) => {
-    if (!player || typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
-    let used = true;
-    if (event.key === " ") player.toggle();
-    else if (event.key === "ArrowRight") player.next();
-    else if (event.key === "ArrowLeft") player.prev();
-    else used = false;
-    if (used) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
+    if (!player) return;
+    const action = tourAction(event);
+    if (!action) return;
+    if (action === "toggle") player.toggle();
+    else if (action === "next") player.next();
+    else if (action === "prev") player.prev();
+    else if (action === "sidebar") setOpen(root.classList.contains("is-collapsed"));
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }, true);
 
   let dragDepth = 0;
