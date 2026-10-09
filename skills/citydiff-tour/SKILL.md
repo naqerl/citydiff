@@ -7,8 +7,9 @@ description: Write a guided "tour" of a commit range's changes that the citydiff
 
 A tour is a JSON script over the citydiff scene of one commit range. The
 viewer plays it: each step moves the camera, lights nodes or a call path,
-and shows a markdown note in the top-right panel. A roadmap lists every
-step, and a player bar has play/pause, prev/next and a step counter.
+and shows a markdown note in the tour sidebar on the right. The sidebar
+holds the tour title and range, the note and code, a roadmap of every step,
+and play/pause, prev/next and a step counter at the bottom.
 
 ## Workflow
 
@@ -49,7 +50,8 @@ step, and a player bar has play/pause, prev/next and a step counter.
    # then open http://127.0.0.1:8787/
    ```
 
-   Equivalent: `citydiff -path REPO -range BASE..HEAD -view -tour tour.json`.
+   Equivalent: `citydiff -path REPO -view -tour tour.json`. Either way the
+   viewer shows the script's `range`, whatever `-range` says.
    A running viewer also plays `?tour=<url>` (fetched by the browser) or a
    script dropped onto the page. The server checks it the same way.
 
@@ -114,9 +116,18 @@ https://github.com/naqerl/citydiff/blob/main/examples/barse-flashcard-versions.t
 
 ## Player
 
-Space plays or pauses (autoplay uses each step's duration), ← and → step,
-and clicking a roadmap entry jumps to it. Dragging or clicking in the city
-pauses autoplay. The × on the roadmap closes the tour.
+| key | action |
+| --- | --- |
+| `space` | play / pause (autoplay uses each step's duration) |
+| `,` `.` | previous / next step |
+| `t` | hide / show the tour sidebar (`b` does the left one) |
+| `?` | the legend, with every key the viewer answers to |
+
+Clicking a roadmap entry jumps to it. Dragging or clicking in the city
+pauses autoplay. The × in the sidebar header closes the tour. Loading a
+tour switches the viewer to the tour's range, so the left sidebar shows
+that range's changes; a range that does not resolve is reported in the
+tour sidebar.
 
 ## Tips
 

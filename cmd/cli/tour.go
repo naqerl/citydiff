@@ -254,7 +254,8 @@ func runTour(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if *commitRange == "" {
+	if *commitRange == "" || (args[0] == "serve" && script.Range != "") {
+		// serve shows the tour's own range, as a loaded tour does in the viewer.
 		*commitRange = script.Range
 	}
 	snap, err := buildSnapshot(*path, *commitRange)
@@ -309,40 +310,6 @@ func runTour(args []string, stdout, stderr io.Writer) error {
 }
 
 var errUsage = errors.New("usage")
-
-// tourHandlers serves the script the viewer was opened with and resolves
-// any script the viewer is handed by URL or drop.
-func tourHandlers(mux *http.ServeMux, snap *snapshot, raw []byte) {
-	mux.HandleFunc("GET /tour.json", func(w http.ResponseWriter, r *http.Request) {
-		if raw == nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(raw)
-	})
-	mux.HandleFunc("POST /api/tour", func(w http.ResponseWriter, r *http.Request) {
-		script, err := tour.Parse(http.MaxBytesReader(w, r.Body, 4<<20))
-		if err != nil {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"problems": []tour.Problem{{Field: "script", Message: err.Error()}}})
-			return
-		}
-		resolved, probs := snap.check(script)
-		if len(probs) > 0 {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"problems": probs})
-			return
-		}
-		writeJSON(w, http.StatusOK, resolved)
-	})
-	mux.HandleFunc("GET /api/code", func(w http.ResponseWriter, r *http.Request) {
-		view, ok := snap.code(r.URL.Query().Get("id"))
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		writeJSON(w, http.StatusOK, view)
-	})
-}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

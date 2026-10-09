@@ -15,7 +15,6 @@ import (
 	"citydiff/lib/git"
 	"citydiff/lib/parser"
 	"citydiff/lib/scene"
-	"citydiff/view"
 )
 
 type jsonFile struct {
@@ -156,19 +155,12 @@ func printScene(sc scene.Scene) error {
 }
 
 func serve(addr string, snap *snapshot, tourRaw []byte) error {
-	payload, err := json.Marshal(snap.scene)
+	v, err := newViewer(snap, tourRaw)
 	if err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /scene.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload)
-	})
-	tourHandlers(mux, snap, tourRaw)
-	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, v.handler())
 }
 
 // The embedded viewer files carry no modification time, so a browser has

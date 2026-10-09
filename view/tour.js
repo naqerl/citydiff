@@ -91,3 +91,25 @@ export function createPlayer(steps, { show, change, setTimer = setTimeout, clear
     },
   };
 }
+
+// reloadFor decides what the page does after the server accepted a tour.
+// When loading it switched the scene to the tour's range, the page must
+// reload to draw the new city; the server keeps the tour as /tour.json, so
+// the reload drops ?tour= and plays the kept script. Otherwise it returns null.
+export function reloadFor(reply, href) {
+  if (!reply || !reply.scene || !reply.scene.switched) return null;
+  const url = new URL(href);
+  url.searchParams.delete("tour");
+  return url.toString();
+}
+
+// rangeLabel is the range line under the tour title: the range the script
+// names and, when the scene's spelling differs, the one the scene was built from.
+export function rangeLabel(tourRange, sceneRange) {
+  const t = (tourRange || "").trim();
+  const s = (sceneRange || "").trim();
+  if (!t && !s) return "";
+  if (!t) return s;
+  if (!s || s === t) return t;
+  return `${t} (scene ${s})`;
+}

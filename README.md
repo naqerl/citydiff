@@ -149,9 +149,12 @@ entry.
 | `enter` | open a function |
 | `esc` | go back |
 | `o` `i` | jump back / forward through the selection history |
-| `b` | show / hide the sidebar |
+| `b` | show / hide the left sidebar |
+| `t` | show / hide the tour sidebar |
 | `0` | reset the view |
 | `m`, `1`, `2` | overview / changes |
+| `space` | tour: play / pause |
+| `,` `.` | tour: previous / next step |
 | `?` | legend |
 
 ## Tours
@@ -210,9 +213,18 @@ hashes and refs match. A running viewer also plays `?tour=<url>` (fetched by the
 script dropped onto the page; the server resolves those through `POST /api/tour` with the same
 checks as the CLI.
 
-The player: **space** plays and pauses (autoplay uses the durations), **←** / **→** step,
-and the roadmap under the note jumps to any step and marks the current one. Dragging or
-clicking in the city pauses autoplay.
+The tour plays in a **right sidebar** that mirrors the left one: the tour title and range,
+the step's note and code, the roadmap (click a step to jump; the current one is marked), and
+the player controls at the bottom. **space** plays and pauses (autoplay uses the durations),
+**,** and **.** step back and forward, and **t** hides and shows the sidebar the way **b** does
+the left one. Dragging or clicking in the city pauses autoplay. The camera centres and fits in
+the space between the two sidebars, and re-centres when either one is shown or hidden.
+
+Loading a tour moves the viewer to the tour's `range`: `tour serve` starts on it, `-view -tour`
+switches to it at startup, and a `?tour=` or dropped script makes the server rebuild the scene
+for that range (when it differs, compared by commit) and the page reload into it, so the left
+sidebar shows the tour's changes. A range that does not resolve in the repository is reported
+in the tour sidebar and leaves the current scene alone.
 
 ## JSON output
 
