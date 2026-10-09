@@ -1180,9 +1180,13 @@ function tickFlows(dt, advance) {
     shown = true;
     break;
   }
-  // One uniform write animates every particle on screen.
-  if (shown && advance) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
-  return shown;
+  // One uniform write animates every particle on screen. Report "animating",
+  // not "visible": a frozen particle needs no frame, so the loop can park.
+  if (shown && advance) {
+    flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+    return true;
+  }
+  return false;
 }
 
 function addArc(group, from, to, color, lift, data) {
@@ -2411,28 +2415,34 @@ function animate(now) {
     settledTarget.copy(controls.target);
   }
   // Particles are decoration. They advance while the scene is being driven —
-  // a tween, a fly key, pointer input, a rebuild — and freeze once it is not.
-  // Left running, every visible arc rewrites its points every frame and the
-  // loop never parks, which is what pegged the CPU with the scene at rest.
-  const userActive = tweening || pointerDirty || viewDirty || (flying && !idleSpin);
-  const flowing = tickFlows(dt, userActive || idleSpin);
+  // a tween, a fly key, a rebuild, the orbit — and freeze once it is not.
+  // Moving the pointer is not one of them: a hover redraws one frame for the
+  // tooltip and then leaves the clock alone, so a wandering cursor cannot keep
+  // the particles and the halo running forever.
+  const animating = tweening || viewDirty || (flying && !idleSpin) || idleSpin;
+  const flowing = tickFlows(dt, animating);
   // The halo runs on the same clock: it moves while the scene is alive and
   // holds still when the loop parks, so a selection never wakes the loop.
-  if (userActive || idleSpin) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  if (animating) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  let hovered = false;
   if (idleSpin) {
+    hovered = pointerDirty;
     if (pointerDirty) onHover(null);
     pointerDirty = false;
   } else if (pointerDirty || moved) {
     onHover(hitTest());
+    hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (moved || flowing || viewDirty) {
+  if (moved || flowing || viewDirty || hovered) {
     renderer.render(scene, camera);
     viewDirty = false;
   }
-  // Only the orbit is running: keep it, but not at the full frame rate.
-  if (moved || flowing || introSpin || tween || held.size) {
-    requestFrame(userActive ? 0 : IDLE_FRAME_MS);
+  // Only the orbit is running: keep it, but not at the full frame rate. A held
+  // key does not keep the loop alive by itself — if it moves nothing, the view
+  // parks until the next event.
+  if (animating || flowing || introSpin) {
+    requestFrame(animating && !idleSpin ? 0 : IDLE_FRAME_MS);
   } else {
     parkLoop();
   }
@@ -2557,7 +2567,8 @@ function goToResult(item) {
 hud.search.addEventListener("input", onSearch);
 
 window.addEventListener("pointerdown", () => { noteActivity(); endIntro(); requestFrame(); });
-window.addEventListener("pointermove", noteActivity);
+// A moving cursor is not activity: it redraws the hover it is over, but it must
+// not reset the idle clock, or the orbit and the animations would never settle.
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
 window.addEventListener("keydown", (event) => {
