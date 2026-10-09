@@ -11,11 +11,15 @@ const TYPE_COLOR = new THREE.Color(0xd4d4d8);
 const FUNC_COLOR = new THREE.Color(0xfafafa);
 const METHOD_COLOR = new THREE.Color(0xa1a1aa);
 // git's default diff colors: old red, new green, changed yellow, moved magenta, hunk cyan.
-const ADD = new THREE.Color(0x00cd00);
-const REMOVE = new THREE.Color(0xcd0000);
-const MODIFY = new THREE.Color(0xcdcd00);
-const MOVED = new THREE.Color(0xcd00cd);
-const ARC = new THREE.Color(0x00cdcd);
+// Semantic accents from the Radix Colors dark scales. The steps are not the
+// same on purpose: added (grass 11) is lighter than deleted (red 9) so the two
+// stay apart under deuteranopia, where a constant-lightness pair collapses.
+// All five are at least 4.5:1 on the #09090b stage.
+const ADD = new THREE.Color(0x71d083);
+const REMOVE = new THREE.Color(0xe5484d);
+const MODIFY = new THREE.Color(0xffc53d);
+const MOVED = new THREE.Color(0x7d66d9);
+const ARC = new THREE.Color(0x23afd0);
 // A standard-library edge is quieter than a project edge.
 const STD_LINE = new THREE.Color(0xd4d4d8);
 
