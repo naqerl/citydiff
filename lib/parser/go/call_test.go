@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 func TestCallsResolveInEitherFileOrder(t *testing.T) {

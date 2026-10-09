@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 // Edit is one part of a modified entity that differs between the two sides.

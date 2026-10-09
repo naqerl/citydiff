@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 func TestTreeSkipsVendorHiddenAndNonGo(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 func TestFormatEntityIncludesMethodCalls(t *testing.T) {
@@ -25,7 +25,7 @@ func TestFormatEntityIncludesMethodCalls(t *testing.T) {
 }
 
 func TestUsageSaysFileOrDirectory(t *testing.T) {
-	const want = "Usage: betterdiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
+	const want = "Usage: citydiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
 	if usageText() != want {
 		t.Fatalf("usage = %q", usageText())
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 func TestEntriesAddsRemovesAndEdits(t *testing.T) {

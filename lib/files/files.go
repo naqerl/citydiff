@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 // Include reports whether a slash-separated path is Go source or a go.mod.
