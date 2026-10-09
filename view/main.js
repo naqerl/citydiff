@@ -4,6 +4,7 @@ import { layoutCity, methodDrawY, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { packageCallEdges } from "./edges.js";
+import { mountTour } from "./tourui.js";
 
 // shadcn zinc. The city stays in this grayscale.
 const STONE = new THREE.Color(0xf4f4f5);
@@ -120,6 +121,10 @@ function setSide(open) {
 let arcSubject = null;
 let entitySubject = null;
 let lit = null;
+// A tour step's highlight: what it lights, and the call arcs it draws.
+let tourLit = null;
+let tourLinks = null;
+let tourUI = null;
 let linkPoints = null;
 const held = new Set();
 const flyDir = new THREE.Vector3();
@@ -359,6 +364,158 @@ async function main() {
   applyMode();
   applyQuery();
   requestFrame();
+  tourUI = mountTour({ apply: applyTourStep, clear: clearTour });
+  const wanted = new URLSearchParams(location.search).get("tour");
+  tourUI.loadURL(wanted || "./tour.json");
+}
+
+function clearTourMarks() {
+  tourLit = null;
+  tourLinks = null;
+}
+
+function clearTour() {
+  clearTourMarks();
+  resetView();
+}
+
+// A step starts from a clean city: no focus, no selection, no highlight.
+// Then, in order: the mode, the select or focus, the highlight and path,
+// and the camera.
+function applyTourStep(step) {
+  const t = step.targets || {};
+  clearTourMarks();
+  if (focus) dropFocus();
+  selected = null;
+  entered = null;
+  entitySubject = null;
+  arcSubject = null;
+  ring.visible = false;
+  tween = null;
+  if (step.mode) mode = step.mode === "changes" ? "overlay" : "overview";
+
+  const marks = [...(t.highlight || []), ...(t.path || [])];
+  const points = [];
+  if (marks.length) {
+    const entities = new Set();
+    const packages = new Set();
+    for (const node of marks) {
+      const found = byEntity.get(node.id);
+      if (found) {
+        entities.add(node.id);
+        if (found.pkg) packages.add(found.pkg.id);
+        const at = entityAnchor(found);
+        if (at) points.push(at);
+      } else if (byPackage.has(node.id)) {
+        packages.add(node.id);
+        points.push(...packagePoints(node.id));
+      }
+    }
+    tourLinks = tourCallLinks(t.path || [], t.highlight || []);
+    if (step.dim !== false) tourLit = { packages, entities: entities.size ? entities : null, browse: null, links: tourLinks };
+  }
+
+  const moved = !!(t.select || t.focus);
+  if (t.select) {
+    if (t.select.kind === "external") selectExternal(t.select.id);
+    else selectPackage(t.select.id, true);
+  } else if (t.focus) {
+    const found = byEntity.get(t.focus.id);
+    if (!found) {
+      if (t.focus.kind === "external") selectExternal(t.focus.id);
+      else selectPackage(t.focus.id, true);
+    } else if (found.entity.kind === "function" || found.entity.kind === "method") enterFocus(found);
+    else selectEntity(t.focus.id);
+  } else {
+    applyMode();
+  }
+
+  const preset = step.camera || (moved ? "" : (points.length ? "fit" : "overview"));
+  const subject = t.select || t.focus;
+  if (subject && !marks.length) {
+    const found = byEntity.get(subject.id);
+    if (found) {
+      const at = entityAnchor(found);
+      if (at) points.push(at);
+    } else points.push(...packagePoints(subject.id));
+  }
+  if (preset === "overview") {
+    cityPose = frameCity();
+    flyTo(cityPose.pos, cityPose.target);
+  } else if (preset === "top") {
+    const b = laid.bounds;
+    const pose = points.length ? tourPose(points) : null;
+    const look = pose ? pose.target : new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2);
+    // High enough to clear the arcs a selection draws above the roofs.
+    const span = pose ? Math.max(pose.pos.distanceTo(look) * 1.6, 70) : citySpan() * 1.25;
+    flyTo(new THREE.Vector3(look.x, look.y + span, look.z + span * 0.02), look);
+  } else if (preset === "fit" || preset === "close") {
+    const pose = tourPose(points.length ? points : tweenPoints());
+    flyTo(pose.pos, pose.target);
+  }
+  const zoom = (preset === "close" ? 0.55 : 1) * (step.zoom > 0 ? step.zoom : 1);
+  if (tween && zoom !== 1) {
+    tween.toPos.sub(tween.toTarget).multiplyScalar(zoom).add(tween.toTarget);
+  }
+  noteActivity();
+  endIntro();
+  viewDirty = true;
+  requestFrame();
+}
+
+// A package's roof corners, so framing it shows all of it.
+function packagePoints(id) {
+  const box = laid.packages.find((item) => item.id === id);
+  if (!box) {
+    const at = packageAnchor(id);
+    return at ? [at] : [];
+  }
+  const y = box.y + box.h;
+  return [[box.x, y, box.z], [box.x + box.w, y, box.z + box.d], [box.x + box.w, y, box.z], [box.x, y, box.z + box.d]];
+}
+
+// Frame a step's nodes with room for the arcs that bow above them. A
+// single node gets a neighbourhood around it, not a close-up of one roof.
+function tourPose(points) {
+  const pts = points.slice();
+  let top = -Infinity;
+  for (const p of points) top = Math.max(top, p[1]);
+  const c = points[0];
+  if (points.length === 1) {
+    for (const [dx, dz] of [[-12, -12], [12, 12]]) pts.push([c[0] + dx, c[1], c[2] + dz]);
+  }
+  pts.push([c[0], top + 10, c[2]]);
+  const pose = frameFan(pts);
+  // Back off a little so a tall package in front does not fill the frame.
+  pose.pos.sub(pose.target).multiplyScalar(1.3).add(pose.target);
+  return pose;
+}
+
+// The camera the select or focus just set up, as points to frame.
+function tweenPoints() {
+  if (tween) return [[tween.toTarget.x, tween.toTarget.y, tween.toTarget.z]];
+  return [[controls.target.x, controls.target.y, controls.target.z]];
+}
+
+// The arcs a step draws: each hop of the path, and every call between two
+// highlighted declarations.
+function tourCallLinks(path, highlight) {
+  const links = [];
+  const seen = new Set();
+  const push = (fromId, toId) => {
+    const from = byEntity.get(fromId);
+    const target = byEntity.get(toId);
+    if (!from || !target || seen.has(fromId + "\0" + toId)) return;
+    const link = entityLinks(from).find((item) => item.target.entity.id === toId);
+    if (!link) return;
+    seen.add(fromId + "\0" + toId);
+    links.push({ from, target, change: link.change, step: link.step });
+  };
+  for (let i = 0; i + 1 < path.length; i++) push(path[i].id, path[i + 1].id);
+  for (const a of highlight) {
+    for (const b of highlight) if (a.id !== b.id) push(a.id, b.id);
+  }
+  return links.length ? links : null;
 }
 
 function applyQuery() {
@@ -1325,6 +1482,7 @@ function applyMode() {
     else ring.visible = false;
     if (arcSubject && lit && lit.links && lit.links.length) drawCallLinks(selectArcs, lit.links);
     else if (arcSubject) drawSelectionArcs(arcSubject.id, arcSubject.inbound);
+    else if (tourLinks) drawCallLinks(selectArcs, tourLinks);
     else clearGroup(selectArcs);
   }
   updateHUD();
@@ -1468,7 +1626,8 @@ function litForPackage(id, inbound) {
 }
 
 function syncLit() {
-  if (focus) lit = litForEntity(focus);
+  if (tourLit) lit = tourLit;
+  else if (focus) lit = litForEntity(focus);
   else if (entitySubject) lit = litForEntity(byEntity.get(entitySubject));
   else if (arcSubject) lit = litForPackage(arcSubject.id, arcSubject.inbound);
   else lit = null;
@@ -1922,6 +2081,7 @@ function showTag(point, text) {
 
 function activate(found) {
   if (!found) return;
+  clearTourMarks();
   if (found.kind === "call") {
     const target = found.entityId ? byEntity.get(found.entityId) : null;
     if (!target) return;
@@ -2600,6 +2760,7 @@ hud.changes.addEventListener("click", () => { mode = "overlay"; applyMode(); });
 
 renderer.domElement.addEventListener("pointerdown", (event) => {
   pointerDown = { x: event.clientX, y: event.clientY };
+  if (tourUI) tourUI.userTookOver();
   tween = null;
 });
 renderer.domElement.addEventListener("pointermove", (event) => {

@@ -38,57 +38,108 @@ func Versions(path, commitRange string, parser lib.Parser) (left, right []lib.Pa
 	if parser == nil {
 		return nil, nil, errors.New("nil parser")
 	}
+	sides, err := Sources(path, commitRange)
+	if err != nil {
+		return nil, nil, err
+	}
+	left, err = parser.Parse(lib.Mem(sides.Left))
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse %s at %s: %w", sides.Path, sides.LeftRev, err)
+	}
+	right, err = parser.Parse(lib.Mem(sides.Right))
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse %s at %s: %w", sides.Path, sides.RightRev, err)
+	}
+	return left, right, nil
+}
+
+// Revs resolves both ends of commitRange in the repository that holds
+// path, to full commit hashes. A three-dot range starts at the merge base.
+func Revs(path, commitRange string) (left, right string, err error) {
+	span, err := splitRange(commitRange)
+	if err != nil {
+		return "", "", err
+	}
+	repo, _, _, err := openPath(path)
+	if err != nil {
+		return "", "", err
+	}
+	l, err := resolve(repo, span.left)
+	if err != nil {
+		return "", "", err
+	}
+	r, err := resolve(repo, span.right)
+	if err != nil {
+		return "", "", err
+	}
+	if span.threeDot {
+		if l, err = mergeBase(l, r); err != nil {
+			return "", "", err
+		}
+	}
+	return l.Hash.String(), r.Hash.String(), nil
+}
+
+// Sides is the source of both sides of a range, before parsing.
+// LeftRev and RightRev are the resolved commit hashes.
+type Sides struct {
+	Path              string
+	LeftRev, RightRev string
+	Left, Right       []lib.File
+}
+
+// Sources reads the files of both sides of commitRange the way Versions
+// does, without parsing them.
+func Sources(path, commitRange string) (Sides, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, nil, errors.New("empty file path")
+		return Sides{}, errors.New("empty file path")
 	}
 	span, err := splitRange(commitRange)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 
 	repo, gitPath, disk, err := openPath(path)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 	leftCommit, err := resolve(repo, span.left)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 	rightCommit, err := resolve(repo, span.right)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 	if span.threeDot {
 		leftCommit, err = mergeBase(leftCommit, rightCommit)
 		if err != nil {
-			return nil, nil, fmt.Errorf("merge base for %q: %w", strings.TrimSpace(commitRange), err)
+			return Sides{}, fmt.Errorf("merge base for %q: %w", strings.TrimSpace(commitRange), err)
 		}
 	}
 	dir, err := directorySnapshot(disk, gitPath, leftCommit, rightCommit)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 
 	leftFiles, leftOK, err := listFiles(leftCommit, gitPath, !dir)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 	rightFiles, rightOK, err := listFiles(rightCommit, gitPath, !dir)
 	if err != nil {
-		return nil, nil, err
+		return Sides{}, err
 	}
 	if !dir && !leftOK && !rightOK {
-		return nil, nil, fmt.Errorf("file %s not found in %s or %s", gitPath, leftCommit.Hash, rightCommit.Hash)
+		return Sides{}, fmt.Errorf("file %s not found in %s or %s", gitPath, leftCommit.Hash, rightCommit.Hash)
 	}
-	left, err = parser.Parse(lib.Mem(leftFiles))
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse %s at %s: %w", gitPath, leftCommit.Hash, err)
-	}
-	right, err = parser.Parse(lib.Mem(rightFiles))
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse %s at %s: %w", gitPath, rightCommit.Hash, err)
-	}
-	return left, right, nil
+	return Sides{
+		Path:     gitPath,
+		LeftRev:  leftCommit.Hash.String(),
+		RightRev: rightCommit.Hash.String(),
+		Left:     leftFiles,
+		Right:    rightFiles,
+	}, nil
 }
 
 // Tree reads the source files files.Include accepts at rev under worktree.

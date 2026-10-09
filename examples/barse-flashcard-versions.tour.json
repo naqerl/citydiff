@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "title": "barse: flashcard versions and a final pick",
+  "range": "dbdafc00..061e9aed",
+  "steps": [
+    {
+      "title": "The whole change",
+      "note": "This range teaches barse to keep **every generated version** of a lesson's flashcards and lets the teacher pick the *final* one.\n\nYellow packages changed, green ones are new. The arcs are imports and calls that changed between packages.",
+      "mode": "changes",
+      "camera": "overview",
+      "duration": 7
+    },
+    {
+      "title": "The generator package",
+      "note": "`service/flashcard/generator` carries most of the change: versions are listed, regenerated from a chosen source, and their phases are reported to the UI.\n\nThe arcs out of it go to `db`, where the new queries live.",
+      "select": "generator",
+      "duration": 8
+    },
+    {
+      "title": "From the final-pick handler to the new version bar",
+      "note": "`handlePostSelectFinal` re-renders the lesson body. That walk ends in `versionBar`, the new strip of version tabs on the lesson page.",
+      "path": {
+        "from": "flashcards.handler.handlePostSelectFinal",
+        "to": "meetings/view.versionBar"
+      },
+      "camera": "fit",
+      "duration": 9,
+      "zoom": 1.2
+    },
+    {
+      "title": "Picking the final version",
+      "note": "`review.Service.SelectFinal` is new. It refuses once the lesson is published, checks the run finished, then marks it final.",
+      "focus": "review.Service.SelectFinal",
+      "code": "review.Service.SelectFinal",
+      "duration": 10
+    },
+    {
+      "title": "Where \"final\" is stored",
+      "note": "Two new queries hold the flag, and `generator.FinalVersion` reads it back.\n\n- `Queries.SetGenerationFinal`\n- `Queries.ClearGenerationFinal`\n- `generator.FinalVersion`",
+      "highlight": [
+        "db.Queries.SetGenerationFinal",
+        "db.Queries.ClearGenerationFinal",
+        "generator.FinalVersion",
+        "review.markFinal"
+      ],
+      "camera": "fit",
+      "duration": 8
+    },
+    {
+      "title": "The generation run changed",
+      "note": "`runGeneration` now records each phase so the lesson page can show progress per version.",
+      "focus": "Generator.runGeneration",
+      "code": "Generator.runGeneration",
+      "duration": 10
+    },
+    {
+      "title": "The lesson page",
+      "note": "`meetings/view` gained a version bar, version tabs and the published notice.",
+      "select": "web/resource/meetings/view",
+      "camera": "top",
+      "duration": 8
+    },
+    {
+      "title": "Back to the plain city",
+      "note": "That is the whole change. Press **space** to replay, or use the roadmap to jump back.",
+      "mode": "full",
+      "camera": "overview",
+      "duration": 6
+    }
+  ]
+}

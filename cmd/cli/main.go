@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -55,6 +56,29 @@ type jsonFileDiff struct {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		var err error
+		switch os.Args[1] {
+		case "nodes":
+			err = runNodes(os.Args[2:], os.Stdout)
+		case "tour":
+			err = runTour(os.Args[2:], os.Stdout, os.Stderr)
+		default:
+			legacy()
+			return
+		}
+		switch {
+		case errors.Is(err, errUsage), errors.Is(err, flag.ErrHelp):
+			os.Exit(2)
+		case err != nil:
+			fail(err)
+		}
+		return
+	}
+	legacy()
+}
+
+func legacy() {
 	path := flag.String("path", "", "path to a Go or Rust file or directory")
 	flag.StringVar(path, "p", "", "path to a Go or Rust file or directory")
 	commitRange := flag.String("range", "", "commit range to diff, A..B or A...B")
@@ -63,6 +87,7 @@ func main() {
 	asScene := flag.Bool("scene", false, "print the 3D scene as JSON")
 	asView := flag.Bool("view", false, "serve the 3D scene")
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address for -view")
+	tourFile := flag.String("tour", "", "tour script for -view to load and play")
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), usageText())
 		flag.PrintDefaults()
@@ -75,15 +100,25 @@ func main() {
 		os.Exit(2)
 	}
 
-	left, right, err := load(*path, *commitRange)
-	if err != nil {
-		fail(err)
-	}
 	if *asView {
-		if err := serve(*addr, scene.Build(left, right)); err != nil {
+		snap, err := buildSnapshot(*path, *commitRange)
+		if err != nil {
+			fail(err)
+		}
+		var raw []byte
+		if *tourFile != "" {
+			if raw, err = os.ReadFile(*tourFile); err != nil {
+				fail(err)
+			}
+		}
+		if err := serve(*addr, snap, raw); err != nil {
 			fail(err)
 		}
 		return
+	}
+	left, right, err := load(*path, *commitRange)
+	if err != nil {
+		fail(err)
 	}
 	if *asScene {
 		if err := printScene(scene.Build(left, right)); err != nil {
@@ -120,8 +155,8 @@ func printScene(sc scene.Scene) error {
 	return enc.Encode(sc)
 }
 
-func serve(addr string, sc scene.Scene) error {
-	payload, err := json.Marshal(sc)
+func serve(addr string, snap *snapshot, tourRaw []byte) error {
+	payload, err := json.Marshal(snap.scene)
 	if err != nil {
 		return err
 	}
@@ -130,6 +165,7 @@ func serve(addr string, sc scene.Scene) error {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(payload)
 	})
+	tourHandlers(mux, snap, tourRaw)
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)
@@ -256,7 +292,9 @@ func formatEntity(entry lib.Entity) string {
 }
 
 func usageText() string {
-	return "Usage: citydiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
+	return "Usage: citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]\n" +
+		"       citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]\n" +
+		"       citydiff tour validate|serve|schema ...\n\n"
 }
 
 func fail(err error) {
