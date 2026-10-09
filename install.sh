@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Install betterdiff (citydiff) from the latest GitHub release.
+# Install citydiff from the latest GitHub release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | sh
 #
@@ -14,7 +14,7 @@
 set -eu
 
 REPO="${REPO:-naqerl/citydiff}"
-BIN_NAME="${BIN_NAME:-betterdiff}"
+BIN_NAME="${BIN_NAME:-citydiff}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 SKILL_NAME="${SKILL_NAME:-citydiff}"
 SKILLS_DIR="${SKILLS_DIR:-$HOME/.agents/skills}"
@@ -170,7 +170,7 @@ if [ -n "$checksums_url" ] && curl -fsSL -o "$tmpdir/checksums.txt" "$checksums_
 fi
 
 tar xzf "$tmpdir/pkg.tar.gz" -C "$tmpdir"
-[ -f "$tmpdir/$BIN_NAME" ] || die "archive did not contain $BIN_NAME"
+[ -f "$tmpdir/$BIN_NAME" ] || die "archive did not contain $BIN_NAME (it may predate the rename: releases up to v0.0.1 shipped a 'betterdiff' binary; install a newer release or build from source)"
 chmod +x "$tmpdir/$BIN_NAME"
 "$tmpdir/$BIN_NAME" -h >/dev/null 2>&1 || warn "warning: $BIN_NAME -h did not succeed"
 
@@ -222,10 +222,10 @@ write_skill() {
   cat > "$skill_dir/SKILL.md" <<EOF
 ---
 name: $SKILL_NAME
-description: 3D structural diff of Go code ("betterdiff") — cross-module dependency changes, declaration/entity edges and call-path changes across a commit range. Use when asked what a commit or range changed structurally, who calls what, or how a call path changed.
+description: 3D structural diff of Go code ("citydiff") — cross-module dependency changes, declaration/entity edges and call-path changes across a commit range. Use when asked what a commit or range changed structurally, who calls what, or how a call path changed.
 ---
 
-# $SKILL_NAME — betterdiff, a 3D code diff
+# $SKILL_NAME — citydiff, a 3D code diff
 
 A diff viewed from the outside inward, at three levels:
 
@@ -242,7 +242,7 @@ The three levels are views of one diff.
 | Repository | https://github.com/$REPO |
 | Release | https://github.com/$REPO/releases (tags \`v*\`) |
 | Installer | https://raw.githubusercontent.com/$REPO/main/install.sh |
-| Module | \`betterdiff\`, Go 1.27, **requires CGO** (tree-sitter C bindings) |
+| Module | \`citydiff\`, Go 1.27, **requires CGO** (tree-sitter C bindings) |
 | Installed as | \`$BIN_DIR/$BIN_NAME\` (release installed here on $(date -u +%Y-%m-%d)) |
 | Release used | $version |
 
@@ -311,17 +311,17 @@ It serves on 127.0.0.1:8787 by default and never exits, so never call it in the 
 \`\`\`sh
 # long-lived viewer over a whole project
 nohup $BIN_NAME -path /home/user/src/barse -view -addr 127.0.0.1:8787 \\
-  > /tmp/betterdiff-view.log 2>&1 &
-echo \$! > /tmp/betterdiff-view.pid
+  > /tmp/citydiff-view.log 2>&1 &
+echo \$! > /tmp/citydiff-view.pid
 
 # viewer over a commit range (the diff scene)
 nohup $BIN_NAME -path /home/user/src/barse -range A..B -view -addr 127.0.0.1:8788 \\
-  > /tmp/betterdiff-range.log 2>&1 &
-echo \$! > /tmp/betterdiff-range.pid
+  > /tmp/citydiff-range.log 2>&1 &
+echo \$! > /tmp/citydiff-range.pid
 
 # check / stop
 curl -fsS http://127.0.0.1:8787/scene.json > /dev/null && echo up
-kill "\$(cat /tmp/betterdiff-view.pid)"
+kill "\$(cat /tmp/citydiff-view.pid)"
 \`\`\`
 
 The viewer exposes \`GET /scene.json\` (the scene graph) and \`/\` (static assets, embedded in
@@ -405,7 +405,7 @@ add_pointer() {
   drop_pointer
   {
     printf '\n<!-- citydiff:begin -->\n'
-    printf '## Skill: %s (betterdiff)\n\n' "$SKILL_NAME"
+    printf '## Skill: %s (citydiff)\n\n' "$SKILL_NAME"
     printf 'The 3D Go code diff binary (`%s`) is installed at `%s`; its skill lives in\n' "$BIN_NAME" "$BIN_DIR"
     printf '`%s/%s/SKILL.md`. Read that skill before using it: it carries the source of truth\n' "$SKILLS_DIR" "$SKILL_NAME"
     printf '(https://github.com/%s), how the app works, and how to launch it for a project\n' "$REPO"
