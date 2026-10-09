@@ -5,7 +5,11 @@ package golang
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"betterdiff/lib"
@@ -20,72 +24,157 @@ type Parser struct{}
 func New() Parser { return Parser{} }
 
 // Parse implements lib.Parser.
-func (Parser) Parse(src []byte) ([]lib.Entity, error) {
+// Every file is collected before calls are resolved, so a declaration in the
+// last file fills a call in the first file. Calls that do not resolve are kept.
+func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
+	if src == nil {
+		return nil, errors.New("nil source")
+	}
 	parser := tree_sitter.NewParser()
 	defer parser.Close()
 	if err := parser.SetLanguage(tree_sitter.NewLanguage(tree_sitter_go.Language())); err != nil {
 		return nil, err
 	}
 
-	tree := parser.Parse(src, nil)
-	if tree == nil {
-		return nil, fmt.Errorf("parse returned no tree")
+	var mods []moduleRoot
+	var drafts []*draft
+	for {
+		file, err := src.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		file.Path = path.Clean(filepath.ToSlash(file.Path))
+		base := path.Base(file.Path)
+		if base == "go.mod" {
+			if module := modulePath(file.Src); module != "" {
+				mods = append(mods, moduleRoot{dir: path.Dir(file.Path), path: module})
+			}
+			continue
+		}
+		if !strings.HasSuffix(base, ".go") {
+			return nil, fmt.Errorf("%s is not a Go file", file.Path)
+		}
+		tree := parser.Parse(file.Src, nil)
+		if tree == nil {
+			return nil, fmt.Errorf("parse %s returned no tree", file.Path)
+		}
+		pkg, imports, entries, calls := walk(file.Src, tree.RootNode())
+		tree.Close()
+		assignMethodHashes(entries)
+		drafts = append(drafts, &draft{
+			path:     file.Path,
+			dir:      path.Dir(file.Path),
+			pkg:      pkg,
+			imports:  imports,
+			entities: entries,
+			calls:    calls,
+		})
 	}
-	defer tree.Close()
+	assignImportPaths(drafts, mods)
+	resolve(drafts)
 
-	return walk(src, tree.RootNode()), nil
+	out := make([]lib.ParsedFile, len(drafts))
+	for i, d := range drafts {
+		out[i] = lib.ParsedFile{Path: d.path, Entities: d.entities}
+	}
+	return out, nil
 }
 
 var _ lib.Parser = Parser{}
 
-func walk(src []byte, root *tree_sitter.Node) []lib.Entity {
+func walk(src []byte, root *tree_sitter.Node) (pkg string, imports []importUse, entries []lib.Entity, calls [][]pending) {
 	cursor := root.Walk()
 	defer cursor.Close()
 
-	entries := make([]lib.Entity, 0)
 	q := []tree_sitter.Node{*root}
 	for len(q) > 0 {
 		n := q[0]
 		q = q[1:]
 		switch n.Kind() {
 		case "package_clause":
-			// Package name is not an entity.
+			if id := n.NamedChild(0); id != nil {
+				pkg = id.Utf8Text(src)
+			}
 		case "import_declaration":
-			for _, e := range parseImportDeclaration(src, &n) {
-				entries = append(entries, e)
+			specs := parseImports(src, &n)
+			imports = append(imports, specs...)
+			for _, spec := range specs {
+				entries, calls = grow(entries, calls, lib.ImportEntry{Path: spec.path}, nil)
 			}
 		case "var_declaration":
-			for _, e := range parseVarDeclaration(src, &n) {
-				entries = append(entries, e)
+			for _, entry := range parseVarDeclaration(src, &n) {
+				entries, calls = grow(entries, calls, entry, nil)
 			}
 		case "type_declaration":
-			entries = append(entries, parseTypeDeclaration(src, &n))
+			entries, calls = grow(entries, calls, parseTypeDeclaration(src, &n), nil)
 		case "method_declaration":
-			entries = append(entries, parseMethodDeclaration(src, &n))
+			entry, body := parseMethodDeclaration(src, &n)
+			entries, calls = grow(entries, calls, entry, body)
 		case "function_declaration":
-			entries = append(entries, parseFunctionDeclaration(src, &n))
+			entry, body := parseFunctionDeclaration(src, &n)
+			entries, calls = grow(entries, calls, entry, body)
 		default:
 			for _, c := range n.NamedChildren(cursor) {
 				q = append(q, c)
 			}
 		}
 	}
-	assignMethodHashes(entries)
-	return entries
+	return pkg, imports, entries, calls
 }
 
-// FIXME: Process aliased imports that currently are trimmed
-func parseImportDeclaration(src []byte, importDeclaration *tree_sitter.Node) []lib.ImportEntry {
-	importSpecList := importDeclaration.NamedChild(0)
-	entries := make([]lib.ImportEntry, 0, importSpecList.NamedChildCount())
-	for i := uint(0); i < importSpecList.NamedChildCount(); i++ {
-		importSpec := importSpecList.NamedChild(i)
-		path := importSpec.ChildByFieldName("path").Utf8Text(src)
-		// trim double quotes
-		path = path[1 : len(path)-1]
-		entries = append(entries, lib.ImportEntry{Path: path})
+func grow(entries []lib.Entity, calls [][]pending, entry lib.Entity, body []pending) ([]lib.Entity, [][]pending) {
+	if len(body) == 0 {
+		body = nil
 	}
-	return entries
+	return append(entries, entry), append(calls, body)
+}
+
+// parseImports reads one import declaration. Aliases are kept for call
+// resolution. The import entity still stores only the path.
+func parseImports(src []byte, importDeclaration *tree_sitter.Node) []importUse {
+	node := importDeclaration.NamedChild(0)
+	if node == nil {
+		return nil
+	}
+	var specs []*tree_sitter.Node
+	if node.Kind() == "import_spec" {
+		specs = []*tree_sitter.Node{node}
+	} else {
+		specs = make([]*tree_sitter.Node, 0, node.NamedChildCount())
+		for i := uint(0); i < node.NamedChildCount(); i++ {
+			specs = append(specs, node.NamedChild(i))
+		}
+	}
+	out := make([]importUse, 0, len(specs))
+	for _, spec := range specs {
+		pathNode := spec.ChildByFieldName("path")
+		if pathNode == nil {
+			continue
+		}
+		use := importUse{path: unquoteImport(pathNode.Utf8Text(src))}
+		if name := spec.ChildByFieldName("name"); name != nil {
+			switch name.Kind() {
+			case "dot":
+				use.dot = true
+			case "blank_identifier":
+				use.blank = true
+			default:
+				use.alias = name.Utf8Text(src)
+			}
+		}
+		out = append(out, use)
+	}
+	return out
+}
+
+func unquoteImport(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '`') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 func parseVarDeclaration(src []byte, varDeclaration *tree_sitter.Node) []lib.VariableEntry {
@@ -119,32 +208,36 @@ func parseTypeDeclaration(src []byte, typeDeclaration *tree_sitter.Node) lib.Typ
 	return entry
 }
 
-func parseMethodDeclaration(src []byte, methodDeclaration *tree_sitter.Node) lib.MethodEntry {
-	receiver := methodDeclaration.ChildByFieldName("receiver").NamedChild(0).ChildByFieldName("type")
+func parseMethodDeclaration(src []byte, methodDeclaration *tree_sitter.Node) (lib.MethodEntry, []pending) {
+	ident, typeText := receiverInfo(src, methodDeclaration)
 	name := methodDeclaration.ChildByFieldName("name")
 	params := methodDeclaration.ChildByFieldName("parameters")
 	returns := methodDeclaration.ChildByFieldName("result")
-	return lib.MethodEntry{
+	parameters := parseParameters(src, params)
+	entry := lib.MethodEntry{
 		FunctionEntry: lib.FunctionEntry{
 			Name:       name.Utf8Text(src),
-			Parameters: parseParameters(src, params),
+			Parameters: parameters,
 			ReturnArgs: parseReturnArgs(src, returns),
 			BodyHash:   hashBody(src, methodDeclaration),
 		},
-		Type: &lib.TypeEntry{Name: receiver.Utf8Text(src)},
+		Type: &lib.TypeEntry{Name: typeText},
 	}
+	return entry, collectCalls(src, methodDeclaration.ChildByFieldName("body"), funcScope(ident, typeText, joinParams(parameters, namedResults(src, returns))))
 }
 
-func parseFunctionDeclaration(src []byte, functionDeclaration *tree_sitter.Node) lib.FunctionEntry {
+func parseFunctionDeclaration(src []byte, functionDeclaration *tree_sitter.Node) (lib.FunctionEntry, []pending) {
 	name := functionDeclaration.ChildByFieldName("name")
 	params := functionDeclaration.ChildByFieldName("parameters")
 	returns := functionDeclaration.ChildByFieldName("result")
-	return lib.FunctionEntry{
+	parameters := parseParameters(src, params)
+	entry := lib.FunctionEntry{
 		Name:       name.Utf8Text(src),
-		Parameters: parseParameters(src, params),
+		Parameters: parameters,
 		ReturnArgs: parseReturnArgs(src, returns),
 		BodyHash:   hashBody(src, functionDeclaration),
 	}
+	return entry, collectCalls(src, functionDeclaration.ChildByFieldName("body"), funcScope("", "", joinParams(parameters, namedResults(src, returns))))
 }
 
 // hashBody is the hex SHA-256 of the function or method body source.
@@ -218,6 +311,22 @@ func parseReturnArgs(src []byte, result *tree_sitter.Node) []lib.Parameter {
 		return parseParameters(src, result)
 	}
 	return []lib.Parameter{{Type: result.Utf8Text(src)}}
+}
+
+// namedResults is the named result variables. A bare result type has none.
+func namedResults(src []byte, result *tree_sitter.Node) []lib.Parameter {
+	if result == nil || result.Kind() != "parameter_list" {
+		return nil
+	}
+	return parseParameters(src, result)
+}
+
+func joinParams(params, results []lib.Parameter) []lib.Parameter {
+	if len(results) == 0 {
+		return params
+	}
+	out := make([]lib.Parameter, 0, len(params)+len(results))
+	return append(append(out, params...), results...)
 }
 
 func parseParameters(src []byte, list *tree_sitter.Node) []lib.Parameter {

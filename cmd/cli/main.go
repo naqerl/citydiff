@@ -8,9 +8,15 @@ import (
 
 	"betterdiff/lib"
 	"betterdiff/lib/diff"
+	"betterdiff/lib/files"
 	"betterdiff/lib/git"
 	"betterdiff/lib/parser/go"
 )
+
+type jsonFile struct {
+	Path    string      `json:"path"`
+	Entries []jsonEntry `json:"entries"`
+}
 
 type jsonEntry struct {
 	Kind  string     `json:"kind"`
@@ -28,18 +34,27 @@ type jsonDiffSide struct {
 
 type jsonDiff struct {
 	Action string        `json:"action"`
+	Kind   string        `json:"kind,omitempty"`
+	Name   string        `json:"name,omitempty"`
 	Left   *jsonDiffSide `json:"left,omitempty"`
 	Right  *jsonDiffSide `json:"right,omitempty"`
+	Edits  []diff.Edit   `json:"edits,omitempty"`
+}
+
+type jsonFileDiff struct {
+	Action  string     `json:"action"`
+	Path    string     `json:"path"`
+	Changes []jsonDiff `json:"changes,omitempty"`
 }
 
 func main() {
-	path := flag.String("path", "", "path to the source file")
-	flag.StringVar(path, "p", "", "path to the source file")
+	path := flag.String("path", "", "path to a Go file or directory")
+	flag.StringVar(path, "p", "", "path to a Go file or directory")
 	commitRange := flag.String("range", "", "commit range to diff, A..B or A...B")
 	flag.StringVar(commitRange, "r", "", "commit range to diff, A..B or A...B")
 	asJSON := flag.Bool("json", false, "print entries as JSON")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: betterdiff [-json] -path file [-range A..B]\n\n")
+		fmt.Fprint(flag.CommandLine.Output(), usageText())
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -55,15 +70,15 @@ func main() {
 		return
 	}
 
-	src, err := os.ReadFile(*path)
+	src, err := files.Tree(*path)
 	if err != nil {
 		fail(err)
 	}
-	entries, err := golang.New().Parse(src)
+	parsed, err := golang.New().Parse(src)
 	if err != nil {
 		fail(err)
 	}
-	if err := printEntries(entries, *asJSON); err != nil {
+	if err := printFiles(parsed, *asJSON); err != nil {
 		fail(err)
 	}
 }
@@ -73,54 +88,82 @@ func diffCommits(path, commitRange string, asJSON bool) {
 	if err != nil {
 		fail(err)
 	}
-	if err := printDiff(diff.Entries(left, right), asJSON); err != nil {
+	if err := printDiff(diff.Files(left, right), asJSON); err != nil {
 		fail(err)
 	}
 }
 
-func printEntries(entries []lib.Entity, asJSON bool) error {
+func printFiles(files []lib.ParsedFile, asJSON bool) error {
 	if asJSON {
-		out := make([]jsonEntry, len(entries))
-		for i, entry := range entries {
-			out[i] = jsonEntry{Kind: entry.Kind().String(), Entry: entry}
+		out := make([]jsonFile, len(files))
+		for i, file := range files {
+			entries := make([]jsonEntry, len(file.Entities))
+			for j, entry := range file.Entities {
+				entries[j] = jsonEntry{Kind: entry.Kind().String(), Entry: entry}
+			}
+			out[i] = jsonFile{Path: file.Path, Entries: entries}
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	}
-	for _, entry := range entries {
-		fmt.Printf("%s %+v\n", entry.Kind(), entry)
+	for _, file := range files {
+		fmt.Printf("%s\n", file.Path)
+		for _, entry := range file.Entities {
+			fmt.Printf("%s %+v\n", entry.Kind(), entry)
+		}
 	}
 	return nil
 }
 
-func printDiff(changes []diff.Entry, asJSON bool) error {
+func printDiff(changes []diff.FileChange, asJSON bool) error {
 	if asJSON {
-		out := make([]jsonDiff, len(changes))
-		for i, change := range changes {
-			out[i] = jsonDiff{
-				Action: change.Action.String(),
-				Left:   diffSide(change.Left),
-				Right:  diffSide(change.Right),
+		out := make([]jsonFileDiff, len(changes))
+		for i, file := range changes {
+			parts := make([]jsonDiff, len(file.Changes))
+			for j, change := range file.Changes {
+				parts[j] = jsonDiffFrom(change)
 			}
+			out[i] = jsonFileDiff{Action: file.Action.String(), Path: file.Path, Changes: parts}
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	}
-	for _, change := range changes {
-		switch change.Action {
-		case diff.Added:
-			fmt.Printf("added %s %s\n", change.Right.Kind(), formatEntity(change.Right))
-		case diff.Removed:
-			fmt.Printf("removed %s %s\n", change.Left.Kind(), formatEntity(change.Left))
-		case diff.Modified:
-			fmt.Printf("modified %s %s => %s\n", change.Right.Kind(), formatEntity(change.Left), formatEntity(change.Right))
-		default:
-			fmt.Printf("%s\n", change)
+	for _, file := range changes {
+		fmt.Printf("%s %s\n", file.Action, file.Path)
+		for _, change := range file.Changes {
+			switch change.Action {
+			case diff.Added:
+				fmt.Printf("  added %s %s\n", change.Right.Kind(), formatEntity(change.Right))
+			case diff.Removed:
+				fmt.Printf("  removed %s %s\n", change.Left.Kind(), formatEntity(change.Left))
+			case diff.Modified:
+				fmt.Printf("  %s\n", change.String())
+				for _, edit := range change.Edits {
+					fmt.Printf("    %s\n", edit)
+				}
+			default:
+				fmt.Printf("  %s\n", change)
+			}
 		}
 	}
 	return nil
+}
+
+func jsonDiffFrom(change diff.Entry) jsonDiff {
+	out := jsonDiff{Action: change.Action.String()}
+	switch change.Action {
+	case diff.Modified:
+		out.Kind = change.Right.Kind().String()
+		out.Name = change.Name()
+		out.Edits = change.Edits
+	case diff.Removed:
+		out.Left = diffSide(change.Left)
+	default:
+		out.Right = diffSide(change.Right)
+	}
+	return out
 }
 
 func diffSide(entry lib.Entity) *jsonDiffSide {
@@ -139,8 +182,8 @@ func diffSide(entry lib.Entity) *jsonDiffSide {
 	return side
 }
 
-// formatEntity prints one entity. Methods include BodyHash, which their
-// String method leaves out, so a body-only change is visible.
+// formatEntity prints one added or removed entity. Methods include Calls and
+// BodyHash, which their String method leaves out.
 func formatEntity(entry lib.Entity) string {
 	method, ok := entry.(lib.MethodEntry)
 	if !ok {
@@ -150,8 +193,12 @@ func formatEntity(entry lib.Entity) string {
 	if method.Type != nil {
 		receiver = method.Type.Name
 	}
-	return fmt.Sprintf("{Name:%s Parameters:%+v ReturnArgs:%+v BodyHash:%s Type:{Name:%s}}",
-		method.Name, method.Parameters, method.ReturnArgs, method.BodyHash, receiver)
+	return fmt.Sprintf("{Name:%s Parameters:%+v ReturnArgs:%+v Calls:%+v BodyHash:%s Type:{Name:%s}}",
+		method.Name, method.Parameters, method.ReturnArgs, method.Calls, method.BodyHash, receiver)
+}
+
+func usageText() string {
+	return "Usage: betterdiff [-json] -path file-or-directory [-range A..B]\n\n"
 }
 
 func fail(err error) {

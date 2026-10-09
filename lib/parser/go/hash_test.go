@@ -71,11 +71,14 @@ func (b *Box[T]) Get() T {
 
 func mustParse(t *testing.T, src []byte) []lib.Entity {
 	t.Helper()
-	entries, err := Parser{}.Parse(src)
+	files, err := Parser{}.Parse(lib.Mem([]lib.File{{Path: "p.go", Src: src}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return entries
+	if len(files) != 1 {
+		t.Fatalf("parsed %d files", len(files))
+	}
+	return files[0].Entities
 }
 
 func functionNamed(t *testing.T, entries []lib.Entity, name string) lib.FunctionEntry {

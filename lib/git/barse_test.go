@@ -30,8 +30,8 @@ func TestBarseFlashcardRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(left) < 20 || len(right) != len(left)+1 {
-		t.Fatalf("entity counts left %d right %d", len(left), len(right))
+	if len(flat(left)) < 20 || len(flat(right)) != len(flat(left))+1 {
+		t.Fatalf("entity counts left %d right %d", len(flat(left)), len(flat(right)))
 	}
 
 	threeLeft, threeRight, err := Versions(barseFile, barseLeft+"..."+barseRight, golang.New())
@@ -42,7 +42,7 @@ func TestBarseFlashcardRange(t *testing.T) {
 		t.Fatal("three-dot range differed from two-dot; left commit is an ancestor of right")
 	}
 
-	changes := diff.Entries(left, right)
+	changes := diff.Entries(flat(left), flat(right))
 	if len(changes) != 3 {
 		t.Fatalf("got %d changes:\n%s", len(changes), formatChanges(changes))
 	}
@@ -59,6 +59,12 @@ func TestBarseFlashcardRange(t *testing.T) {
 	if leftType.MethodsHash == "" || leftType.MethodsHash == rightType.MethodsHash {
 		t.Fatal("Service methods hash did not change with List")
 	}
+	if len(changes[1].Edits) != 1 || changes[1].Edits[0].Field != "methodsHash" {
+		t.Fatalf("Service edits = %+v", changes[1].Edits)
+	}
+	if changes[1].Edits[0].Left != leftType.MethodsHash || changes[1].Edits[0].Right != rightType.MethodsHash {
+		t.Fatalf("Service edit = %+v", changes[1].Edits[0])
+	}
 
 	leftMethod, rightMethod := mustMethodChange(t, changes[2], "List")
 	if leftMethod.BodyHash == "" || leftMethod.BodyHash == rightMethod.BodyHash {
@@ -67,12 +73,34 @@ func TestBarseFlashcardRange(t *testing.T) {
 	if !reflect.DeepEqual(leftMethod.Parameters, rightMethod.Parameters) || !reflect.DeepEqual(leftMethod.ReturnArgs, rightMethod.ReturnArgs) {
 		t.Fatal("List signature changed")
 	}
+	bodyEdit, ok := editByField(changes[2], "bodyHash")
+	if !ok {
+		t.Fatalf("List edits = %+v", changes[2].Edits)
+	}
+	if bodyEdit.Left != leftMethod.BodyHash || bodyEdit.Right != rightMethod.BodyHash {
+		t.Fatalf("List edit = %+v", bodyEdit)
+	}
 
 	leftCreate := mustMethod(t, left, "Create")
 	rightCreate := mustMethod(t, right, "Create")
 	if leftCreate.BodyHash != rightCreate.BodyHash {
 		t.Fatal("Create body hash changed")
 	}
+	if len(rightCreate.Calls) == 0 {
+		t.Fatal("Create recorded no calls")
+	}
+	if !reflect.DeepEqual(leftCreate.Calls, rightCreate.Calls) {
+		t.Fatalf("Create calls changed:\n%+v\n%+v", leftCreate.Calls, rightCreate.Calls)
+	}
+}
+
+func editByField(change diff.Entry, field string) (diff.Edit, bool) {
+	for _, edit := range change.Edits {
+		if edit.Field == field {
+			return edit, true
+		}
+	}
+	return diff.Edit{}, false
 }
 
 func mustTypeChange(t *testing.T, change diff.Entry, name string) (lib.TypeEntry, lib.TypeEntry) {
@@ -95,9 +123,9 @@ func mustMethodChange(t *testing.T, change diff.Entry, name string) (lib.MethodE
 	return left, right
 }
 
-func mustMethod(t *testing.T, entries []lib.Entity, name string) lib.MethodEntry {
+func mustMethod(t *testing.T, files []lib.ParsedFile, name string) lib.MethodEntry {
 	t.Helper()
-	for _, entry := range entries {
+	for _, entry := range flat(files) {
 		method, ok := entry.(lib.MethodEntry)
 		if ok && method.Name == name {
 			return method

@@ -1,6 +1,8 @@
 package diff
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"betterdiff/lib"
@@ -49,11 +51,30 @@ func TestEntriesAddsRemovesAndEdits(t *testing.T) {
 		}
 	}
 
+	serviceEdit := changes[1]
+	if fields := editFields(serviceEdit); fields != "fields" {
+		t.Fatalf("Service edits = %s", fields)
+	}
+	leftFields := serviceEdit.Edits[0].Left.([]lib.Field)
+	rightFields := serviceEdit.Edits[0].Right.([]lib.Field)
+	if len(leftFields) != 1 || leftFields[0].Name != "pool" || len(rightFields) != 2 || rightFields[1].Name != "tx" {
+		t.Fatalf("fields edit = %s", serviceEdit.Edits[0])
+	}
+
 	list := changes[2]
 	if list.Left.(lib.MethodEntry).BodyHash != "before" || list.Right.(lib.MethodEntry).BodyHash != "after" {
 		t.Fatalf("List sides = %+v %+v", list.Left, list.Right)
 	}
-	if list.Action != Modified || changes[0].Left != nil || changes[4].Right != nil {
+	if fields := editFields(list); fields != "receiver,bodyHash" {
+		t.Fatalf("List edits = %s", fields)
+	}
+	if list.Edits[0].Left != "*Service" || list.Edits[0].Right != "Service" {
+		t.Fatalf("receiver edit = %s", list.Edits[0])
+	}
+	if list.Edits[1].Left != "before" || list.Edits[1].Right != "after" {
+		t.Fatalf("body edit = %s", list.Edits[1])
+	}
+	if list.Action != Modified || changes[0].Left != nil || changes[4].Right != nil || len(changes[0].Edits) != 0 {
 		t.Fatal("added and removed entries should set only one side")
 	}
 }
@@ -108,6 +129,12 @@ func TestEntriesBodyHashAndMethodsHash(t *testing.T) {
 	if changes[0].String() != "modified type Service" {
 		t.Fatal(changes[0])
 	}
+	if fields := editFields(changes[0]); fields != "methodsHash" {
+		t.Fatalf("Service edits = %s", fields)
+	}
+	if changes[0].Edits[0].Left != "aaa" || changes[0].Edits[0].Right != "bbb" {
+		t.Fatal(changes[0].Edits[0])
+	}
 	if changes[1].String() != "added method *Box[T].List" || changes[2].String() != "removed method *Service.List" {
 		t.Fatalf("%s / %s", changes[1], changes[2])
 	}
@@ -127,6 +154,108 @@ func TestEntriesBodyHashAndMethodsHash(t *testing.T) {
 	changes = Entries(sameReceiver, edited)
 	if len(changes) != 1 || changes[0].Action != Modified {
 		t.Fatalf("pointer and value receivers did not match: %v", changes)
+	}
+	if fields := editFields(changes[0]); fields != "receiver,bodyHash" {
+		t.Fatalf("edits = %s", fields)
+	}
+}
+
+func TestEditsOmitUnchangedParts(t *testing.T) {
+	left := []lib.Entity{
+		lib.FunctionEntry{
+			Name:       "CanModify",
+			Parameters: []lib.Parameter{{Name: "u", Type: "User"}},
+			ReturnArgs: []lib.Parameter{{Type: "bool"}},
+			BodyHash:   "same",
+		},
+	}
+	right := []lib.Entity{
+		lib.FunctionEntry{
+			Name:       "CanModify",
+			Parameters: []lib.Parameter{{Name: "u", Type: "Account"}},
+			ReturnArgs: []lib.Parameter{{Type: "bool"}, {Type: "error"}},
+			BodyHash:   "same",
+		},
+	}
+	changes := Entries(left, right)
+	if len(changes) != 1 || changes[0].Name() != "CanModify" {
+		t.Fatal(changes)
+	}
+	if fields := editFields(changes[0]); fields != "parameters,returnArgs" {
+		t.Fatalf("edits = %s", fields)
+	}
+	params := changes[0].Edits[0]
+	if params.String() != "parameters: [{Name:u Type:User}] => [{Name:u Type:Account}]" {
+		t.Fatal(params)
+	}
+}
+
+func TestEditJSON(t *testing.T) {
+	edit := Edit{
+		Field: "fields",
+		Left:  []lib.Field{{Name: "pool"}},
+		Right: []lib.Field{{Name: "pool"}, {Name: "tx"}},
+	}
+	got, err := json.Marshal(edit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"field":"fields","left":[{"name":"pool"}],"right":[{"name":"pool"},{"name":"tx"}]}`
+	if string(got) != want {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func editFields(change Entry) string {
+	names := make([]string, len(change.Edits))
+	for i, edit := range change.Edits {
+		names[i] = edit.Field
+	}
+	return strings.Join(names, ",")
+}
+
+func TestEntriesCallEdit(t *testing.T) {
+	left := []lib.Entity{lib.FunctionEntry{
+		Name:     "A",
+		BodyHash: "same",
+		Calls:    []lib.Call{{Expr: "B"}},
+	}}
+	right := []lib.Entity{lib.FunctionEntry{
+		Name:     "A",
+		BodyHash: "same",
+		Calls: []lib.Call{{
+			Expr: "C",
+			Ref:  &lib.CallRef{Path: "c.go", Name: "C"},
+		}},
+	}}
+	changes := Entries(left, right)
+	if len(changes) != 1 {
+		t.Fatal(changes)
+	}
+	if fields := editFields(changes[0]); fields != "calls" {
+		t.Fatalf("edits = %s", fields)
+	}
+}
+
+func TestFilesPairByPath(t *testing.T) {
+	left := []lib.ParsedFile{
+		{Path: "a.go", Entities: []lib.Entity{lib.FunctionEntry{Name: "F", BodyHash: "1"}}},
+		{Path: "b.go", Entities: []lib.Entity{lib.FunctionEntry{Name: "F", BodyHash: "1"}}},
+	}
+	right := []lib.ParsedFile{
+		{Path: "a.go", Entities: []lib.Entity{lib.FunctionEntry{Name: "F", BodyHash: "1"}}},
+		{Path: "b.go", Entities: []lib.Entity{lib.FunctionEntry{Name: "F", BodyHash: "2"}}},
+		{Path: "c.go", Entities: []lib.Entity{lib.FunctionEntry{Name: "F"}}},
+	}
+	changes := Files(left, right)
+	if len(changes) != 2 || changes[0].String() != "modified b.go" || changes[1].String() != "added c.go" {
+		t.Fatalf("got %v", changes)
+	}
+	if changes[0].Changes[0].String() != "modified function F" {
+		t.Fatal(changes[0].Changes)
+	}
+	if len(changes[1].Changes) != 1 || changes[1].Changes[0].String() != "added function F" {
+		t.Fatal(changes[1].Changes)
 	}
 }
 
