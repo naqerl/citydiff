@@ -116,7 +116,7 @@ fn util_call() { crate::util::helper(); super::util::other(); }
 		{Expr: "globbed", Ref: util("globbed")},
 		{Expr: "Store::new", Ref: store("new", "Store")},
 		{Expr: "t.save", Ref: store("save", "Store")},
-		{Expr: "s.save"},
+		{Expr: "s.save", Ref: store("save", "Store")},
 		{Expr: "util_call", Ref: store("util_call", "")},
 	}
 	if got := callRefs(t, files, "src/store.rs", "run"); !reflect.DeepEqual(got, want) {
@@ -143,11 +143,11 @@ mod inner {
 }
 `)})
 	want := []lib.Call{
-		{Expr: "b", Ref: &lib.CallRef{Path: "src/lib.rs", Name: "b"}},
+		{Expr: "b", Ref: &lib.CallRef{Path: "src/lib.rs", Name: "inner::b"}},
 		{Expr: "super::top", Ref: &lib.CallRef{Path: "src/lib.rs", Name: "top"}},
 		{Expr: "top"},
 	}
-	if got := callRefs(t, files, "src/lib.rs", "a"); !reflect.DeepEqual(got, want) {
+	if got := callRefs(t, files, "src/lib.rs", "inner::a"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("a calls = %+v", got)
 	}
 }

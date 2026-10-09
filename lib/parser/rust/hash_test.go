@@ -44,7 +44,7 @@ impl<T: Clone> Clone for Wrap<T> {
 		t.Fatalf("Service methods hash = %s", service.MethodsHash)
 	}
 	clone := methodNamed(t, entries, "clone")
-	if w := typeNamed(t, entries, "Wrap"); w.MethodsHash != cumulative(clone.BodyHash) || clone.Type.Name != "Wrap<T>" {
+	if w := typeNamed(t, entries, "Wrap"); w.MethodsHash != cumulative(clone.BodyHash) || clone.Type.Name != "<Wrap as Clone>" {
 		t.Fatalf("Wrap methods hash = %s, receiver %s", w.MethodsHash, clone.Type.Name)
 	}
 

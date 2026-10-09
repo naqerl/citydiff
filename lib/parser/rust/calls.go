@@ -2,7 +2,6 @@ package rust
 
 import (
 	"bytes"
-	"path"
 	"sort"
 	"strings"
 	"unicode"
@@ -11,460 +10,113 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// use is one leaf of a use tree. path is as written; alias is the name it
-// binds, empty for a glob. mod is the inline module it sits in.
-type use struct {
-	path  []string
-	alias string
-	glob  bool
-	mod   []string
-}
-
-// binding is a local name at a call. A blocked name is a value of unknown
-// type, so a method call on it stays unresolved. Otherwise recv is its type.
+// binding is a local name. A blocked name has no known type, so a method call
+// on it stays unresolved.
 type binding struct {
-	block bool
-	recv  string
+	t tval
 }
 
-// pending is one call before refs are filled. A path call names a function
-// or an associated function by path. A method call names recv and name.
-type pending struct {
-	expr    string
-	segs    []string
-	recv    string
-	name    string
-	method  bool
-	resolve bool
-	start   uint
-	end     uint
+type found struct {
+	call  lib.Call
+	start int
+	end   int
 }
 
-type draft struct {
-	path       string
-	crate      string
-	ns         string
-	module     []string
-	pkg        string
-	importPath string
-	uses       []use
-	entities   []lib.Entity
-	calls      [][]pending
-	mods       [][]string
-	recvs      []string
-}
-
-type crateRoot struct {
-	dir  string
-	name string
-}
-
-func crateName(src []byte) string {
-	inPackage := false
-	for _, line := range bytes.Split(src, []byte("\n")) {
-		text := strings.TrimSpace(string(line))
-		if i := strings.IndexByte(text, '#'); i >= 0 {
-			text = strings.TrimSpace(text[:i])
-		}
-		if strings.HasPrefix(text, "[") {
-			inPackage = text == "[package]"
-			continue
-		}
-		if !inPackage {
-			continue
-		}
-		key, value, ok := strings.Cut(text, "=")
-		if !ok || strings.TrimSpace(key) != "name" {
-			continue
-		}
-		return strings.ReplaceAll(strings.Trim(strings.TrimSpace(value), `"'`), "-", "_")
-	}
-	return ""
-}
-
-func useTree(src []byte, n *tree_sitter.Node, prefix []string) []use {
-	if n == nil {
-		return nil
-	}
-	join := func(rest ...string) []string {
-		return append(append([]string{}, prefix...), rest...)
-	}
-	switch n.Kind() {
-	case "use_as_clause":
-		segs := join(splitPath(n.ChildByFieldName("path").Utf8Text(src))...)
-		return []use{{path: segs, alias: n.ChildByFieldName("alias").Utf8Text(src)}}
-	case "use_wildcard":
-		var segs []string
-		if inner := n.NamedChild(0); inner != nil {
-			segs = join(splitPath(inner.Utf8Text(src))...)
-		} else {
-			segs = join()
-		}
-		return []use{{path: append(segs, "*"), glob: true}}
-	case "scoped_use_list":
-		next := prefix
-		if p := n.ChildByFieldName("path"); p != nil {
-			next = join(splitPath(p.Utf8Text(src))...)
-		}
-		return useTree(src, n.ChildByFieldName("list"), next)
-	case "use_list":
-		var out []use
-		cursor := n.Walk()
-		defer cursor.Close()
-		for _, child := range n.NamedChildren(cursor) {
-			out = append(out, useTree(src, &child, prefix)...)
-		}
-		return out
-	default:
-		segs := join(splitPath(n.Utf8Text(src))...)
-		if len(segs) == 0 {
-			return nil
-		}
-		alias := segs[len(segs)-1]
-		if alias == "self" && len(segs) > 1 {
-			segs = segs[:len(segs)-1]
-			alias = segs[len(segs)-1]
-		}
-		return []use{{path: segs, alias: alias}}
-	}
-}
-
-func splitPath(s string) []string {
-	var out []string
-	for _, seg := range strings.Split(s, "::") {
-		seg = strings.TrimSpace(seg)
-		if i := strings.IndexByte(seg, '<'); i >= 0 {
-			seg = seg[:i]
-		}
-		if seg != "" {
-			out = append(out, seg)
-		}
-	}
-	return out
-}
-
-// assignModules places each file in a crate namespace and module path.
-// src/lib.rs and src/main.rs are the crate root of the Cargo package. A file
-// directly under src/bin, tests, examples or benches is its own crate root.
-// A file in a subdirectory there, such as tests/common/mod.rs, is a module
-// shared by the crates of that directory.
-func assignModules(drafts []*draft, crates []crateRoot) {
-	for _, d := range drafts {
-		root, ok := bestCrate(crates, path.Dir(d.path))
-		rel := d.path
-		if ok {
-			d.crate = root.name
-			if root.dir != "." {
-				rel = strings.TrimPrefix(d.path, root.dir+"/")
-			}
-		}
-		d.ns = root.dir
-		stem := strings.TrimSuffix(rel, ".rs")
-		var target string
-		switch {
-		case ok && strings.HasPrefix(rel, "src/bin/"):
-			target = "src/bin"
-		case ok && strings.HasPrefix(rel, "src/"):
-			d.module = moduleSegs(strings.TrimPrefix(stem, "src/"))
-		case ok && strings.Contains(rel, "/"):
-			target = rel[:strings.IndexByte(rel, '/')]
-		case ok:
-			target = "."
-		default:
-			d.module = moduleSegs(strings.TrimPrefix(stem, "src/"))
-		}
-		var targetPath []string
-		if target != "" {
-			d.ns += "\x00" + target
-			rest := strings.TrimPrefix(stem, target+"/")
-			segs := strings.Split(rest, "/")
-			if len(segs) == 1 || (target == "src/bin" && len(segs) == 2 && segs[1] == "main") {
-				targetPath = append(strings.Split(target, "/"), segs[0])
-			} else {
-				d.module = moduleSegs(rest)
-				targetPath = strings.Split(target, "/")
-			}
-			if target == "." {
-				targetPath = targetPath[1:]
-			}
-		}
-		for i := range d.uses {
-			d.uses[i].mod = append(append([]string{}, d.module...), d.uses[i].mod...)
-		}
-		if !ok {
-			if len(d.module) > 0 {
-				d.pkg = d.module[len(d.module)-1]
-			}
-			continue
-		}
-		parts := append(append([]string{d.crate}, targetPath...), d.module...)
-		d.importPath = strings.Join(parts, "/")
-		d.pkg = parts[len(parts)-1]
-	}
-}
-
-func moduleSegs(stem string) []string {
-	segs := strings.Split(stem, "/")
-	switch segs[len(segs)-1] {
-	case "mod":
-		segs = segs[:len(segs)-1]
-	case "lib", "main":
-		if len(segs) == 1 {
-			segs = nil
-		}
-	}
-	return segs
-}
-
-func bestCrate(crates []crateRoot, dir string) (crateRoot, bool) {
-	best := crateRoot{dir: "."}
-	found := false
-	for _, c := range crates {
-		if c.dir != "." && dir != c.dir && !strings.HasPrefix(dir, c.dir+"/") {
-			continue
-		}
-		if !found || len(c.dir) > len(best.dir) || best.dir == "." {
-			best, found = c, true
-		}
-	}
-	return best, found
-}
-
-type decl struct {
-	path string
-	name string
-	recv string
-}
-
-type index struct {
-	funcs   map[string][]decl
-	methods map[string][]decl
-	modules map[string]string
-	libNS   map[string]string
-}
-
-func modKey(ns string, mod []string) string {
-	return ns + "\x00\x00" + strings.Join(mod, "::")
-}
-
-func buildIndex(drafts []*draft) *index {
-	idx := &index{
-		funcs:   map[string][]decl{},
-		methods: map[string][]decl{},
-		modules: map[string]string{},
-		libNS:   map[string]string{},
-	}
-	for _, d := range drafts {
-		if d.crate != "" && !strings.Contains(d.ns, "\x00") {
-			idx.libNS[d.crate] = d.ns
-		}
-		idx.modules[modKey(d.ns, d.module)] = d.importPath
-		for i, entity := range d.entities {
-			mod := append(append([]string{}, d.module...), d.mods[i]...)
-			idx.modules[modKey(d.ns, mod)] = d.importPath
-			switch entity := entity.(type) {
-			case lib.FunctionEntry:
-				key := modKey(d.ns, mod) + "\x00" + entity.Name
-				idx.funcs[key] = append(idx.funcs[key], decl{path: d.path, name: entity.Name})
-			case lib.MethodEntry:
-				recv := d.recvs[i]
-				key := d.ns + "\x00" + recv + "\x00" + entity.Name
-				idx.methods[key] = append(idx.methods[key], decl{path: d.path, name: entity.Name, recv: recv})
-			}
-		}
-	}
-	return idx
-}
-
-func one(decls []decl) (*lib.CallRef, bool) {
-	if len(decls) != 1 {
-		return nil, false
-	}
-	return &lib.CallRef{Path: decls[0].path, Name: decls[0].name, Recv: decls[0].recv}, true
-}
-
-// absolute turns a path as written in module cur into a namespace and an
-// absolute module path. ok is false when it leaves the snapshot.
-func (idx *index) absolute(d *draft, cur []string, segs []string, local bool) (string, []string, bool) {
-	if len(segs) == 0 {
-		return "", nil, false
-	}
-	ns := d.ns
-	switch segs[0] {
-	case "crate":
-		return ns, segs[1:], true
-	case "self":
-		return ns, append(append([]string{}, cur...), segs[1:]...), true
-	case "super":
-		mod := append([]string{}, cur...)
-		for len(segs) > 0 && segs[0] == "super" {
-			if len(mod) == 0 {
-				return "", nil, false
-			}
-			mod = mod[:len(mod)-1]
-			segs = segs[1:]
-		}
-		return ns, append(mod, segs...), true
-	}
-	if local {
-		for _, u := range d.uses {
-			if !u.glob && u.alias == segs[0] && sameMod(u.mod, cur) {
-				uns, abs, ok := idx.absolute(d, u.mod, u.path, false)
-				if !ok {
-					return "", nil, false
-				}
-				return uns, append(abs, segs[1:]...), true
-			}
-		}
-	}
-	if libNS, ok := idx.libNS[segs[0]]; ok && segs[0] == d.crate {
-		return libNS, segs[1:], true
-	}
-	return ns, append(append([]string{}, cur...), segs...), true
-}
-
-func sameMod(a, b []string) bool {
-	return strings.Join(a, "::") == strings.Join(b, "::")
-}
-
-func (idx *index) lookupPath(d *draft, cur []string, segs []string) (*lib.CallRef, bool) {
-	var tries [][]string
-	if len(segs) == 1 {
-		tries = append(tries, append(append([]string{}, cur...), segs[0]))
-		if ns, abs, ok := idx.absolute(d, cur, segs, true); ok && ns == d.ns {
-			tries = append(tries, abs)
-		} else if ok {
-			if ref, found := idx.lookupAbs(ns, abs); found {
-				return ref, true
-			}
-		}
-		for _, u := range d.uses {
-			if u.glob && sameMod(u.mod, cur) {
-				if ns, abs, ok := idx.absolute(d, u.mod, u.path[:len(u.path)-1], false); ok {
-					if ref, found := idx.lookupAbs(ns, append(abs, segs[0])); found {
-						return ref, true
-					}
-				}
-			}
-		}
-	} else if ns, abs, ok := idx.absolute(d, cur, segs, true); ok {
-		if ref, found := idx.lookupAbs(ns, abs); found {
-			return ref, true
-		}
-	}
-	for _, abs := range tries {
-		if ref, found := idx.lookupAbs(d.ns, abs); found {
-			return ref, true
-		}
-	}
-	return nil, false
-}
-
-func (idx *index) lookupAbs(ns string, abs []string) (*lib.CallRef, bool) {
-	if len(abs) == 0 {
-		return nil, false
-	}
-	name := abs[len(abs)-1]
-	mod := abs[:len(abs)-1]
-	if ref, ok := one(idx.funcs[modKey(ns, mod)+"\x00"+name]); ok {
-		return ref, true
-	}
-	if len(mod) > 0 {
-		return one(idx.methods[ns+"\x00"+mod[len(mod)-1]+"\x00"+name])
-	}
-	return nil, false
-}
-
-func resolve(drafts []*draft) {
+func resolve(drafts []*draft, parser *tree_sitter.Parser) {
 	idx := buildIndex(drafts)
 	for _, d := range drafts {
 		for i, entity := range d.entities {
-			if imp, ok := entity.(lib.ImportEntry); ok {
-				cur := append(append([]string{}, d.module...), d.mods[i]...)
-				d.entities[i] = lib.ImportEntry{Path: idx.importPath(d, cur, imp.Path)}
+			m := d.metas[i]
+			cur := fullMod(d, m)
+			switch entity := entity.(type) {
+			case lib.ImportEntry:
+				d.entities[i] = lib.ImportEntry{Path: idx.importPath(d, cur, entity.Path)}
+			case lib.FunctionEntry:
+				entity.Calls = collect(idx, parser, d, m, scope{d: d, mod: cur})
+				d.entities[i] = entity
+			case lib.MethodEntry:
+				entity.Calls = collect(idx, parser, d, m, scope{d: d, mod: cur, self: m.recv})
+				d.entities[i] = entity
 			}
 		}
-		for i, pendingCalls := range d.calls {
-			if len(pendingCalls) == 0 {
-				continue
+	}
+}
+
+type collector struct {
+	idx    *index
+	parser *tree_sitter.Parser
+	src    []byte
+	delta  int
+	at     scope
+	scopes []map[string]binding
+	out    []found
+}
+
+func collect(idx *index, parser *tree_sitter.Parser, d *draft, m meta, at scope) []lib.Call {
+	if m.node == nil {
+		return nil
+	}
+	body := m.node.ChildByFieldName("body")
+	if body == nil {
+		return nil
+	}
+	c := &collector{idx: idx, parser: parser, src: d.src, at: at, scopes: []map[string]binding{{}}}
+	if at.self != "" {
+		c.scopes[0]["self"] = binding{t: tval{id: at.self}}
+	}
+	if params := m.node.ChildByFieldName("parameters"); params != nil {
+		cursor := params.Walk()
+		for _, p := range params.NamedChildren(cursor) {
+			if p.Kind() == "parameter" {
+				c.bind(p.ChildByFieldName("pattern"), idx.convert(at, c.text(p.ChildByFieldName("type"))))
 			}
-			cur := append(append([]string{}, d.module...), d.mods[i]...)
-			calls := make([]lib.Call, len(pendingCalls))
-			for j, call := range pendingCalls {
-				calls[j] = lib.Call{Expr: call.expr}
-				if !call.resolve {
-					continue
-				}
-				var ref *lib.CallRef
-				var ok bool
-				if call.method {
-					ref, ok = one(idx.methods[d.ns+"\x00"+call.recv+"\x00"+call.name])
-				} else {
-					ref, ok = idx.lookupPath(d, cur, call.segs)
-				}
-				if ok {
-					calls[j].Ref = ref
-				}
-			}
-			setCalls(d, i, calls)
 		}
+		cursor.Close()
 	}
-}
-
-// importPath is the ImportPath of the snapshot module a use names, or the
-// path as written when it names nothing in the snapshot.
-func (idx *index) importPath(d *draft, cur []string, written string) string {
-	segs := strings.Split(written, "::")
-	if segs[len(segs)-1] == "*" {
-		segs = segs[:len(segs)-1]
+	c.walk(body)
+	if len(c.out) == 0 {
+		return nil
 	}
-	ns, abs, ok := idx.absolute(d, cur, segs, false)
-	if !ok {
-		return written
-	}
-	if segs[0] != "crate" && segs[0] != "self" && segs[0] != "super" && segs[0] != d.crate {
-		if _, known := idx.modules[modKey(ns, abs[:min(len(abs), len(cur)+1)])]; !known {
-			return written
+	sort.SliceStable(c.out, func(i, j int) bool {
+		if c.out[i].start != c.out[j].start {
+			return c.out[i].start < c.out[j].start
 		}
+		return c.out[i].end < c.out[j].end
+	})
+	calls := make([]lib.Call, len(c.out))
+	for i, f := range c.out {
+		calls[i] = f.call
 	}
-	for n := len(abs); n >= 0; n-- {
-		if p, known := idx.modules[modKey(ns, abs[:n])]; known && p != "" {
-			return p
-		}
-	}
-	return written
+	return calls
 }
 
-func setCalls(d *draft, i int, calls []lib.Call) {
-	switch entity := d.entities[i].(type) {
-	case lib.FunctionEntry:
-		entity.Calls = calls
-		d.entities[i] = entity
-	case lib.MethodEntry:
-		entity.Calls = calls
-		d.entities[i] = entity
+func (c *collector) text(n *tree_sitter.Node) string {
+	if n == nil {
+		return ""
 	}
+	return n.Utf8Text(c.src)
 }
 
-func typeBinding(t string) binding {
-	name := normType(t)
-	if name == "" || name == "Self" || !unicode.IsUpper([]rune(name)[0]) {
-		return binding{block: true}
-	}
-	return binding{recv: name}
+func (c *collector) push() func() {
+	c.scopes = append(c.scopes, map[string]binding{})
+	return func() { c.scopes = c.scopes[:len(c.scopes)-1] }
 }
 
-// bindPattern binds a parameter pattern. A plain name takes b; every name in
-// a destructuring pattern is blocked.
-func bindPattern(scope map[string]binding, pattern string, b binding) {
-	pattern = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(pattern), "mut "))
-	if isIdent(pattern) {
-		scope[pattern] = b
+// bind binds a pattern. A plain name, with or without mut, takes t. Every
+// name in a destructuring pattern is bound with no type.
+func (c *collector) bind(pattern *tree_sitter.Node, t tval) {
+	if pattern == nil {
 		return
 	}
-	for _, word := range strings.FieldsFunc(pattern, func(r rune) bool { return !isIdentRune(r) }) {
+	scope := c.scopes[len(c.scopes)-1]
+	text := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.text(pattern)), "mut "))
+	if isIdent(text) {
+		scope[text] = binding{t: t}
+		return
+	}
+	for _, word := range strings.FieldsFunc(text, func(r rune) bool { return !isIdentRune(r) }) {
 		if isIdent(word) && !unicode.IsUpper([]rune(word)[0]) {
-			scope[word] = binding{block: true}
+			scope[word] = binding{}
 		}
 	}
 }
@@ -483,40 +135,6 @@ func isIdent(s string) bool {
 	return true
 }
 
-type collector struct {
-	src    []byte
-	self   string
-	scopes []map[string]binding
-	out    []pending
-}
-
-func collectCalls(src []byte, body *tree_sitter.Node, outer map[string]binding, self string) []pending {
-	if body == nil {
-		return nil
-	}
-	c := &collector{src: src, self: self, scopes: []map[string]binding{outer}}
-	c.walk(body)
-	sort.SliceStable(c.out, func(i, j int) bool {
-		if c.out[i].start != c.out[j].start {
-			return c.out[i].start < c.out[j].start
-		}
-		return c.out[i].end < c.out[j].end
-	})
-	return c.out
-}
-
-func (c *collector) push() func() {
-	c.scopes = append(c.scopes, map[string]binding{})
-	return func() { c.scopes = c.scopes[:len(c.scopes)-1] }
-}
-
-func (c *collector) bind(pattern *tree_sitter.Node, b binding) {
-	if pattern == nil {
-		return
-	}
-	bindPattern(c.scopes[len(c.scopes)-1], pattern.Utf8Text(c.src), b)
-}
-
 func (c *collector) find(name string) (binding, bool) {
 	for i := len(c.scopes) - 1; i >= 0; i-- {
 		if b, ok := c.scopes[i][name]; ok {
@@ -524,6 +142,10 @@ func (c *collector) find(name string) (binding, bool) {
 		}
 	}
 	return binding{}, false
+}
+
+func (c *collector) record(n *tree_sitter.Node, call lib.Call) {
+	c.out = append(c.out, found{call: call, start: int(n.StartByte()) + c.delta, end: int(n.EndByte()) + c.delta})
 }
 
 func (c *collector) walk(n *tree_sitter.Node) {
@@ -541,13 +163,9 @@ func (c *collector) walk(n *tree_sitter.Node) {
 			cursor := params.Walk()
 			for _, p := range params.NamedChildren(cursor) {
 				if p.Kind() == "parameter" {
-					b := binding{block: true}
-					if t := p.ChildByFieldName("type"); t != nil {
-						b = typeBinding(t.Utf8Text(c.src))
-					}
-					c.bind(p.ChildByFieldName("pattern"), b)
+					c.bind(p.ChildByFieldName("pattern"), c.idx.convert(c.at, c.text(p.ChildByFieldName("type"))))
 				} else {
-					c.bind(&p, binding{block: true})
+					c.bind(&p, tval{})
 				}
 			}
 			cursor.Close()
@@ -555,39 +173,40 @@ func (c *collector) walk(n *tree_sitter.Node) {
 		c.walk(n.ChildByFieldName("body"))
 		return
 	case "let_declaration":
-		c.walk(n.ChildByFieldName("value"))
+		value := n.ChildByFieldName("value")
+		c.walk(value)
 		c.walk(n.ChildByFieldName("alternative"))
-		b := binding{block: true}
-		if t := n.ChildByFieldName("type"); t != nil {
-			b = typeBinding(t.Utf8Text(c.src))
-		} else if v := n.ChildByFieldName("value"); v != nil {
-			b = c.valueBinding(v)
+		var t tval
+		if typ := n.ChildByFieldName("type"); typ != nil {
+			t = c.idx.convert(c.at, c.text(typ))
+		} else if value != nil {
+			t = c.typeOf(value)
 		}
-		c.bind(n.ChildByFieldName("pattern"), b)
+		c.bind(n.ChildByFieldName("pattern"), t)
 		return
 	case "let_condition":
 		c.walk(n.ChildByFieldName("value"))
-		c.bind(n.ChildByFieldName("pattern"), binding{block: true})
+		c.bind(n.ChildByFieldName("pattern"), tval{})
 		return
 	case "for_expression":
 		c.walk(n.ChildByFieldName("value"))
 		defer c.push()()
-		c.bind(n.ChildByFieldName("pattern"), binding{block: true})
+		c.bind(n.ChildByFieldName("pattern"), tval{})
 		c.walk(n.ChildByFieldName("body"))
 		return
 	case "call_expression":
-		if call, ok := c.pendingFrom(n.ChildByFieldName("function")); ok {
-			call.start, call.end = n.StartByte(), n.EndByte()
-			c.out = append(c.out, call)
+		fn := n.ChildByFieldName("function")
+		if c.text(fn) == macroWrapper {
+			break
 		}
+		call, _ := c.callee(fn)
+		c.record(n, call)
 	case "macro_invocation":
-		name := n.ChildByFieldName("macro").Utf8Text(c.src)
-		c.out = append(c.out, pending{expr: name + "!", start: n.StartByte(), end: n.EndByte()})
-		c.tokenCalls(n)
+		c.macro(n)
 		return
 	}
 	if n.Kind() == "match_arm" {
-		c.bind(n.ChildByFieldName("pattern"), binding{block: true})
+		c.bind(n.ChildByFieldName("pattern"), tval{})
 	}
 	cursor := n.Walk()
 	defer cursor.Close()
@@ -596,8 +215,161 @@ func (c *collector) walk(n *tree_sitter.Node) {
 	}
 }
 
-// tokenCalls records name(...) inside macro arguments. A token tree is not
-// parsed as expressions, so only a bare name directly followed by a
+// callee resolves the function part of a call and returns the call and the
+// type it returns.
+func (c *collector) callee(fn *tree_sitter.Node) (lib.Call, tval) {
+	call := lib.Call{Expr: c.text(fn)}
+	for fn != nil && (fn.Kind() == "generic_function" || fn.Kind() == "parenthesized_expression") {
+		if fn.Kind() == "generic_function" {
+			fn = fn.ChildByFieldName("function")
+		} else {
+			fn = fn.NamedChild(0)
+		}
+	}
+	if fn == nil {
+		return call, tval{}
+	}
+	var decl fdecl
+	ok := false
+	switch fn.Kind() {
+	case "identifier":
+		name := c.text(fn)
+		if _, bound := c.find(name); bound {
+			return call, tval{}
+		}
+		decl, ok = c.idx.function(c.at.d, c.at.mod, []string{name})
+	case "scoped_identifier":
+		segs := splitPath(c.text(fn))
+		if len(segs) == 0 {
+			return call, tval{}
+		}
+		if len(segs) == 2 && segs[0] == "Self" {
+			decl, ok = c.idx.method(c.at.self, segs[1])
+			break
+		}
+		decl, ok = c.idx.function(c.at.d, c.at.mod, segs)
+		if !ok && len(segs) >= 2 {
+			id := c.idx.resolveType(c.at, strings.Join(segs[:len(segs)-1], "::"))
+			decl, ok = c.idx.method(id, segs[len(segs)-1])
+		}
+	case "field_expression":
+		field := fn.ChildByFieldName("field")
+		if field == nil || field.Kind() != "field_identifier" {
+			return call, tval{}
+		}
+		recv := c.typeOf(fn.ChildByFieldName("value"))
+		name := c.text(field)
+		if recv.wrap && (name == "unwrap" || name == "expect") {
+			return call, tval{id: recv.id}
+		}
+		if recv.wrap {
+			return call, tval{}
+		}
+		decl, ok = c.idx.method(recv.id, name)
+	case "closure_expression":
+		return lib.Call{Expr: "closure"}, tval{}
+	}
+	if !ok {
+		return call, tval{}
+	}
+	ref := decl.ref
+	call.Ref = &ref
+	return call, c.idx.returns(decl)
+}
+
+// typeOf infers the type of an expression from bindings, struct literals,
+// field types and return types. Anything else is unknown.
+func (c *collector) typeOf(n *tree_sitter.Node) tval {
+	if n == nil {
+		return tval{}
+	}
+	switch n.Kind() {
+	case "identifier":
+		name := c.text(n)
+		if b, ok := c.find(name); ok {
+			return b.t
+		}
+		if unicode.IsUpper([]rune(name)[0]) {
+			return tval{id: c.idx.resolveType(c.at, name)}
+		}
+		return tval{}
+	case "self":
+		return tval{id: c.at.self}
+	case "parenthesized_expression":
+		return c.typeOf(n.NamedChild(0))
+	case "reference_expression":
+		return c.typeOf(n.ChildByFieldName("value"))
+	case "struct_expression":
+		return tval{id: c.idx.resolveType(c.at, c.text(n.ChildByFieldName("name")))}
+	case "try_expression":
+		if t := c.typeOf(n.NamedChild(0)); t.wrap {
+			return tval{id: t.id}
+		}
+	case "call_expression":
+		_, t := c.callee(n.ChildByFieldName("function"))
+		return t
+	case "field_expression":
+		field := n.ChildByFieldName("field")
+		if field != nil && field.Kind() == "field_identifier" {
+			return c.idx.field(c.typeOf(n.ChildByFieldName("value")), c.text(field))
+		}
+	}
+	return tval{}
+}
+
+const macroWrapper = "__citydiff_macro"
+
+// exprMacros take expressions as arguments, so their token tree is parsed as
+// the arguments of a call. vec! is parsed as an array, for vec![x; n].
+var exprMacros = map[string]bool{
+	"println": true, "print": true, "eprintln": true, "eprint": true, "format": true,
+	"write": true, "writeln": true, "assert": true, "assert_eq": true, "assert_ne": true,
+	"debug_assert": true, "debug_assert_eq": true, "debug_assert_ne": true,
+	"vec": true, "panic": true, "matches": true, "dbg": true, "format_args": true,
+}
+
+func (c *collector) macro(n *tree_sitter.Node) {
+	name := bareName(c.text(n.ChildByFieldName("macro")))
+	c.record(n, lib.Call{Expr: name + "!"})
+	var tt *tree_sitter.Node
+	cursor := n.Walk()
+	for _, child := range n.NamedChildren(cursor) {
+		if child.Kind() == "token_tree" {
+			tt = &child
+		}
+	}
+	cursor.Close()
+	if tt == nil || tt.EndByte()-tt.StartByte() < 2 {
+		return
+	}
+	if !exprMacros[name] {
+		c.tokenCalls(tt)
+		return
+	}
+	inner := c.src[tt.StartByte()+1 : tt.EndByte()-1]
+	prefix, suffix := "fn f() { "+macroWrapper+"(", "); }"
+	if name == "vec" {
+		prefix, suffix = "fn f() { [", "]; }"
+	}
+	src := append(append([]byte(prefix), inner...), suffix...)
+	tree := c.parser.Parse(src, nil)
+	if tree == nil {
+		return
+	}
+	defer tree.Close()
+	fn := tree.RootNode().NamedChild(0)
+	if fn == nil || fn.Kind() != "function_item" {
+		return
+	}
+	savedSrc, savedDelta := c.src, c.delta
+	c.delta = savedDelta + int(tt.StartByte()) + 1 - len(prefix)
+	c.src = src
+	c.walk(fn.ChildByFieldName("body"))
+	c.src, c.delta = savedSrc, savedDelta
+}
+
+// tokenCalls records name(...) inside the arguments of other macros. Their
+// token tree is not parsed, so only a bare name directly followed by a
 // parenthesized group counts.
 func (c *collector) tokenCalls(n *tree_sitter.Node) {
 	cursor := n.Walk()
@@ -620,80 +392,13 @@ func (c *collector) tokenCalls(n *tree_sitter.Node) {
 			continue
 		}
 		name := child.Utf8Text(c.src)
-		call := pending{expr: name, start: child.StartByte(), end: next.EndByte()}
+		call := lib.Call{Expr: name}
 		if _, bound := c.find(name); !bound {
-			call.segs, call.resolve = []string{name}, true
+			if decl, ok := c.idx.function(c.at.d, c.at.mod, []string{name}); ok {
+				ref := decl.ref
+				call.Ref = &ref
+			}
 		}
-		c.out = append(c.out, call)
-	}
-}
-
-func (c *collector) valueBinding(v *tree_sitter.Node) binding {
-	for v != nil && (v.Kind() == "reference_expression" || v.Kind() == "parenthesized_expression") {
-		if v.Kind() == "reference_expression" {
-			v = v.ChildByFieldName("value")
-		} else {
-			v = v.NamedChild(0)
-		}
-	}
-	if v != nil && v.Kind() == "struct_expression" {
-		name := normType(v.ChildByFieldName("name").Utf8Text(c.src))
-		if name == "Self" {
-			name = c.self
-		}
-		if name != "" {
-			return binding{recv: name}
-		}
-	}
-	return binding{block: true}
-}
-
-func (c *collector) pendingFrom(fn *tree_sitter.Node) (pending, bool) {
-	if fn == nil {
-		return pending{}, false
-	}
-	expr := fn.Utf8Text(c.src)
-	for fn.Kind() == "generic_function" || fn.Kind() == "parenthesized_expression" {
-		next := fn.ChildByFieldName("function")
-		if fn.Kind() == "parenthesized_expression" {
-			next = fn.NamedChild(0)
-		}
-		if next == nil {
-			break
-		}
-		fn = next
-	}
-	switch fn.Kind() {
-	case "identifier":
-		name := fn.Utf8Text(c.src)
-		if _, bound := c.find(name); bound {
-			return pending{expr: expr}, true
-		}
-		return pending{expr: expr, segs: []string{name}, resolve: true}, true
-	case "scoped_identifier":
-		segs := splitPath(fn.Utf8Text(c.src))
-		if len(segs) == 2 && segs[0] == "Self" && c.self != "" {
-			return pending{expr: expr, recv: c.self, name: segs[1], method: true, resolve: true}, true
-		}
-		return pending{expr: expr, segs: segs, resolve: len(segs) > 0}, true
-	case "field_expression":
-		value := fn.ChildByFieldName("value")
-		field := fn.ChildByFieldName("field")
-		if value == nil || field == nil || field.Kind() != "field_identifier" {
-			return pending{expr: expr}, true
-		}
-		name := field.Utf8Text(c.src)
-		if value.Kind() != "self" && value.Kind() != "identifier" {
-			return pending{expr: expr}, true
-		}
-		b, ok := c.find(value.Utf8Text(c.src))
-		if !ok || b.block {
-			return pending{expr: expr}, true
-		}
-		return pending{expr: expr, recv: b.recv, name: name, method: true, resolve: true}, true
-	case "closure_expression":
-		return pending{expr: "closure"}, true
-	default:
-		return pending{expr: expr}, true
+		c.out = append(c.out, found{call: call, start: int(child.StartByte()) + c.delta, end: int(next.EndByte()) + c.delta})
 	}
 }

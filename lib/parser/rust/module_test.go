@@ -74,7 +74,7 @@ mod inner { pub fn hidden() {} }
 	}
 	want := []string{
 		"variable LIMIT", "variable NAME", "type Point", "type Unit", "type Shape", "type Alias",
-		"type Area", "method area", "method twice", "method new", "function run", "function hidden",
+		"type Area", "method area", "method twice", "method new", "function run", "function inner::hidden",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("entries = %v", got)

@@ -22,13 +22,43 @@ type Parser struct{}
 // New returns a Rust parser.
 func New() Parser { return Parser{} }
 
+// draft is one file between reading it and filling its calls.
+type draft struct {
+	path       string
+	src        []byte
+	tree       *tree_sitter.Tree
+	crate      string
+	ns         string
+	module     []string
+	pkg        string
+	importPath string
+	uses       []use
+	entities   []lib.Entity
+	metas      []meta
+}
+
+// meta is what call resolution needs about one entity.
+// mod is the inline module path inside the file. For a method, recv is the
+// impl or trait type as written and trait is the implemented trait.
+type meta struct {
+	mod     []string
+	node    *tree_sitter.Node
+	recv    string
+	trait   string
+	inTrait bool
+	ret     string
+	fields  map[string]string
+}
+
 // Parse implements lib.Parser.
 // Every file is collected before calls are resolved, so a declaration in the
 // last file fills a call in the first file. Calls that do not resolve are kept.
 //
 // A Cargo.toml names the crate. ImportPath is the crate name followed by the
 // module path, slash-separated, so src/lib.rs is "acme" and src/net/mod.rs or
-// src/net.rs is "acme/net". Package is the last module segment.
+// src/net.rs is "acme/net". Package is the last module segment. Items in an
+// inline module carry its path: a function is named inner::f and a type
+// inner::T.
 func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 	if src == nil {
 		return nil, errors.New("nil source")
@@ -41,6 +71,11 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 
 	var crates []crateRoot
 	var drafts []*draft
+	defer func() {
+		for _, d := range drafts {
+			d.tree.Close()
+		}
+	}()
 	for {
 		file, err := src.Next()
 		if errors.Is(err, io.EOF) {
@@ -64,15 +99,14 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 		if tree == nil {
 			return nil, fmt.Errorf("parse %s returned no tree", file.Path)
 		}
-		d := &draft{path: file.Path}
+		d := &draft{path: file.Path, src: file.Src, tree: tree}
 		w := walker{src: file.Src, d: d}
-		w.items(tree.RootNode(), nil, "")
-		tree.Close()
+		w.items(tree.RootNode(), nil, "", "", false)
 		assignMethodHashes(d.entities)
 		drafts = append(drafts, d)
 	}
 	assignModules(drafts, crates)
-	resolve(drafts)
+	resolve(drafts, parser)
 
 	out := make([]lib.ParsedFile, len(drafts))
 	for i, d := range drafts {
@@ -101,64 +135,79 @@ func (w *walker) text(n *tree_sitter.Node) string {
 	return n.Utf8Text(w.src)
 }
 
+func qualify(mod []string, name string) string {
+	if len(mod) == 0 {
+		return name
+	}
+	return strings.Join(mod, "::") + "::" + name
+}
+
+// owner is the Type.Name of a method: the bare type, or <T as Trait> for a
+// trait impl, qualified by the inline module.
+func owner(mod []string, recv, trait string) string {
+	name := qualify(mod, normType(recv))
+	if trait == "" {
+		return name
+	}
+	return "<" + name + " as " + strings.Join(strings.Fields(trait), " ") + ">"
+}
+
 // items reads the items of a file, an inline module, a trait or an impl.
-// mod is the inline module path below the file module. recv is the impl or
-// trait type that functions in this list belong to.
-func (w *walker) items(list *tree_sitter.Node, mod []string, recv string) {
+// mod is the inline module path below the file module. recv and trait name
+// the impl or trait that functions in this list belong to.
+func (w *walker) items(list *tree_sitter.Node, mod []string, recv, trait string, inTrait bool) {
 	cursor := list.Walk()
 	defer cursor.Close()
 	for _, n := range list.NamedChildren(cursor) {
 		switch n.Kind() {
 		case "use_declaration":
-			for _, use := range useTree(w.src, n.ChildByFieldName("argument"), nil) {
-				use.mod = mod
-				w.d.uses = append(w.d.uses, use)
-				w.add(lib.ImportEntry{Path: strings.Join(use.path, "::")}, nil, mod, "")
+			for _, u := range useTree(w.src, n.ChildByFieldName("argument"), nil) {
+				u.mod = mod
+				w.d.uses = append(w.d.uses, u)
+				w.add(lib.ImportEntry{Path: strings.Join(u.path, "::")}, meta{mod: mod})
 			}
 		case "extern_crate_declaration":
-			name := w.text(n.ChildByFieldName("name"))
-			w.add(lib.ImportEntry{Path: name}, nil, mod, "")
+			w.add(lib.ImportEntry{Path: w.text(n.ChildByFieldName("name"))}, meta{mod: mod})
 		case "mod_item":
 			if body := n.ChildByFieldName("body"); body != nil {
-				w.items(body, append(append([]string{}, mod...), w.text(n.ChildByFieldName("name"))), "")
+				w.items(body, append(append([]string{}, mod...), w.text(n.ChildByFieldName("name"))), "", "", false)
 			}
 		case "struct_item", "union_item":
-			w.add(lib.TypeEntry{Name: w.text(n.ChildByFieldName("name")), Fields: w.fields(n.ChildByFieldName("body"))}, nil, mod, "")
+			body := n.ChildByFieldName("body")
+			w.add(lib.TypeEntry{Name: qualify(mod, w.text(n.ChildByFieldName("name"))), Fields: w.fields(body)},
+				meta{mod: mod, fields: w.fieldTypes(body)})
 		case "enum_item":
-			w.add(lib.TypeEntry{Name: w.text(n.ChildByFieldName("name")), Fields: w.variants(n.ChildByFieldName("body"))}, nil, mod, "")
+			w.add(lib.TypeEntry{Name: qualify(mod, w.text(n.ChildByFieldName("name"))), Fields: w.variants(n.ChildByFieldName("body"))}, meta{mod: mod})
 		case "type_item":
-			w.add(lib.TypeEntry{Name: w.text(n.ChildByFieldName("name"))}, nil, mod, "")
+			w.add(lib.TypeEntry{Name: qualify(mod, w.text(n.ChildByFieldName("name")))}, meta{mod: mod, ret: w.text(n.ChildByFieldName("type"))})
 		case "trait_item":
 			name := w.text(n.ChildByFieldName("name"))
-			w.add(lib.TypeEntry{Name: name}, nil, mod, "")
+			w.add(lib.TypeEntry{Name: qualify(mod, name)}, meta{mod: mod})
 			if body := n.ChildByFieldName("body"); body != nil {
-				w.items(body, mod, name)
+				w.items(body, mod, name, "", true)
 			}
 		case "impl_item":
 			if body := n.ChildByFieldName("body"); body != nil {
-				w.items(body, mod, w.text(n.ChildByFieldName("type")))
+				w.items(body, mod, w.text(n.ChildByFieldName("type")), w.text(n.ChildByFieldName("trait")), false)
 			}
 		case "const_item", "static_item":
-			w.add(lib.VariableEntry{Name: w.text(n.ChildByFieldName("name"))}, nil, mod, "")
+			w.add(lib.VariableEntry{Name: qualify(mod, w.text(n.ChildByFieldName("name")))}, meta{mod: mod})
 		case "function_item", "function_signature_item":
-			fn, body := w.function(&n, mod, recv)
+			fn := w.function(&n)
+			m := meta{mod: mod, node: &n, recv: recv, trait: trait, inTrait: inTrait, ret: w.text(n.ChildByFieldName("return_type"))}
 			if recv == "" {
-				w.add(fn, body, mod, "")
+				fn.Name = qualify(mod, fn.Name)
+				w.add(fn, m)
 				continue
 			}
-			w.add(lib.MethodEntry{FunctionEntry: fn, Type: &lib.TypeEntry{Name: recv}}, body, mod, normType(recv))
+			w.add(lib.MethodEntry{FunctionEntry: fn, Type: &lib.TypeEntry{Name: owner(mod, recv, trait)}}, m)
 		}
 	}
 }
 
-func (w *walker) add(entry lib.Entity, calls []pending, mod []string, recv string) {
-	if len(calls) == 0 {
-		calls = nil
-	}
+func (w *walker) add(entry lib.Entity, m meta) {
 	w.d.entities = append(w.d.entities, entry)
-	w.d.calls = append(w.d.calls, calls)
-	w.d.mods = append(w.d.mods, mod)
-	w.d.recvs = append(w.d.recvs, recv)
+	w.d.metas = append(w.d.metas, m)
 }
 
 func (w *walker) fields(body *tree_sitter.Node) []lib.Field {
@@ -171,6 +220,21 @@ func (w *walker) fields(body *tree_sitter.Node) []lib.Field {
 	for _, f := range body.NamedChildren(cursor) {
 		if f.Kind() == "field_declaration" {
 			out = append(out, lib.Field{Name: w.text(f.ChildByFieldName("name"))})
+		}
+	}
+	return out
+}
+
+func (w *walker) fieldTypes(body *tree_sitter.Node) map[string]string {
+	if body == nil || body.Kind() != "field_declaration_list" {
+		return nil
+	}
+	out := map[string]string{}
+	cursor := body.Walk()
+	defer cursor.Close()
+	for _, f := range body.NamedChildren(cursor) {
+		if f.Kind() == "field_declaration" {
+			out[w.text(f.ChildByFieldName("name"))] = w.text(f.ChildByFieldName("type"))
 		}
 	}
 	return out
@@ -191,28 +255,19 @@ func (w *walker) variants(body *tree_sitter.Node) []lib.Field {
 	return out
 }
 
-func (w *walker) function(n *tree_sitter.Node, mod []string, recv string) (lib.FunctionEntry, []pending) {
-	params := w.parameters(n.ChildByFieldName("parameters"))
+func (w *walker) function(n *tree_sitter.Node) lib.FunctionEntry {
 	var returns []lib.Parameter
 	if ret := n.ChildByFieldName("return_type"); ret != nil {
 		returns = []lib.Parameter{{Type: w.text(ret)}}
 	}
 	bodyHash, bodyBytes := hashBody(w.src, n)
-	fn := lib.FunctionEntry{
+	return lib.FunctionEntry{
 		Name:       w.text(n.ChildByFieldName("name")),
-		Parameters: params,
+		Parameters: w.parameters(n.ChildByFieldName("parameters")),
 		ReturnArgs: returns,
 		BodyHash:   bodyHash,
 		BodyBytes:  bodyBytes,
 	}
-	scope := map[string]binding{}
-	for _, p := range params {
-		bindPattern(scope, p.Name, typeBinding(p.Type))
-	}
-	if recv != "" {
-		scope["self"] = binding{recv: normType(recv)}
-	}
-	return fn, collectCalls(w.src, n.ChildByFieldName("body"), scope, normType(recv))
 }
 
 // parameters skips self, which belongs to the impl type the way a Go
@@ -251,7 +306,7 @@ func hashBody(src []byte, decl *tree_sitter.Node) (string, int) {
 }
 
 // assignMethodHashes sets each type's MethodsHash from its method body hashes
-// across every impl block in the file, in source order.
+// across every impl block in the file, inherent and trait, in source order.
 func assignMethodHashes(entries []lib.Entity) {
 	byType := map[string][]string{}
 	for _, entry := range entries {
@@ -259,7 +314,7 @@ func assignMethodHashes(entries []lib.Entity) {
 		if !ok || method.Type == nil || method.BodyHash == "" {
 			continue
 		}
-		name := normType(method.Type.Name)
+		name := ownerType(method.Type.Name)
 		byType[name] = append(byType[name], method.BodyHash)
 	}
 	for i, entry := range entries {
@@ -276,6 +331,16 @@ func assignMethodHashes(entries []lib.Entity) {
 	}
 }
 
+// ownerType is the type of a method owner: T for both T and <T as Trait>.
+func ownerType(name string) string {
+	if strings.HasPrefix(name, "<") {
+		if i := strings.Index(name, " as "); i > 0 {
+			return name[1:i]
+		}
+	}
+	return name
+}
+
 func cumulativeHash(hexHashes []string) string {
 	h := sha256.New()
 	for _, hexHash := range hexHashes {
@@ -289,8 +354,8 @@ func cumulativeHash(hexHashes []string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// normType is the bare type name: no references, generics, dyn or path.
-func normType(t string) string {
+// stripRef drops references, mut, dyn, impl and lifetimes from a type.
+func stripRef(t string) string {
 	t = strings.TrimSpace(t)
 	for {
 		switch {
@@ -307,13 +372,19 @@ func normType(t string) string {
 			}
 			t = strings.TrimSpace(t[i:])
 		default:
-			if i := strings.IndexByte(t, '<'); i >= 0 {
-				t = t[:i]
-			}
-			if i := strings.LastIndex(t, "::"); i >= 0 {
-				t = t[i+2:]
-			}
-			return strings.TrimSpace(t)
+			return t
 		}
 	}
+}
+
+// normType is the bare type name: no references, generics, dyn or path.
+func normType(t string) string {
+	t = stripRef(t)
+	if i := strings.IndexByte(t, '<'); i >= 0 {
+		t = t[:i]
+	}
+	if i := strings.LastIndex(t, "::"); i >= 0 {
+		t = t[i+2:]
+	}
+	return strings.TrimSpace(t)
 }
