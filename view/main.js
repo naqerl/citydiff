@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { layoutCity, methodDrawY, fitDistance } from "./layout.js";
+import { deletedFirst } from "./changes.js";
+import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { packageCallEdges } from "./edges.js";
@@ -775,38 +776,19 @@ function makeInstances(geo, material, slots) {
   return mesh;
 }
 
-function meshSize(slot, open) {
-  if (slot.entity.change === "removed" && mode !== "overlay") {
-    return { w: 0.001, h: 0.001, d: 0.001 };
-  }
-  const factor = 0.045 + 0.955 * open;
-  return {
-    w: Math.max(slot.w, 0.05),
-    h: Math.max(slot.h * factor, 0.05),
-    d: Math.max(slot.d, 0.05),
-  };
+function drawState(slot, open) {
+  return { overlay: mode === "overlay", lit: !!lit, open };
 }
 
 function slotSize(slot, open) {
-  const hidden = slot.entity.change === "removed" && mode !== "overlay";
-  const shut = !hidden && lit && open === 0;
-  if (hidden) return { w: 0.001, h: 0.001, d: 0.001 };
-  if (shut) return { w: Math.max(slot.w * 0.4, 0.04), h: 0.03, d: Math.max(slot.d * 0.4, 0.04) };
-  return meshSize(slot, open);
+  return drawnSize(slot, drawState(slot, open));
 }
 
-// The drawn box. A method's layout y is the type's full roof. While the type
-// is still short, that y is above the roof, so the method is seated on the
-// height the type has actually grown to.
+// The drawn box: a method stands on the roof its type is drawn at.
 function visualBox(slot, open) {
-  const size = slotSize(slot, open);
-  let y = slot.y;
   const parentId = slot.entity && slot.entity.kind === "method" ? slot.entity.parent : "";
-  if (parentId) {
-    const parent = slotById.get(parentId);
-    if (parent) y = methodDrawY(slot.y, parent.h, slotSize(parent, slotOpen(parent)).h);
-  }
-  return { x: slot.x, y, z: slot.z, w: size.w, h: size.h, d: size.d };
+  const parent = parentId ? slotById.get(parentId) : null;
+  return drawnBox(slot, drawState(slot, open), parent, parent ? drawState(parent, slotOpen(parent)) : null);
 }
 
 function writeSlot(mesh, index, slot, open) {
@@ -1941,28 +1923,24 @@ function buildFocus() {
     return;
   }
   drawEntityLinks(focusGroup, found);
-  const from = linkPoints && linkPoints[0];
-  if (from) addBodyBars(from, found.entity, mode === "overlay");
+  addBodyBars(found.entity, mode === "overlay");
   focus.points = linkPoints ? linkPoints.slice() : [];
 }
 
-// The focused tower already is the function. Only the old body of a changed
-// or deleted function gets a bar of its own, sized against the new body.
-function addBodyBars(origin, entity, overlay) {
-  const before = entity.bodyBytesBefore == null ? null : entity.bodyBytesBefore;
-  const after = entity.change === "removed" ? 0 : (entity.bodyBytes || 0);
-  const maxBytes = Math.max(before || 0, after, 1);
-  const bar = (bytes, x, color) => {
-    const height = 1.4 + 4.2 * (bytes / maxBytes);
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(1.1, height, 1.1),
-      new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.45 }),
-    );
-    mesh.position.set(origin[0] + x, origin[1] + height / 2, origin[2]);
-    focusGroup.add(mesh);
-  };
-  if (!overlay || before == null || (entity.change !== "modified" && entity.change !== "removed")) return;
-  bar(before || 0.001, -2.6, REMOVE);
+// The focused tower already is the function. The old body of a changed or
+// deleted function is a ghost around it, on the same base: never an extra
+// building, and never off its roof.
+function addBodyBars(entity, overlay) {
+  const slot = slotById.get(entity.id);
+  const ghost = oldBodyBox(slot ? visualBox(slot, slotOpen(slot)) : null, entity, overlay);
+  if (!ghost) return;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(ghost.w, ghost.h, ghost.d),
+    new THREE.MeshBasicMaterial({ color: REMOVE, transparent: true, opacity: 0.28, depthWrite: false }),
+  );
+  mesh.position.set(ghost.x + ghost.w / 2, ghost.y + ghost.h / 2, ghost.z + ghost.d / 2);
+  mesh.userData.oldBody = true;
+  focusGroup.add(mesh);
 }
 
 function focusCamera() {
@@ -2314,7 +2292,7 @@ function roster(pkg) {
   packageList.sort((a, b) => rowLabel(a, pkg.id).localeCompare(rowLabel(b, pkg.id)));
   const sections = [{
     label: "Packages",
-    hot: mode === "overlay" ? packageList : children,
+    hot: mode === "overlay" ? deletedFirst(packageList) : children,
     same: mode === "overlay" ? direct.same : [],
     row: (item) => packageRow(item, pkg.id),
   }];
@@ -2327,7 +2305,7 @@ function roster(pkg) {
     const list = declaredEntities(pkg).filter((entity) => entity.kind === kind);
     list.sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
     const split = splitChanges(list, (item) => item.change);
-    sections.push({ label, hot: split.hot, same: split.same, row: entityRow });
+    sections.push({ label, hot: deletedFirst(split.hot), same: split.same, row: entityRow });
   }
   const parts = sections;
   const paint = (pick) => {

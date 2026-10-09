@@ -17,6 +17,36 @@ export function methodDrawY(layoutY, typeLayoutH, typeDrawH) {
   return layoutY - typeLayoutH + typeDrawH;
 }
 
+// drawnSize is the size a building is drawn at. A deleted entity shows only
+// in the full (overlay) view; a building outside a selection is shut flat;
+// open grows it from a stub (0) to its full height (1).
+export function drawnSize(slot, { overlay = false, lit = false, open = 1 } = {}) {
+  if (slot.entity && slot.entity.change === "removed" && !overlay) return { w: 0.001, h: 0.001, d: 0.001 };
+  if (lit && open === 0) return { w: Math.max(slot.w * 0.4, 0.04), h: 0.03, d: Math.max(slot.d * 0.4, 0.04) };
+  const factor = 0.045 + 0.955 * open;
+  return { w: Math.max(slot.w, 0.05), h: Math.max(slot.h * factor, 0.05), d: Math.max(slot.d, 0.05) };
+}
+
+// drawnBox is the box a building is drawn as. Its base is the layout y, or
+// for a method the top of its type as drawn, so it always stands on the
+// roof under it. parent is the type's slot and parentState its draw state.
+export function drawnBox(slot, state, parent, parentState) {
+  const size = drawnSize(slot, state);
+  let y = slot.y;
+  if (parent) y = methodDrawY(slot.y, parent.h, drawnSize(parent, parentState || state).h);
+  return { x: slot.x, y, z: slot.z, w: size.w, h: size.h, d: size.d };
+}
+
+// oldBodyBox is the ghost of a changed or deleted function's old body, drawn
+// around its building in the full view: the same footprint, the old height,
+// on the same base. Null when there is no old body to show.
+export function oldBodyBox(box, entity, overlay) {
+  if (!overlay || !box || !entity || entity.bodyBytesBefore == null) return null;
+  if (entity.change !== "modified" && entity.change !== "removed") return null;
+  const pad = 0.12;
+  return { x: box.x - pad, y: box.y, z: box.z - pad, w: box.w + pad * 2, h: towerHeight(entity.bodyBytesBefore), d: box.d + pad * 2 };
+}
+
 export function layoutCity(packages, options = {}) {
   const size = options.size ?? 150;
   const internals = (packages || []).filter((pkg) => !pkg.external);
