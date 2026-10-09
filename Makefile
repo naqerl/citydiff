@@ -1,6 +1,10 @@
 vet: fmt
 	go vet ./...
 
+test: vet
+	go test ./...
+	node --test view/
+
 fmt:
 	go fmt ./...
 
