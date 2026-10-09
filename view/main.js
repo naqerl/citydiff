@@ -785,9 +785,10 @@ function shownOwnTop(id) {
 
 function packageAnchor(id) {
   const box = laid.packages.find((item) => item.id === id);
-  // Own roof only. A parent's district top sits on its tallest child, so the
-  // arc would stop in the air instead of on the module that was imported.
-  if (box) return [box.x + box.w / 2, shownOwnTop(id) + LAND, box.z + box.d / 2];
+  // The roof of the package itself, not the tops of the declaration bars that
+  // stand on it. A package with many declarations has tall towers, and
+  // anchoring on those launched its arcs a whole building above the roof.
+  if (box) return [box.x + box.w / 2, box.y + box.h + LAND, box.z + box.d / 2];
   const ext = laid.externals.find((item) => item.id === id);
   if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
   return null;
