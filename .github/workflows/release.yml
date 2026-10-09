@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  BIN_NAME: betterdiff
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: make vet
+
+      - name: Build
+        # CGO is required: the parser links the tree-sitter C bindings, so this
+        # matrix is native-arch per runner instead of cross-compiling.
+        env:
+          CGO_ENABLED: '1'
+        run: go build -trimpath -ldflags "-s -w" -o "dist/${BIN_NAME}" ./cmd/cli
+
+      - name: Smoke test
+        run: |
+          printf 'package main\n\nfunc main() {}\n' > smoke.go
+          "./dist/${BIN_NAME}" -path smoke.go -json > /dev/null
+
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          goos=$(go env GOOS)
+          goarch=$(go env GOARCH)
+          cd dist
+          tar czf "${BIN_NAME}-${GITHUB_REF_NAME}-${goos}-${goarch}.tar.gz" "${BIN_NAME}"
+
+      - name: Upload build artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/*.tar.gz
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: sha256sum dist/*.tar.gz | sed 's#dist/##' > dist/checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
