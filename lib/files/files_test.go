@@ -11,7 +11,7 @@ import (
 	"citydiff/lib"
 )
 
-func TestTreeSkipsVendorHiddenAndNonGo(t *testing.T) {
+func TestTreeSkipsVendorTargetHiddenAndUnsupported(t *testing.T) {
 	root := t.TempDir()
 	write := func(name, body string) {
 		t.Helper()
@@ -29,6 +29,9 @@ func TestTreeSkipsVendorHiddenAndNonGo(t *testing.T) {
 	write("vendor/c.go", "package c\n")
 	write(".hidden/d.go", "package d\n")
 	write("skip.txt", "nope\n")
+	write("Cargo.toml", "[package]\nname = \"m\"\n")
+	write("src/lib.rs", "pub fn a() {}\n")
+	write("target/debug/build.rs", "fn main() {}\n")
 
 	src, err := Tree(root)
 	if err != nil {
@@ -45,7 +48,7 @@ func TestTreeSkipsVendorHiddenAndNonGo(t *testing.T) {
 		}
 		paths = append(paths, file.Path)
 	}
-	want := []string{"a.go", "go.mod", "sub/b.go"}
+	want := []string{"Cargo.toml", "a.go", "go.mod", "src/lib.rs", "sub/b.go"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("paths = %v", paths)
 	}

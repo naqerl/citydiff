@@ -6,6 +6,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-go v0.25.0
+	github.com/tree-sitter/tree-sitter-rust v0.24.2
 )
 
 require (

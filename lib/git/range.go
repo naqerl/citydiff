@@ -24,7 +24,7 @@ import (
 //
 // path is a file or directory inside a worktree. The repository is the
 // nearest parent directory that contains .git. A file yields that file.
-// A directory yields the Go files and go.mod files under it. Paths in the
+// A directory yields the source files files.Include accepts under it. Paths in the
 // snapshot are relative to path, matching files.Tree. commitRange uses
 // Git's two-dot and three-dot notation. A..B compares those two commits.
 // A...B compares their merge base with B, which is how git diff treats a
@@ -91,7 +91,7 @@ func Versions(path, commitRange string, parser lib.Parser) (left, right []lib.Pa
 	return left, right, nil
 }
 
-// Tree reads the Go files and go.mod files at rev under worktree.
+// Tree reads the source files files.Include accepts at rev under worktree.
 // worktree is a file or directory inside the repository. An empty rev
 // means HEAD. Paths in the stream are slash-separated and relative to
 // worktree: the base name when worktree is a file, and paths relative to
@@ -277,7 +277,7 @@ func mergeBase(a, b *object.Commit) (*object.Commit, error) {
 	return bases[0], nil
 }
 
-// listFiles reads Go files and go.mod files at commit.
+// listFiles reads the source files files.Include accepts at commit.
 // exact selects one path and yields its base name. Otherwise prefix is a
 // directory, paths are relative to that directory, and an empty prefix is
 // the whole tree. ok is false only when an exact file is missing.
@@ -292,7 +292,7 @@ func listFiles(commit *object.Commit, prefix string, exact bool) ([]lib.File, bo
 			return nil, ok, err
 		}
 		if !files.Include(prefix) {
-			return nil, false, fmt.Errorf("%s is not a Go file", prefix)
+			return nil, false, fmt.Errorf("%s is not a Go or Rust file", prefix)
 		}
 		return []lib.File{{Path: path.Base(prefix), Src: src}}, true, nil
 	}

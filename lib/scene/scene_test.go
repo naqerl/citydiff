@@ -294,3 +294,9 @@ func mustEntity(t *testing.T, pkg Package, kind, name string) Entity {
 	t.Fatalf("%s %s not in %s", kind, name, pkg.ID)
 	return Entity{}
 }
+
+func TestNormRecvUnwrapsTraitImplOwner(t *testing.T) {
+	if got := normRecv("<DirEntry as Colorable>"); got != "DirEntry" {
+		t.Fatalf("normRecv = %q", got)
+	}
+}

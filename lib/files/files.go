@@ -5,23 +5,23 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"citydiff/lib"
+	"citydiff/lib/parser"
 )
 
-// Include reports whether a slash-separated path is Go source or a go.mod.
+// Include reports whether a slash-separated path belongs to a supported
+// language: Go source or go.mod, Rust source or Cargo.toml.
 func Include(name string) bool {
-	base := path.Base(filepath.ToSlash(name))
-	return base == "go.mod" || strings.HasSuffix(base, ".go")
+	return parser.Include(name)
 }
 
 // Tree reads root into a snapshot.
 //
-// A file yields that file when it is Go source or go.mod. A directory yields
+// A file yields that file when Include accepts it. A directory yields
 // those files under it. Paths are slash-separated and relative to the walk
 // root: the file's directory when root is a file, and root itself when root
 // is a directory. Hidden directories and vendor are skipped. The result is
@@ -40,7 +40,7 @@ func Tree(root string) (lib.Source, error) {
 	}
 	if !info.IsDir() {
 		if !Include(abs) {
-			return nil, errors.New(root + " is not a Go file")
+			return nil, errors.New(root + " is not a Go or Rust file")
 		}
 		src, err := os.ReadFile(abs)
 		if err != nil {
@@ -85,7 +85,7 @@ func Tree(root string) (lib.Source, error) {
 }
 
 // SkipDir reports whether a directory name is left out of a snapshot.
-// vendor and hidden directories are not module source.
+// vendor, Cargo's target and hidden directories are not module source.
 func SkipDir(name string) bool {
-	return name == "vendor" || strings.HasPrefix(name, ".")
+	return name == "vendor" || name == "target" || strings.HasPrefix(name, ".")
 }
