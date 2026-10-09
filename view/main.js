@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { layoutCity, arcBetween, methodDrawY, fitDistance } from "./layout.js";
+import { layoutCity, methodDrawY, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 
@@ -741,7 +741,7 @@ function buildArcs() {
       const from = packageAnchor(pkg.id);
       const to = packageAnchor(dep.to);
       if (!from || !to) continue;
-      addArc(arcGroup, from, to, changeColor(dep.change), clearanceLift(from, to), {
+      addArc(arcGroup, from, to, changeColor(dep.change), clearLift(from, to), {
         kind: "dep", id: dep.to, label: dep.to, change: dep.change, from: pkg.id,
       });
     }
@@ -751,10 +751,6 @@ function buildArcs() {
 // The arc starts a little above the roof, so it is plainly leaving the
 // building rather than skimming it.
 const LAND = 0.8;
-
-function roofClear(box) {
-  return Math.max(1.8, Math.min(Math.max(box.w, box.d) * 0.06, 4.5));
-}
 
 let ownTopCache = null;
 function ownTop(id) {
@@ -785,85 +781,117 @@ function shownOwnTop(id) {
 
 function packageAnchor(id) {
   const box = laid.packages.find((item) => item.id === id);
-  // The roof of the package itself, not the tops of the declaration bars that
-  // stand on it. A package with many declarations has tall towers, and
-  // anchoring on those launched its arcs a whole building above the roof.
-  if (box) return [box.x + box.w / 2, box.y + box.h + LAND, box.z + box.d / 2];
-  const ext = laid.externals.find((item) => item.id === id);
-  if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
-  return null;
+  if (!box) {
+    const ext = laid.externals.find((item) => item.id === id);
+    if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
+    return null;
+  }
+  // The centre of the roof, but only as low as is safe: a treemap stacks child
+  // packages inside the parent's footprint, so the centre of a roof is often a
+  // child's tower field. Anchoring at the plate height put the start inside
+  // those towers and the arc left through them.
+  const cx = box.x + box.w / 2;
+  const cz = box.z + box.d / 2;
+  return [cx, localTop(cx, cz) + LAND, cz];
 }
-
 function rectContainsXZ(box, x, z) {
   return x >= box.x && x <= box.x + box.w && z >= box.z && z <= box.z + box.d;
 }
 
 // t along the ground segment where the line is over the rectangle.
-function segmentRectSpan(from, to, box) {
-  const dx = to[0] - from[0];
-  const dz = to[2] - from[2];
-  let t0 = 0;
-  let t1 = 1;
-  const slabs = [
-    [dx, from[0], box.x, box.x + box.w],
-    [dz, from[2], box.z, box.z + box.d],
-  ];
-  for (const [d, p, min, max] of slabs) {
-    if (Math.abs(d) < 1e-9) {
-      if (p < min || p > max) return null;
-      continue;
-    }
-    let a = (min - p) / d;
-    let b = (max - p) / d;
-    if (a > b) {
-      const swap = a;
-      a = b;
-      b = swap;
-    }
-    t0 = Math.max(t0, a);
-    t1 = Math.min(t1, b);
-    if (t0 > t1) return null;
-  }
-  if (t1 <= 0 || t0 >= 1) return null;
-  return [t0, t1];
-}
-
-// lift is the quadratic control offset. The bow already used by arcBetween is
-// the floor. Extra lift is only what a roof along the span still needs, and it
-// is capped so one tall neighbor cannot throw the whole fan into the sky.
-function clearanceLift(from, to) {
-  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  // Curved, but not a dome. The loop below raises any arc whose path crosses a
-  // building, and it looks closer to the ends than it used to: an arc used to
-  // be able to clip a tower just after leaving its own roof, where the quad's
-  // control coefficient is small and the old 0.08 cut-off skipped the test.
-  const bow = Math.max(3, Math.min(dist * 0.2, 20));
-  let lift = bow;
-  const y0 = from[1];
-  const y1 = to[1];
+function localTop(x, z) {
+  let top = 0;
   for (const box of laid.packages) {
-    if (rectContainsXZ(box, from[0], from[2]) || rectContainsXZ(box, to[0], to[2])) continue;
-    const span = segmentRectSpan(from, to, box);
-    if (!span) continue;
-    const floor = shownOwnTop(box.id) + roofClear(box);
-    const t0 = Math.max(span[0], 0.02);
-    const t1 = Math.min(span[1], 0.98);
-    if (t0 > t1) continue;
-    for (let k = 0; k <= 8; k++) {
-      const t = t0 + (t1 - t0) * (k / 8);
-      const u = 1 - t;
-      const base = u * u * y0 + 2 * u * t * ((y0 + y1) / 2) + t * t * y1;
-      const coef = 2 * u * t;
-      if (coef < 0.02) continue;
-      const need = (floor - base) / coef;
-      if (need > lift) lift = need;
-    }
+    if (!rectContainsXZ(box, x, z)) continue;
+    top = Math.max(top, shownOwnTop(box.id));
   }
-  return Math.min(lift, 28);
+  return top;
 }
 
-// The call leaves the rendered top of the caller and lands on the callee.
-// Layout height is the open tower; a shut sibling is not an endpoint.
+// The two control points of the arc. They sit directly above the ends, so the
+// curve leaves its roof steeply instead of crawling out flat — a quadratic
+// pinned at the midpoint could not clear a tower standing right beside an
+// endpoint, however high its apex was raised, and the clearance loop used to
+// run away to a lift of 350 without gaining a metre.
+// This is the curve: makeLink draws it, the particles ride it, and the
+// clearance loop measures it, so there is no second interpretation to disagree
+// with.
+function arcControls(from, to, lift) {
+  return [
+    [from[0], from[1] + lift, from[2]],
+    [to[0], to[1] + lift, to[2]],
+  ];
+}
+
+function arcSamples(from, to, lift, n) {
+  const steps = n || 48;
+  const [c1, c2] = arcControls(from, to, lift);
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const u = 1 - t;
+    const a = u * u * u;
+    const b = 3 * u * u * t;
+    const c = 3 * u * t * t;
+    const d = t * t * t;
+    out.push([
+      a * from[0] + b * c1[0] + c * c2[0] + d * to[0],
+      a * from[1] + b * c1[1] + c * c2[1] + d * to[1],
+      a * from[2] + b * c1[2] + c * c2[2] + d * to[2],
+    ]);
+  }
+  return out;
+}
+
+// How deep the path sinks into a building, in world units, and where. One
+// definition of a collision for the clearance loop and for ?check=1.
+function worstPenetration(points, margin = 0) {
+  let worst = 0;
+  let at = null;
+  let atT = 0;
+  const steps = Math.max(1, points.length - 1);
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    for (const box of laid.packages) {
+      if (!rectContainsXZ(box, p[0], p[2])) continue;
+      const top = shownOwnTop(box.id) + margin;
+      if (p[1] >= top) continue;
+      const depth = top - p[1];
+      if (depth > worst) {
+        worst = depth;
+        at = box.id;
+        atT = i / steps;
+      }
+    }
+  }
+  return { depth: worst, box: at, t: atT };
+}
+
+// Raise the apex until the curve is measured clear. There used to be a closed
+// form here: it reasoned about a quadratic while the tube was drawn along a
+// Catmull-Rom through its samples, it skipped every box whose footprint held an
+// endpoint (which, in a treemap, is every child tower at the ends), and it
+// capped the result, turning every large requirement into a silent collision.
+function clearLift(from, to) {
+  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  let lift = Math.max(3, Math.min(dist * 0.2, 20));
+  // Sampled finer than the tube is drawn, with a margin, so a thin tower cannot
+  // slip between two samples and the tube radius stays clear as well. The step
+  // is the exact lift the worst point still needs: at parameter t the lift
+  // contributes 3(u^2 t + u t^2), so dividing by it converges in a few passes
+  // instead of creeping up by one unit and running out of iterations.
+  for (let i = 0; i < 24; i++) {
+    const worst = worstPenetration(arcSamples(from, to, lift, 128), 1);
+    if (worst.depth <= 0) return lift;
+    // Right at an end nothing can be done by raising the apex: the endpoint is
+    // fixed, and packageAnchor has already put it above that column.
+    if (worst.t <= 0.004 || worst.t >= 0.996) return lift;
+    const u = 1 - worst.t;
+    const coef = 3 * (u * u * worst.t + u * worst.t * worst.t);
+    lift += worst.depth / Math.max(coef, 0.05) + 0.1;
+  }
+  return lift;
+}
 function towerTop(found) {
   if (!found || !found.entity) return null;
   const slot = slotById.get(found.entity.id);
@@ -887,17 +915,21 @@ function makeLink(from, to, color, lift) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  const points = arcBetween(from, to, lift).map((p) => new THREE.Vector3(p[0], p[1], p[2]));
-  const curve = new THREE.CatmullRomCurve3(points);
+  const [c1, c2] = arcControls(from, to, lift);
+  const curve = new THREE.CubicBezierCurve3(
+    new THREE.Vector3(from[0], from[1], from[2]),
+    new THREE.Vector3(c1[0], c1[1], c1[2]),
+    new THREE.Vector3(c2[0], c2[1], c2[2]),
+    new THREE.Vector3(to[0], to[1], to[2]),
+  );
   const radius = Math.max(0.07, Math.min(dist * 0.0028, 0.22));
-  const geo = new THREE.TubeGeometry(curve, Math.max(10, points.length), radius, 5, false);
+  const segs = Math.max(16, Math.min(64, Math.round(dist)));
+  const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
   const mat = new THREE.MeshBasicMaterial({ color, fog: false });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
   return mesh;
 }
-
-// Go's standard library is an external import whose first path element has no dot.
 function isStdPackage(id) {
   const pkg = byPackage.get(id);
   if (!pkg || !pkg.external) return false;
@@ -986,24 +1018,15 @@ function writeFlowRow(flow, row) {
   flow.row = row;
   const base = row * FLOW_SAMPLES * 4;
   for (let i = 0; i < FLOW_SAMPLES; i++) {
-    flowAt(flow, i / (FLOW_SAMPLES - 1), flowScratch);
+    const s = i * 3;
     const o = base + i * 4;
-    flowData[o] = flowScratch[0];
-    flowData[o + 1] = flowScratch[1];
-    flowData[o + 2] = flowScratch[2];
+    flowData[o] = flow.samples[s] || 0;
+    flowData[o + 1] = flow.samples[s + 1] || 0;
+    flowData[o + 2] = flow.samples[s + 2] || 0;
     flowData[o + 3] = 1;
   }
   flowTexture.needsUpdate = true;
 }
-
-// Point sprites are sized in device pixels from the vertical field of view.
-updatePointScale = () => {
-  flowMaterial.uniforms.uScale.value =
-    renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
-};
-updatePointScale();
-
-// Rows are renumbered whenever flows are dropped, so the texture stays dense.
 function syncFlowTexture() {
   flowRows = Math.max(1, flows.length);
   ensureFlowTexture(flowRows);
@@ -1023,24 +1046,8 @@ function makeFlow(from, to, color, lift) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  const raw = arcBetween(from, to, lift);
-  const pathCount = raw.length;
-  if (pathCount < 2) return null;
-  const path = new Float32Array(pathCount * 3);
-  const lengths = new Float32Array(pathCount);
-  let total = 0;
-  for (let i = 0; i < pathCount; i++) {
-    const p = raw[i];
-    path[i * 3] = p[0];
-    path[i * 3 + 1] = p[1];
-    path[i * 3 + 2] = p[2];
-    if (i > 0) {
-      total += Math.hypot(p[0] - raw[i - 1][0], p[1] - raw[i - 1][1], p[2] - raw[i - 1][2]);
-    }
-    lengths[i] = total;
-  }
-  if (!(total > 0)) return null;
-  // Small, but visible: the march is a hint about direction, not a light show.
+  // The particle path is the same curve the line is drawn along, sampled evenly.
+  const samples = arcSamples(from, to, lift, FLOW_SAMPLES);
   const count = Math.max(3, Math.min(8, Math.round(dist / 9)));
   const size = Math.max(0.5, Math.min(dist * 0.009, 1.25));
   const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
@@ -1067,48 +1074,13 @@ function makeFlow(from, to, color, lift) {
   geo.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
   const mesh = new THREE.Points(geo, flowMaterial);
   mesh.frustumCulled = false;
-  mesh.userData.flow = { path, lengths, pathCount, total, count, speed, row: flows.length };
+  mesh.userData.flow = { samples, count, speed, row: flows.length };
   flows.push(mesh);
   flowRows = Math.max(1, flows.length);
   ensureFlowTexture(flowRows);
   writeFlowRow(mesh.userData.flow, flowRows - 1);
   return mesh;
 }
-
-function flowAt(flow, u, out) {
-  const pos = flow.path;
-  const lengths = flow.lengths;
-  const n = flow.pathCount;
-  let d = u * flow.total;
-  if (!(d > 0)) {
-    out[0] = pos[0];
-    out[1] = pos[1];
-    out[2] = pos[2];
-    return;
-  }
-  if (d >= flow.total) {
-    const last = (n - 1) * 3;
-    out[0] = pos[last];
-    out[1] = pos[last + 1];
-    out[2] = pos[last + 2];
-    return;
-  }
-  let lo = 0;
-  let hi = n - 1;
-  while (lo + 1 < hi) {
-    const mid = (lo + hi) >> 1;
-    if (lengths[mid] < d) lo = mid;
-    else hi = mid;
-  }
-  const span = lengths[hi] - lengths[lo] || 1;
-  const t = (d - lengths[lo]) / span;
-  const a = lo * 3;
-  const b = hi * 3;
-  out[0] = pos[a] + (pos[b] - pos[a]) * t;
-  out[1] = pos[a + 1] + (pos[b + 1] - pos[a + 1]) * t;
-  out[2] = pos[a + 2] + (pos[b + 2] - pos[a + 2]) * t;
-}
-
 function flowShown(mesh) {
   let node = mesh;
   while (node) {
@@ -1130,6 +1102,56 @@ function tickFlows(dt) {
   if (shown) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   return shown;
 }
+
+// Collision check for the arcs. The clearance maths is a closed-form guess and
+// nothing ever verified the geometry that gets drawn, so every collision so far
+// was found by eye. This walks the real mesh vertices against the real boxes:
+// open the viewer with ?check=1 and it prints one COLLIDE line per offending
+// arc to the console. No cost when it is not asked for.
+function arcCollisions() {
+  const hits = [];
+  const v = new THREE.Vector3();
+  const tops = new Map();
+  for (const box of laid.packages) tops.set(box.id, shownOwnTop(box.id));
+  for (const child of arcGroup.children) {
+    // Particles compute their positions in the shader, so their buffer is all
+    // zeros: only the tube meshes are real geometry to test.
+    if (!child.isMesh) continue;
+    const attr = child.geometry && child.geometry.attributes && child.geometry.attributes.position;
+    if (!attr) continue;
+    let worst = null;
+    let count = 0;
+    for (let i = 0; i < attr.count; i++) {
+      v.fromBufferAttribute(attr, i);
+      child.localToWorld(v);
+      for (const box of laid.packages) {
+        if (v.x < box.x || v.x > box.x + box.w || v.z < box.z || v.z > box.z + box.d) continue;
+        const top = tops.get(box.id) || 0;
+        if (v.y >= top) continue;
+        count++;
+        const depth = top - v.y;
+        if (!worst || depth > worst.depth) {
+          worst = { depth: Math.round(depth * 100) / 100, box: box.id, y: Math.round(v.y * 100) / 100, top: Math.round(top * 100) / 100 };
+        }
+      }
+    }
+    if (count) {
+      const d = child.userData || {};
+      hits.push({ arc: (d.from || "?") + " -> " + (d.label || d.id || "?"), verts: attr.count, inside: count, worst });
+    }
+  }
+  hits.sort((a, b) => b.worst.depth - a.worst.depth);
+  return hits;
+}
+
+window.citydiffCheck = () => {
+  const hits = arcCollisions();
+  console.log("COLLIDE total=" + hits.length + " of " + arcGroup.children.length + " arcs");
+  for (const hit of hits.slice(0, 25)) {
+    console.log("COLLIDE " + JSON.stringify(hit));
+  }
+  return hits.length;
+};
 
 function addArc(group, from, to, color, lift, data) {
   const mesh = makeLink(from, to, color, lift);
@@ -1543,7 +1565,7 @@ function drawSelectionArcs(id, inbound) {
     const to = inbound ? hub : far;
     const color = linkColor(edge.change, isStdPackage(edge.to));
     const target = byPackage.get(farId);
-    addArc(selectArcs, from, to, color, clearanceLift(from, to), {
+    addArc(selectArcs, from, to, color, clearLift(from, to), {
       kind: "dep",
       id: farId,
       label: (target && (target.name || target.id)) || farId,
@@ -2617,4 +2639,9 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 window.addEventListener("resize", resizeView);
 
 main();
+
+// ?check=1 reports arcs that pass through buildings.
+if (new URLSearchParams(location.search).has("check")) {
+  setTimeout(() => window.citydiffCheck(), 3000);
+}
 

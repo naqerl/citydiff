@@ -362,30 +362,3 @@ function projectPoint(point, eye, target, fovDeg, aspect) {
     y: (camY / -camZ) / tanHalf,
   };
 }
-
-// arcBetween is a quadratic bow from one point to another.
-// t = 0 is `from` and t = 1 is `to`, so the curve meets both ends.
-// liftMin raises the middle. Call bows leave it empty. Dependency bows pass the clearance they need.
-export function arcBetween(from, to, liftMin = 0) {
-  const dx = to[0] - from[0];
-  const dy = to[1] - from[1];
-  const dz = to[2] - from[2];
-  const dist = Math.hypot(dx, dy, dz);
-  // The bow a caller gets when it asks for nothing. Callers pass clearance when
-  // a roof is in the way, so this stays in step with their own defaults.
-  const bow = Math.max(3, Math.min(dist * 0.2, 20));
-  const lift = Math.max(bow, liftMin || 0);
-  const mid = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift, (from[2] + to[2]) / 2];
-  const n = dist > 48 ? 28 : 16;
-  const points = [];
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    const u = 1 - t;
-    points.push([
-      u * u * from[0] + 2 * u * t * mid[0] + t * t * to[0],
-      u * u * from[1] + 2 * u * t * mid[1] + t * t * to[1],
-      u * u * from[2] + 2 * u * t * mid[2] + t * t * to[2],
-    ]);
-  }
-  return points;
-}
