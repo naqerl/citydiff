@@ -3,6 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { layoutCity, arcBetween, methodDrawY, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
+import { packageCallEdges } from "./edges.js";
 
 // shadcn zinc. The city stays in this grayscale.
 const STONE = new THREE.Color(0xf4f4f5);
@@ -639,18 +640,40 @@ function vary(id, color) {
   return color.clone().offsetHSL(0, 0, shift);
 }
 
+// The overview draws an arc for every import that was added or deleted, and
+// for every pair of modules whose calls changed while the import stayed.
 function buildArcs() {
+  const drawn = new Set();
+  const draw = (from, to, change) => {
+    const ends = depEnds(from, to);
+    if (!ends) return;
+    drawn.add(from + "\0" + to);
+    addArc(arcGroup, ends.from, ends.to, changeColor(change), ends.lift, {
+      kind: "dep", id: to, label: to, change,
+    });
+  };
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
     for (const dep of pkg.deps || []) {
       if (dep.change !== "added" && dep.change !== "removed") continue;
-      const ends = depEnds(pkg.id, dep.to);
-      if (!ends) continue;
-      addArc(arcGroup, ends.from, ends.to, changeColor(dep.change), ends.lift, {
-        kind: "dep", id: dep.to, label: dep.to, change: dep.change,
-      });
+      draw(pkg.id, dep.to, dep.change);
     }
   }
+  for (const edge of packageCallEdges(changedCalls())) {
+    if (!drawn.has(edge.from + "\0" + edge.to)) draw(edge.from, edge.to, edge.change);
+  }
+}
+
+function changedCalls() {
+  const calls = [];
+  for (const found of byEntity.values()) {
+    if (!found.box || !found.pkg) continue;
+    for (const link of entityLinks(found)) {
+      if (!link.step || !link.target.pkg) continue;
+      calls.push({ from: found.pkg.id, to: link.target.pkg.id, change: link.change });
+    }
+  }
+  return calls;
 }
 
 // The arc meets each module. Clearance lifts only the middle, and only enough
@@ -1477,6 +1500,8 @@ function buildFocus() {
   focus.points = linkPoints ? linkPoints.slice() : [];
 }
 
+// The focused tower already is the function. Only the old body of a changed
+// or deleted function gets a bar of its own, sized against the new body.
 function addBodyBars(origin, entity, overlay) {
   const before = entity.bodyBytesBefore == null ? null : entity.bodyBytesBefore;
   const after = entity.change === "removed" ? 0 : (entity.bodyBytes || 0);
@@ -1490,10 +1515,8 @@ function addBodyBars(origin, entity, overlay) {
     mesh.position.set(origin[0] + x, origin[1] + height / 2, origin[2]);
     focusGroup.add(mesh);
   };
-  if (entity.change !== "removed") bar(after, -2.6, overlay && entity.change !== "same" ? changeColor(entity.change) : STONE);
-  if (overlay && before != null && (entity.change === "modified" || entity.change === "removed")) {
-    bar(before || 0.001, entity.change === "removed" ? -2.6 : -4.4, REMOVE);
-  }
+  if (!overlay || before == null || (entity.change !== "modified" && entity.change !== "removed")) return;
+  bar(before || 0.001, -2.6, REMOVE);
 }
 
 function focusCamera() {
