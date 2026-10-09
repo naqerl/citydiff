@@ -748,12 +748,12 @@ function buildArcs() {
   }
 }
 
-// The arc starts at the top face itself: the centre of the roof plus a hair,
-// so the line does not z-fight with the roof and reads as leaving the building.
-const LAND = 0.12;
+// The arc starts a little above the roof, so it is plainly leaving the
+// building rather than skimming it.
+const LAND = 0.8;
 
 function roofClear(box) {
-  return Math.max(1.2, Math.min(Math.max(box.w, box.d) * 0.045, 3));
+  return Math.max(1.8, Math.min(Math.max(box.w, box.d) * 0.06, 4.5));
 }
 
 let ownTopCache = null;
@@ -833,9 +833,11 @@ function segmentRectSpan(from, to, box) {
 // is capped so one tall neighbor cannot throw the whole fan into the sky.
 function clearanceLift(from, to) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  // Curved, but not a dome: the arc bends enough to read as a swoop from roof
-  // to roof. The loop below raises any arc whose path crosses a building.
-  const bow = Math.max(2.5, Math.min(dist * 0.16, 14));
+  // Curved, but not a dome. The loop below raises any arc whose path crosses a
+  // building, and it looks closer to the ends than it used to: an arc used to
+  // be able to clip a tower just after leaving its own roof, where the quad's
+  // control coefficient is small and the old 0.08 cut-off skipped the test.
+  const bow = Math.max(3, Math.min(dist * 0.2, 20));
   let lift = bow;
   const y0 = from[1];
   const y1 = to[1];
@@ -844,20 +846,20 @@ function clearanceLift(from, to) {
     const span = segmentRectSpan(from, to, box);
     if (!span) continue;
     const floor = shownOwnTop(box.id) + roofClear(box);
-    const t0 = Math.max(span[0], 0.08);
-    const t1 = Math.min(span[1], 0.92);
+    const t0 = Math.max(span[0], 0.02);
+    const t1 = Math.min(span[1], 0.98);
     if (t0 > t1) continue;
-    for (let k = 0; k <= 5; k++) {
-      const t = t0 + (t1 - t0) * (k / 5);
+    for (let k = 0; k <= 8; k++) {
+      const t = t0 + (t1 - t0) * (k / 8);
       const u = 1 - t;
       const base = u * u * y0 + 2 * u * t * ((y0 + y1) / 2) + t * t * y1;
       const coef = 2 * u * t;
-      if (coef < 0.08) continue;
+      if (coef < 0.02) continue;
       const need = (floor - base) / coef;
       if (need > lift) lift = need;
     }
   }
-  return Math.min(lift, 18);
+  return Math.min(lift, 28);
 }
 
 // The call leaves the rendered top of the caller and lands on the callee.
