@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"betterdiff/lib"
-	"betterdiff/lib/diff"
-	"betterdiff/lib/parser/go"
+	"citydiff/lib"
+	"citydiff/lib/diff"
+	"citydiff/lib/parser/go"
 )
 
 // Flashcard sample used by the Makefile. The range is

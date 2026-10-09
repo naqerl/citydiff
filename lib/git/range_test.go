@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"betterdiff/lib"
-	"betterdiff/lib/diff"
-	"betterdiff/lib/files"
-	"betterdiff/lib/parser/go"
+	"citydiff/lib"
+	"citydiff/lib/diff"
+	"citydiff/lib/files"
+	"citydiff/lib/parser/go"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -472,7 +472,7 @@ func (r *repoFix) commitWorktree(wt *gogit.Worktree, message string) plumbing.Ha
 	hash, err := wt.Commit(message, &gogit.CommitOptions{
 		Author: &object.Signature{
 			Name:  "Betterdiff",
-			Email: "betterdiff@example.com",
+			Email: "citydiff@example.com",
 			When:  r.when,
 		},
 	})

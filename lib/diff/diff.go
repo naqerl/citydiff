@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 // Action is how one entity differs between the left and right slices.

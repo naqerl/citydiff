@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"betterdiff/lib"
-	"betterdiff/lib/diff"
+	"citydiff/lib"
+	"citydiff/lib/diff"
 )
 
 const (

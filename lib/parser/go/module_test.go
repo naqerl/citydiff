@@ -3,7 +3,7 @@ package golang
 import (
 	"testing"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 func TestParseRecordsModuleImportPath(t *testing.T) {

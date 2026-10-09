@@ -3,7 +3,7 @@ package scene
 import (
 	"reflect"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 // alignCalls diffs two call lists in source order.

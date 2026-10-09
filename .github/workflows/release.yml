@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 env:
-  BIN_NAME: betterdiff
+  BIN_NAME: citydiff
 
 jobs:
   build:

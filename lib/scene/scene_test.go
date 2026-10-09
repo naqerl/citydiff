@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"betterdiff/lib"
-	golang "betterdiff/lib/parser/go"
+	"citydiff/lib"
+	golang "citydiff/lib/parser/go"
 )
 
 func TestBuildNestsRootAndDiffsImports(t *testing.T) {

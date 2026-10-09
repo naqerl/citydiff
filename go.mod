@@ -1,4 +1,4 @@
-module betterdiff
+module citydiff
 
 go 1.27.0
 

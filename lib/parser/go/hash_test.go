@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 )
 
 func TestBodyHashUsesSourceAndRollsUpToType(t *testing.T) {

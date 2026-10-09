@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 )

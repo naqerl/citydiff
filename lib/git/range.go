@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"betterdiff/lib"
-	"betterdiff/lib/files"
+	"citydiff/lib"
+	"citydiff/lib/files"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"

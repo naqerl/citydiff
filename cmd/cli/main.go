@@ -8,13 +8,13 @@ import (
 
 	"net/http"
 
-	"betterdiff/lib"
-	"betterdiff/lib/diff"
-	"betterdiff/lib/files"
-	"betterdiff/lib/git"
-	"betterdiff/lib/parser/go"
-	"betterdiff/lib/scene"
-	"betterdiff/view"
+	"citydiff/lib"
+	"citydiff/lib/diff"
+	"citydiff/lib/files"
+	"citydiff/lib/git"
+	"citydiff/lib/parser/go"
+	"citydiff/lib/scene"
+	"citydiff/view"
 )
 
 type jsonFile struct {
@@ -131,7 +131,7 @@ func serve(addr string, sc scene.Scene) error {
 		_, _ = w.Write(payload)
 	})
 	mux.Handle("/", http.FileServer(http.FS(view.FS)))
-	fmt.Fprintf(os.Stderr, "betterdiff: http://%s\n", addr)
+	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)
 }
 
@@ -246,10 +246,10 @@ func formatEntity(entry lib.Entity) string {
 }
 
 func usageText() string {
-	return "Usage: betterdiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
+	return "Usage: citydiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
 }
 
 func fail(err error) {
-	fmt.Fprintf(os.Stderr, "betterdiff: %s\n", err)
+	fmt.Fprintf(os.Stderr, "citydiff: %s\n", err)
 	os.Exit(1)
 }

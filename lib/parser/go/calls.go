@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"betterdiff/lib"
+	"citydiff/lib"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
