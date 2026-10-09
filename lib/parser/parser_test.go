@@ -12,15 +12,17 @@ func TestParseRoutesEachLanguageAndKeepsOrder(t *testing.T) {
 		{Path: "go.mod", Src: []byte("module example.com/acme\n")},
 		{Path: "src/lib.rs", Src: []byte("pub fn a() { b() }\nfn b() {}\n")},
 		{Path: "tool/main.go", Src: []byte("package main\n\nfunc main() { run() }\n\nfunc run() {}\n")},
+		{Path: "Package.swift", Src: []byte(`let package = Package(name: "acme", targets: [.target(name: "Kit")])`)},
+		{Path: "Sources/Kit/k.swift", Src: []byte("func k() { j() }\nfunc j() {}\n")},
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 || files[0].Path != "src/lib.rs" || files[1].Path != "tool/main.go" {
+	if len(files) != 3 || files[0].Path != "src/lib.rs" || files[1].Path != "tool/main.go" || files[2].Path != "Sources/Kit/k.swift" {
 		t.Fatalf("files = %+v", files)
 	}
-	if files[0].ImportPath != "acme" || files[1].ImportPath != "example.com/acme/tool" {
-		t.Fatalf("import paths = %q %q", files[0].ImportPath, files[1].ImportPath)
+	if files[0].ImportPath != "acme" || files[1].ImportPath != "example.com/acme/tool" || files[2].ImportPath != "Kit" {
+		t.Fatalf("import paths = %q %q %q", files[0].ImportPath, files[1].ImportPath, files[2].ImportPath)
 	}
 	for _, f := range files {
 		fn := f.Entities[0].(lib.FunctionEntry)
@@ -39,6 +41,7 @@ func TestParseRejectsUnsupportedFile(t *testing.T) {
 func TestInclude(t *testing.T) {
 	for name, want := range map[string]bool{
 		"a.go": true, "go.mod": true, "src/a.rs": true, "Cargo.toml": true,
+		"Sources/A/a.swift": true, "Package.swift": true, "Package.resolved": false,
 		"Cargo.lock": false, "a.py": false, "README.md": false,
 	} {
 		if Include(name) != want {

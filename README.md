@@ -1,6 +1,6 @@
 # citydiff
 
-**A 3D diff for Go and Rust.** Read one change from the outside inward, at three levels:
+**A 3D diff for Go, Rust and Swift.** Read one change from the outside inward, at three levels:
 
 1. **Cross-module dependencies** — which packages gained or lost an import edge.
 2. **Entity relationships** — which declarations changed, and how.
@@ -101,7 +101,7 @@ citydiff tour schema
 
 | Flag | Meaning |
 | --- | --- |
-| `-path`, `-p` | a Go or Rust file, or a directory tree to walk. Required. |
+| `-path`, `-p` | a Go, Rust or Swift file, or a directory tree to walk. Required. |
 | `-range`, `-r` | `A..B` compares those two commits; `A...B` compares their merge base with `B` (how `git diff` treats a three-dot range). An empty side means `HEAD`. |
 | `-json` | print machine-readable entries instead of text. |
 | `-scene` | print the scene graph the viewer draws, instead of text. |
@@ -116,7 +116,7 @@ Notes:
   object database with [go-git](https://github.com/go-git/go-git) — the working tree does not
   need to be checked out at either ref.
 - Without `-range`, the filesystem tree is parsed and there is no diff. The viewer says so.
-- Only Go and Rust source files are parsed. A commit that touches only other files (`*.js`,
+- Only Go, Rust and Swift source files are parsed. A commit that touches only other files (`*.js`,
   `*.sql`, …) produces an empty diff.
 - `-json`, `-scene` and `-view` are mutually exclusive; the first one given wins.
 
@@ -198,7 +198,8 @@ is a full example.
 
 Names are what you would write: a package path or a unique tail of it (`barse/db`, `db`), a Go
 declaration (`pkg/path.Func`, `pkg.Type.Method`, `Type.Method`), a Rust item
-(`crate::mod::f`, `<T as Trait>::m`), or a scene id. A name matching several nodes is an error
+(`crate::mod::f`, `<T as Trait>::m`), a Swift declaration (`Module.Type.method`,
+`Type.method`, `Module.func`), or a scene id. A name matching several nodes is an error
 that lists the candidates; an unknown name comes with suggestions.
 
 ```sh
@@ -284,8 +285,22 @@ and declarations by the same identity used for a single file, so a name shared b
 stays two declarations. Body hashes stay the signal that a body changed beyond its call list.
 `lib/scene` folds the result into the city the viewer draws.
 
-Supported languages today: **Go** and **Rust** (`lib/parser/go`, `lib/parser/rust`), both via
-[tree-sitter](https://tree-sitter.github.io/). Adding a language means adding a parser package
+Supported languages today: **Go**, **Rust** and **Swift** (`lib/parser/go`, `lib/parser/rust`,
+`lib/parser/swift`), all via [tree-sitter](https://tree-sitter.github.io/).
+
+Swift modules come from `Package.swift`: each target (`Sources/<Target>`, `Tests/<Target>`, or
+its `path:`) is one module named after the target, sharing one namespace across its files.
+Without a manifest the top folder is the module, as in an Xcode project. `.build/` and
+`DerivedData/` are skipped. Members of `extension T` belong to `T`; members of a conformance
+extension (`extension T: P`) are kept apart as `<T as P>` in the parser, like a Rust trait
+impl, and filed under `T` in the city. Calls resolve within the module and the package
+modules a file imports: free functions, `Type(...)` as an initializer, `Type.f`, `self.m()`
+and implicit self, supertypes and protocol extensions, and methods on locals whose type is
+known from `let x = Type(...)`, an annotation, a parameter, a return type or a property.
+Overloads are told apart by argument labels; a call that still matches several
+declarations, or a struct's implicit memberwise initializer, stays unresolved. Each
+overload is its own building, but a resolved call is drawn to the first overload of that
+name in its file. Adding a language means adding a parser package
 that yields the same `Entity` values — nothing downstream changes.
 
 ## Build from source
@@ -317,7 +332,7 @@ On a `v*` tag it also publishes a GitHub Release with
 | `AGENTS.md` | design intent and invariants |
 | `cmd/cli/main.go` | flags, JSON shapes, the `-view` HTTP server |
 | `lib/parser.go`, `lib/parser/` | source → `Entity` values (tree-sitter) |
-| `lib/parser/go`, `lib/parser/rust` | per-language parsers |
+| `lib/parser/go`, `lib/parser/rust`, `lib/parser/swift` | per-language parsers |
 | `lib/diff/` | comparing two parses at all three levels |
 | `lib/scene/` | folding a diff into the viewer's scene graph |
 | `lib/git/` | git source: reads trees at refs via go-git |
@@ -333,4 +348,4 @@ On a `v*` tag it also publishes a GitHub Release with
 
 - The git source uses go-git and does not follow a **linked worktree** `.git` file. Run
   `-range` from the main checkout (a normal checkout whose `.git` is a directory).
-- Only Go and Rust files are parsed; other file types are invisible to the diff.
+- Only Go, Rust and Swift files are parsed; other file types are invisible to the diff.

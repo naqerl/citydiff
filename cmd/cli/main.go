@@ -78,8 +78,8 @@ func main() {
 }
 
 func legacy() {
-	path := flag.String("path", "", "path to a Go or Rust file or directory")
-	flag.StringVar(path, "p", "", "path to a Go or Rust file or directory")
+	path := flag.String("path", "", "path to a Go, Rust or Swift file or directory")
+	flag.StringVar(path, "p", "", "path to a Go, Rust or Swift file or directory")
 	commitRange := flag.String("range", "", "commit range to diff, A..B or A...B")
 	flag.StringVar(commitRange, "r", "", "commit range to diff, A..B or A...B")
 	asJSON := flag.Bool("json", false, "print entries as JSON")

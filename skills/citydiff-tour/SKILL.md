@@ -1,6 +1,6 @@
 ---
 name: citydiff-tour
-description: Write a guided "tour" of a commit range's changes that the citydiff 3D viewer plays step by step (focus nodes, notes, call paths, camera, code diffs). Use when asked to explain, walk through, present or review what a Go or Rust commit range changed, visually.
+description: Write a guided "tour" of a commit range's changes that the citydiff 3D viewer plays step by step (focus nodes, notes, call paths, camera, code diffs). Use when asked to explain, walk through, present or review what a Go, Rust or Swift commit range changed, visually.
 ---
 
 # citydiff tour
@@ -101,6 +101,7 @@ Names are matched against the scene the way you would write them:
 - Package: its path, `barse/service/flashcard/generator`, or any unique tail, `flashcard/generator`, `generator`.
 - Go declaration: `pkg/path.Func`, `pkg.Type.Method`, `Type.Method`, `Func`. Any unique tail of whole segments works.
 - Rust: `crate::module::func`, `module::Type::method`, `<T as Trait>::m`, `<T as fmt::Display>::fmt`. A trait method is also found as `T::m` when nothing else matches.
+- Swift: `Module.Type.method`, `Type.method`, `Module.func`, nested `Outer.Inner.method`; `init`, `deinit`, `subscript` and computed properties are methods of their type. Members of `extension T` and `extension T: P` are both found under `T`. Each overload is its own node with the same name, so `Type.init` with several initializers is ambiguous: name another node, or use the scene id `citydiff nodes` prints.
 - A scene id (`file#kind#Name` from `nodes -json`) always works.
 - Case is ignored only if nothing matches exactly.
 

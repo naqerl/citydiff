@@ -14,7 +14,8 @@ import (
 )
 
 // Include reports whether a slash-separated path belongs to a supported
-// language: Go source or go.mod, Rust source or Cargo.toml.
+// language: Go source or go.mod, Rust source or Cargo.toml, Swift source or
+// Package.swift.
 func Include(name string) bool {
 	return parser.Include(name)
 }
@@ -40,7 +41,7 @@ func Tree(root string) (lib.Source, error) {
 	}
 	if !info.IsDir() {
 		if !Include(abs) {
-			return nil, errors.New(root + " is not a Go or Rust file")
+			return nil, errors.New(root + " is not a Go, Rust or Swift file")
 		}
 		src, err := os.ReadFile(abs)
 		if err != nil {
@@ -85,7 +86,8 @@ func Tree(root string) (lib.Source, error) {
 }
 
 // SkipDir reports whether a directory name is left out of a snapshot.
-// vendor, Cargo's target and hidden directories are not module source.
+// vendor, Cargo's target, Xcode's DerivedData and hidden directories such
+// as SwiftPM's .build are not module source.
 func SkipDir(name string) bool {
-	return name == "vendor" || name == "target" || strings.HasPrefix(name, ".")
+	return name == "vendor" || name == "target" || name == "DerivedData" || strings.HasPrefix(name, ".")
 }

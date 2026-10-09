@@ -32,6 +32,10 @@ func TestTreeSkipsVendorTargetHiddenAndUnsupported(t *testing.T) {
 	write("Cargo.toml", "[package]\nname = \"m\"\n")
 	write("src/lib.rs", "pub fn a() {}\n")
 	write("target/debug/build.rs", "fn main() {}\n")
+	write("Package.swift", "let package = Package(name: \"m\")\n")
+	write("Sources/M/m.swift", "func m() {}\n")
+	write(".build/checkouts/x.swift", "func x() {}\n")
+	write("DerivedData/Build/y.swift", "func y() {}\n")
 
 	src, err := Tree(root)
 	if err != nil {
@@ -48,7 +52,7 @@ func TestTreeSkipsVendorTargetHiddenAndUnsupported(t *testing.T) {
 		}
 		paths = append(paths, file.Path)
 	}
-	want := []string{"Cargo.toml", "a.go", "go.mod", "src/lib.rs", "sub/b.go"}
+	want := []string{"Cargo.toml", "Package.swift", "Sources/M/m.swift", "a.go", "go.mod", "src/lib.rs", "sub/b.go"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("paths = %v", paths)
 	}
