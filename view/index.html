@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>betterdiff</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #09090b; color: #fafafa; overflow: hidden; }
+    body { font: 13px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+    #detail, #results, .legend-card {
+      scrollbar-width: thin;
+      scrollbar-color: #3f3f46 transparent;
+    }
+    #detail::-webkit-scrollbar,
+    #results::-webkit-scrollbar,
+    .legend-card::-webkit-scrollbar { width: 6px; height: 0; }
+    #detail::-webkit-scrollbar-thumb,
+    #results::-webkit-scrollbar-thumb,
+    .legend-card::-webkit-scrollbar-thumb { background: #3f3f46; }
+    #detail::-webkit-scrollbar-track,
+    #results::-webkit-scrollbar-track,
+    .legend-card::-webkit-scrollbar-track { background: transparent; }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    #app { height: 100%; background: #09090b; }
+    #work { height: 100%; min-height: 0; display: flex; position: relative; }
+    #side {
+      width: 340px;
+      flex: none;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      overflow-x: hidden;
+      background: #09090b;
+      border-right: 1px solid #27272a;
+    }
+    #side.is-collapsed {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 44px;
+      height: 44px;
+      z-index: 5;
+      border: 0;
+      overflow: hidden;
+    }
+    #side.is-collapsed #side-head,
+    #side.is-collapsed #detail { display: none; }
+    #side-logo {
+      display: none;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      place-items: center;
+      background: #09090b;
+      border: 0;
+      border-right: 1px solid #27272a;
+      border-bottom: 1px solid #27272a;
+    }
+    #side.is-collapsed #side-logo { display: grid; }
+    #side-head { padding: 14px 14px 8px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #27272a; min-width: 0; }
+    #title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    #title { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; letter-spacing: 0.08em; text-transform: lowercase; white-space: nowrap; }
+    #side-toggle {
+      width: 22px;
+      height: 22px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      background: transparent;
+      color: #a1a1aa;
+      border: 1px solid #27272a;
+    }
+    #side-toggle:hover { color: #fafafa; border-color: #3f3f46; }
+    #crumb { color: #a1a1aa; min-height: 1.2em; overflow: hidden; white-space: nowrap; }
+    #crumb button { background: transparent; color: #a1a1aa; border: 0; padding: 0; }
+    #crumb button:hover { color: #fafafa; }
+    .modes { display: flex; gap: 0; }
+    .modes button {
+      flex: 1;
+      background: #09090b;
+      color: #a1a1aa;
+      border: 1px solid #27272a;
+      padding: 6px 8px;
+    }
+    .modes button + button { border-left: 0; }
+    .modes button.on { color: #fafafa; background: #18181b; border-color: #3f3f46; }
+    #stage { flex: 1; min-width: 0; position: relative; background: #09090b; }
+    #view { position: absolute; inset: 0; }
+    #view canvas { display: block; width: 100%; height: 100%; }
+    #detail { flex: 1; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 18px; }
+    #detail h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; }
+    #detail h3 {
+      margin: 14px 0 4px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #71717a;
+    }
+    #detail p { margin: 0 0 8px; color: #a1a1aa; overflow: hidden; }
+    #detail ul { list-style: none; margin: 8px 0 0; padding: 0; }
+    #detail li { padding: 3px 0; border-top: 1px solid #27272a; overflow: hidden; }
+    #detail button.row, #detail button.fold {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      gap: 8px;
+      text-align: left;
+      background: transparent;
+      color: #fafafa;
+      border: 0;
+      border-bottom: 1px solid #18181b;
+      padding: 4px 2px;
+    }
+    #detail button.fold { color: #a1a1aa; padding: 6px 2px; }
+    #detail button.fold span { margin-left: auto; color: #71717a; }
+    #detail button.fold:hover { color: #fafafa; background: #18181b; }
+    .clip { display: block; min-width: 0; flex: 1; overflow: hidden; }
+    .marquee { display: inline-block; white-space: nowrap; }
+    #detail button.row .mark { margin-left: auto; flex: none; }
+    #detail button.row:hover, #detail button.row.on { background: #18181b; }
+    .added { color: #00cd00; }
+    .removed { color: #cd0000; }
+    .modified { color: #cdcd00; }
+    .moved { color: #cd00cd; }
+    .tally span { margin-left: 8px; white-space: nowrap; }
+    #tag {
+      position: fixed;
+      transform: translate(-50%, -140%);
+      color: #fafafa;
+      font-size: 12px;
+      text-shadow: 0 1px 8px #000;
+      pointer-events: none;
+      display: none;
+    }
+    #note { color: #a1a1aa; }
+    #search-wrap { position: relative; }
+    #search {
+      width: 100%;
+      box-sizing: border-box;
+      background: #09090b;
+      color: #fafafa;
+      border: 1px solid #3f3f46;
+      padding: 7px 10px;
+    }
+    #search:focus { outline: 1px solid #fafafa; outline-offset: 1px; }
+    #results {
+      position: absolute;
+      top: 36px;
+      left: 0;
+      right: 0;
+      max-height: 280px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: #09090b;
+      border: 1px solid #27272a;
+      z-index: 3;
+    }
+    #results button {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
+      text-align: left;
+      background: #09090b;
+      border: 0;
+      border-bottom: 1px solid #27272a;
+      padding: 7px 10px;
+      color: #fafafa;
+    }
+    #results button.on, #results button:hover { background: #27272a; }
+    #results .kind { color: #a1a1aa; width: 72px; flex: none; }
+    #results .where { color: #a1a1aa; margin-left: auto; flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .keys-title { margin: 16px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #71717a; }
+    .keys { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
+    .keys li { color: #a1a1aa; min-width: 0; }
+    .keys kbd { color: #fafafa; }
+    #legend {
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 9, 11, 0.78);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 6;
+    }
+    #legend[hidden] { display: none; }
+    .legend-card {
+      width: min(680px, calc(100vw - 48px));
+      max-height: min(82vh, 760px);
+      overflow: auto;
+      background: #09090b;
+      border: 1px solid #3f3f46;
+      padding: 16px 18px 20px;
+    }
+    .legend-card header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .legend-card header h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    .legend-card header button { margin-left: auto; background: #09090b; color: #a1a1aa; border: 1px solid #3f3f46; padding: 4px 8px; }
+    .ex {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      color: #fafafa;
+      border: 1px solid transparent;
+      border-bottom: 1px solid #27272a;
+      padding: 5px 4px;
+    }
+    .ex:hover, .ex.open { background: #18181b; border-color: #27272a; }
+    .ex b { display: block; font-weight: 600; margin-bottom: 2px; }
+    .ex p { margin: 0; color: #a1a1aa; }
+    .fig {
+      width: 72px;
+      height: 48px;
+      flex: none;
+      background: #18181b;
+      border: 1px solid #27272a;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 6px;
+      padding-bottom: 8px;
+      box-sizing: border-box;
+    }
+    .fig i { display: block; }
+    .fig .pkg { width: 48px; height: 26px; background: #3f3f46; align-self: flex-end; }
+    .fig .fn { width: 10px; height: 34px; background: #fafafa; }
+    .fig .fn.short { height: 18px; }
+    .fig .method { width: 10px; height: 24px; background: #a1a1aa; }
+    .fig .type { width: 30px; height: 16px; background: #d4d4d8; align-self: flex-end; }
+    .fig .add { width: 10px; height: 32px; background: #00cd00; }
+    .fig .del { width: 10px; height: 32px; background: #cd0000; }
+    .fig .mod { width: 10px; height: 28px; background: #cdcd00; }
+    .fig svg { width: 72px; height: 48px; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.js",
+      "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <div id="work">
+      <aside id="side">
+        <button id="side-logo" type="button" aria-label="Show sidebar">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <rect x="2" y="13" width="6" height="9" fill="#3f3f46"/>
+            <rect x="9" y="5" width="5" height="17" fill="#fafafa"/>
+            <rect x="16" y="9" width="6" height="13" fill="#cdcd00"/>
+          </svg>
+        </button>
+        <div id="side-head">
+          <div id="title-row">
+            <div id="title">betterdiff</div>
+            <button id="side-toggle" type="button" aria-label="Hide sidebar">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path d="M10 3 L5 8 L10 13" fill="none" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+            </button>
+          </div>
+          <div class="modes">
+            <button id="mode-overview" class="on" type="button">Overview</button>
+            <button id="mode-changes" type="button">Changes</button>
+          </div>
+          <div id="search-wrap">
+            <input id="search" type="search" placeholder="Find a package or function" autocomplete="off" spellcheck="false" />
+            <div id="results" hidden></div>
+          </div>
+          <div id="crumb"></div>
+          <div id="note"></div>
+        </div>
+        <div id="detail"></div>
+      </aside>
+      <div id="stage">
+        <div id="view"></div>
+      </div>
+    </div>
+  </div>
+  <div id="tag"></div>
+  <div id="legend" hidden>
+    <div class="legend-card">
+      <header>
+        <h2>Legend</h2>
+        <button id="legend-close" type="button">esc</button>
+      </header>
+      <button class="ex" type="button">
+        <div class="fig"><i class="pkg"></i></div>
+        <div><b>Package</b><p>The building. Packages inside it stand on its roof. The name sits on each face, just under the top.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="type"></i></div>
+        <div><b>Type</b><p>A wide pale block. It holds the methods declared on that type.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="fn"></i></div>
+        <div><b>Function</b><p>A tower. Only the function in the call stays raised. The others on that package shut.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="method"></i></div>
+        <div><b>Method</b><p>A gray tower on the same package as its type.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="fn short"></i><i class="fn"></i></div>
+        <div><b>Size</b><p>Tower height is the body size. A longer body stands taller.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="add"></i></div>
+        <div><b class="added">Added</b><p>Green is new in this diff. A green tower was added. A green arc is a call that was added.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="del"></i></div>
+        <div><b class="removed">Deleted</b><p>Red is gone. A red block is a deleted package or function. A red arc is a call that was deleted.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="mod"></i></div>
+        <div><b class="modified">Changed</b><p>Yellow is a package or function that changed. Its size stays the size of the body.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig">
+          <svg viewBox="0 0 84 64" aria-hidden="true">
+            <path d="M10 54 Q42 6 74 50" fill="none" stroke="#00cdcd" stroke-width="2"/>
+            <rect x="6" y="50" width="8" height="12" fill="#fafafa"/>
+            <rect x="70" y="46" width="8" height="16" fill="#fafafa"/>
+          </svg>
+        </div>
+        <div><b>Call</b><p>One smooth arc from the top of the caller to the top of the function it calls. Cyan means the call stayed. Several calls to the same function share that one arc.</p></div>
+      </button>
+      <h3 class="keys-title">Keys</h3>
+      <ul class="keys">
+        <li><kbd>/</kbd> search</li>
+        <li><kbd>wasd</kbd> <kbd>arrows</kbd> move</li>
+        <li><kbd>q</kbd> <kbd>e</kbd> orbit</li>
+        <li><kbd>-</kbd> <kbd>+</kbd> zoom</li>
+        <li><kbd>b</kbd> sidebar</li>
+        <li><kbd>0</kbd> reset view</li>
+        <li><kbd>m</kbd> overview / changes</li>
+        <li><kbd>drag</kbd> orbit</li>
+        <li><kbd>scroll</kbd> zoom</li>
+        <li><kbd>click</kbd> enters</li>
+        <li><kbd>enter</kbd> opens a function</li>
+        <li><kbd>esc</kbd> back</li>
+        <li><kbd>1</kbd> overview</li>
+        <li><kbd>2</kbd> changes</li>
+        <li><kbd>?</kbd> legend</li>
+      </ul>
+    </div>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -12,3 +12,8 @@ run: vet
 
 diff: vet
 	go run ./cmd/cli -path "$(FILE)" -range "$(RANGE)" $(ARGS)
+
+VIEW_PATH ?= /home/user/Work/barse
+
+view: vet
+	go run ./cmd/cli -path "$(VIEW_PATH)" -view $(ARGS)

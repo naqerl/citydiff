@@ -43,6 +43,7 @@ type draft struct {
 	path       string
 	dir        string
 	pkg        string
+	module     string
 	importPath string
 	imports    []importUse
 	entities   []lib.Entity
@@ -107,6 +108,7 @@ func assignImportPaths(drafts []*draft, mods []moduleRoot) {
 		if !ok {
 			continue
 		}
+		d.module = mod.path
 		rel, ok := relDir(mod.dir, d.dir)
 		if !ok {
 			continue

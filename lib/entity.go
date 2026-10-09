@@ -96,6 +96,10 @@ type FunctionEntry struct {
 	Calls []Call `json:"calls,omitempty"`
 	// BodyHash is the hex SHA-256 of the function or method body source.
 	BodyHash string `json:"-"`
+	// BodyBytes is the length of that same body source.
+	// A declaration with no body has length 0. The hash says whether the
+	// body changed. The length says whether it grew or shrank.
+	BodyBytes int `json:"-"`
 }
 
 func (e FunctionEntry) Kind() Kind {

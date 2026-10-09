@@ -33,6 +33,9 @@ func (b *Box[T]) Get() T {
 	if newFn.BodyHash != hashOf("{ return 1 }") {
 		t.Fatalf("New body hash = %s", newFn.BodyHash)
 	}
+	if newFn.BodyBytes != len("{ return 1 }") {
+		t.Fatalf("New body bytes = %d", newFn.BodyBytes)
+	}
 
 	a := methodNamed(t, entries, "A")
 	b := methodNamed(t, entries, "B")

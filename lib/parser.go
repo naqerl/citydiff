@@ -15,9 +15,16 @@ type Source interface {
 }
 
 // ParsedFile is the entities parsed from one file.
+// Package is the package clause. ImportPath is the module-relative import
+// path, filled when the snapshot contains the go.mod that covers the file.
+// Module is that go.mod module path. Files in one directory share an import
+// path, including an external test package in the same directory.
 type ParsedFile struct {
-	Path     string
-	Entities []Entity
+	Path       string
+	Package    string
+	ImportPath string
+	Module     string
+	Entities   []Entity
 }
 
 // Mem is a Source over files in order.

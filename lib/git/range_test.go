@@ -200,11 +200,18 @@ func TestTreeAndDirectoryDiff(t *testing.T) {
 	if len(changes) != 1 || changes[0].String() != "modified b.go" {
 		t.Fatalf("directory diff = %v", changes)
 	}
-	var sawCalls, sawBody bool
+	var sawCalls, sawBody, sawBytes bool
 	for _, edit := range changes[0].Changes[0].Edits {
 		switch edit.Field {
 		case "bodyHash":
 			sawBody = true
+		case "bodyBytes":
+			sawBytes = true
+			leftN, lok := edit.Left.(int)
+			rightN, rok := edit.Right.(int)
+			if !lok || !rok || leftN >= rightN {
+				t.Fatalf("bodyBytes = %+v", edit)
+			}
 		case "calls":
 			sawCalls = true
 			rightCalls, ok := edit.Right.([]lib.Call)
@@ -215,7 +222,7 @@ func TestTreeAndDirectoryDiff(t *testing.T) {
 			t.Fatalf("unexpected edit %s", edit.Field)
 		}
 	}
-	if !sawCalls || !sawBody {
+	if !sawCalls || !sawBody || !sawBytes {
 		t.Fatalf("edits = %+v", changes[0].Changes[0].Edits)
 	}
 }

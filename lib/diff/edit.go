@@ -8,7 +8,7 @@ import (
 )
 
 // Edit is one part of a modified entity that differs between the two sides.
-// Field names that part: fields, parameters, returnArgs, receiver, bodyHash, calls, or methodsHash.
+// Field names that part: fields, parameters, returnArgs, receiver, bodyHash, bodyBytes, calls, or methodsHash.
 // Left and Right are the part before and after.
 // bodyHash and methodsHash values are hex SHA-256 digests of source.
 type Edit struct {
@@ -75,6 +75,9 @@ func functionEdits(left, right lib.FunctionEntry) []Edit {
 	}
 	if left.BodyHash != right.BodyHash {
 		edits = append(edits, Edit{Field: "bodyHash", Left: left.BodyHash, Right: right.BodyHash})
+	}
+	if left.BodyBytes != right.BodyBytes {
+		edits = append(edits, Edit{Field: "bodyBytes", Left: left.BodyBytes, Right: right.BodyBytes})
 	}
 	if !reflect.DeepEqual(left.Calls, right.Calls) {
 		edits = append(edits, Edit{Field: "calls", Left: left.Calls, Right: right.Calls})

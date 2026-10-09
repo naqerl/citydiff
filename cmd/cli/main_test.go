@@ -25,7 +25,7 @@ func TestFormatEntityIncludesMethodCalls(t *testing.T) {
 }
 
 func TestUsageSaysFileOrDirectory(t *testing.T) {
-	const want = "Usage: betterdiff [-json] -path file-or-directory [-range A..B]\n\n"
+	const want = "Usage: betterdiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
 	if usageText() != want {
 		t.Fatalf("usage = %q", usageText())
 	}

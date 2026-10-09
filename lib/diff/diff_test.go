@@ -214,6 +214,21 @@ func editFields(change Entry) string {
 	return strings.Join(names, ",")
 }
 
+func TestEntriesBodyBytes(t *testing.T) {
+	left := []lib.Entity{lib.FunctionEntry{Name: "A", BodyHash: "a", BodyBytes: 10}}
+	right := []lib.Entity{lib.FunctionEntry{Name: "A", BodyHash: "b", BodyBytes: 14}}
+	changes := Entries(left, right)
+	if len(changes) != 1 {
+		t.Fatal(changes)
+	}
+	if fields := editFields(changes[0]); fields != "bodyHash,bodyBytes" {
+		t.Fatalf("edits = %s", fields)
+	}
+	if changes[0].Edits[1].Left != 10 || changes[0].Edits[1].Right != 14 {
+		t.Fatalf("size edit = %+v", changes[0].Edits[1])
+	}
+}
+
 func TestEntriesCallEdit(t *testing.T) {
 	left := []lib.Entity{lib.FunctionEntry{
 		Name:     "A",

@@ -6,16 +6,23 @@ import (
 	"fmt"
 	"os"
 
+	"net/http"
+
 	"betterdiff/lib"
 	"betterdiff/lib/diff"
 	"betterdiff/lib/files"
 	"betterdiff/lib/git"
 	"betterdiff/lib/parser/go"
+	"betterdiff/lib/scene"
+	"betterdiff/view"
 )
 
 type jsonFile struct {
-	Path    string      `json:"path"`
-	Entries []jsonEntry `json:"entries"`
+	Path       string      `json:"path"`
+	Package    string      `json:"package,omitempty"`
+	ImportPath string      `json:"importPath,omitempty"`
+	Module     string      `json:"module,omitempty"`
+	Entries    []jsonEntry `json:"entries"`
 }
 
 type jsonEntry struct {
@@ -53,6 +60,9 @@ func main() {
 	commitRange := flag.String("range", "", "commit range to diff, A..B or A...B")
 	flag.StringVar(commitRange, "r", "", "commit range to diff, A..B or A...B")
 	asJSON := flag.Bool("json", false, "print entries as JSON")
+	asScene := flag.Bool("scene", false, "print the 3D scene as JSON")
+	asView := flag.Bool("view", false, "serve the 3D scene")
+	addr := flag.String("addr", "127.0.0.1:8787", "listen address for -view")
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), usageText())
 		flag.PrintDefaults()
@@ -65,32 +75,64 @@ func main() {
 		os.Exit(2)
 	}
 
-	if *commitRange != "" {
-		diffCommits(*path, *commitRange, *asJSON)
+	left, right, err := load(*path, *commitRange)
+	if err != nil {
+		fail(err)
+	}
+	if *asView {
+		if err := serve(*addr, scene.Build(left, right)); err != nil {
+			fail(err)
+		}
 		return
 	}
-
-	src, err := files.Tree(*path)
-	if err != nil {
-		fail(err)
+	if *asScene {
+		if err := printScene(scene.Build(left, right)); err != nil {
+			fail(err)
+		}
+		return
 	}
-	parsed, err := golang.New().Parse(src)
-	if err != nil {
-		fail(err)
+	if *commitRange != "" {
+		if err := printDiff(diff.Files(left, right), *asJSON); err != nil {
+			fail(err)
+		}
+		return
 	}
-	if err := printFiles(parsed, *asJSON); err != nil {
+	if err := printFiles(right, *asJSON); err != nil {
 		fail(err)
 	}
 }
 
-func diffCommits(path, commitRange string, asJSON bool) {
-	left, right, err := git.Versions(path, commitRange, golang.New())
+func load(path, commitRange string) (left, right []lib.ParsedFile, err error) {
+	if commitRange != "" {
+		return git.Versions(path, commitRange, golang.New())
+	}
+	src, err := files.Tree(path)
 	if err != nil {
-		fail(err)
+		return nil, nil, err
 	}
-	if err := printDiff(diff.Files(left, right), asJSON); err != nil {
-		fail(err)
+	right, err = golang.New().Parse(src)
+	return nil, right, err
+}
+
+func printScene(sc scene.Scene) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(sc)
+}
+
+func serve(addr string, sc scene.Scene) error {
+	payload, err := json.Marshal(sc)
+	if err != nil {
+		return err
 	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /scene.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	})
+	mux.Handle("/", http.FileServer(http.FS(view.FS)))
+	fmt.Fprintf(os.Stderr, "betterdiff: http://%s\n", addr)
+	return http.ListenAndServe(addr, mux)
 }
 
 func printFiles(files []lib.ParsedFile, asJSON bool) error {
@@ -101,7 +143,13 @@ func printFiles(files []lib.ParsedFile, asJSON bool) error {
 			for j, entry := range file.Entities {
 				entries[j] = jsonEntry{Kind: entry.Kind().String(), Entry: entry}
 			}
-			out[i] = jsonFile{Path: file.Path, Entries: entries}
+			out[i] = jsonFile{
+				Path:       file.Path,
+				Package:    file.Package,
+				ImportPath: file.ImportPath,
+				Module:     file.Module,
+				Entries:    entries,
+			}
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -198,7 +246,7 @@ func formatEntity(entry lib.Entity) string {
 }
 
 func usageText() string {
-	return "Usage: betterdiff [-json] -path file-or-directory [-range A..B]\n\n"
+	return "Usage: betterdiff [-json | -scene | -view] -path file-or-directory [-range A..B]\n\n"
 }
 
 func fail(err error) {

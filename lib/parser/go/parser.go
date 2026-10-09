@@ -78,7 +78,13 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 
 	out := make([]lib.ParsedFile, len(drafts))
 	for i, d := range drafts {
-		out[i] = lib.ParsedFile{Path: d.path, Entities: d.entities}
+		out[i] = lib.ParsedFile{
+			Path:       d.path,
+			Package:    d.pkg,
+			ImportPath: d.importPath,
+			Module:     d.module,
+			Entities:   d.entities,
+		}
 	}
 	return out, nil
 }
@@ -214,12 +220,14 @@ func parseMethodDeclaration(src []byte, methodDeclaration *tree_sitter.Node) (li
 	params := methodDeclaration.ChildByFieldName("parameters")
 	returns := methodDeclaration.ChildByFieldName("result")
 	parameters := parseParameters(src, params)
+	bodyHash, bodyBytes := hashBody(src, methodDeclaration)
 	entry := lib.MethodEntry{
 		FunctionEntry: lib.FunctionEntry{
 			Name:       name.Utf8Text(src),
 			Parameters: parameters,
 			ReturnArgs: parseReturnArgs(src, returns),
-			BodyHash:   hashBody(src, methodDeclaration),
+			BodyHash:   bodyHash,
+			BodyBytes:  bodyBytes,
 		},
 		Type: &lib.TypeEntry{Name: typeText},
 	}
@@ -231,28 +239,30 @@ func parseFunctionDeclaration(src []byte, functionDeclaration *tree_sitter.Node)
 	params := functionDeclaration.ChildByFieldName("parameters")
 	returns := functionDeclaration.ChildByFieldName("result")
 	parameters := parseParameters(src, params)
+	bodyHash, bodyBytes := hashBody(src, functionDeclaration)
 	entry := lib.FunctionEntry{
 		Name:       name.Utf8Text(src),
 		Parameters: parameters,
 		ReturnArgs: parseReturnArgs(src, returns),
-		BodyHash:   hashBody(src, functionDeclaration),
+		BodyHash:   bodyHash,
+		BodyBytes:  bodyBytes,
 	}
 	return entry, collectCalls(src, functionDeclaration.ChildByFieldName("body"), funcScope("", "", joinParams(parameters, namedResults(src, returns))))
 }
 
-// hashBody is the hex SHA-256 of the function or method body source.
-// A declaration with no body has an empty hash.
-func hashBody(src []byte, decl *tree_sitter.Node) string {
+// hashBody is the hex SHA-256 of the function or method body source, and the
+// length of those bytes. A declaration with no body has an empty hash and length 0.
+func hashBody(src []byte, decl *tree_sitter.Node) (string, int) {
 	body := decl.ChildByFieldName("body")
 	if body == nil {
-		return ""
+		return "", 0
 	}
 	start, end := body.StartByte(), body.EndByte()
 	if end < start || int(end) > len(src) {
-		return ""
+		return "", 0
 	}
 	sum := sha256.Sum256(src[start:end])
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), int(end - start)
 }
 
 // assignMethodHashes sets each type's MethodsHash from its method body hashes.

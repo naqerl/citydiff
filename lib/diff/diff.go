@@ -100,6 +100,9 @@ func Entries(left, right []lib.Entity) []Entry {
 	return out
 }
 
+// Identity is the pairing key Entries uses.
+func Identity(entry lib.Entity) string { return identity(entry) }
+
 func identity(entry lib.Entity) string {
 	switch entry := entry.(type) {
 	case nil:
