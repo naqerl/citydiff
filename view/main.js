@@ -732,104 +732,31 @@ function vary(id, color) {
 }
 
 function buildArcs() {
-  // Dependencies are read between districts. An arc leaves the hub of the
-  // district that imports and lands on the district it points at, so the fan
-  // stands over the source it belongs to instead of over the whole city.
-  const districts = new Map();
+  // Simple: an edge runs from the centre of the top of the package the calls
+  // come from to the centre of the top of the package they go to.
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
     for (const dep of pkg.deps || []) {
       if (dep.change !== "added" && dep.change !== "removed") continue;
-      const from = topLevelId(pkg.id);
-      const target = topLevelId(dep.to);
-      if (!target || target === from) continue;
-      const to = packageAnchor(target);
-      if (!to) continue;
-      const key = `${from}->${target}`;
-      const known = districts.get(key);
-      districts.set(key, {
-        from,
-        to,
-        id: target,
-        change: known ? strongerChange(known.change, dep.change) : dep.change,
+      const from = packageAnchor(pkg.id);
+      const to = packageAnchor(dep.to);
+      if (!from || !to) continue;
+      addArc(arcGroup, from, to, changeColor(dep.change), clearanceLift(from, to), {
+        kind: "dep", id: dep.to, label: dep.to, change: dep.change, from: pkg.id,
       });
     }
   }
-  for (const entry of districts.values()) {
-    const hub = districtHub(entry.from);
-    addArc(arcGroup, hub, entry.to, changeColor(entry.change), clearanceLift(hub, entry.to), {
-      kind: "dep", id: entry.id, label: entry.id, from: entry.from, change: entry.change, district: true,
-    });
-  }
 }
 
-// The arc meets each module. Clearance lifts only the middle, and only enough
-// to pass the roofs between the two ends.
-const LAND = 0.85;
+// The arc leaves just above the roof: the centre of the top face of the node,
+// plus a hair so the line does not z-fight with the roof itself.
+const LAND = 0.35;
 
 function roofClear(box) {
   return Math.max(1.2, Math.min(Math.max(box.w, box.d) * 0.045, 3));
 }
 
 let ownTopCache = null;
-let topLevelsCache = null;
-
-// The high-level packages: the districts directly under the root, the level
-// below it. Anything deeper rolls up to one of these.
-function topLevels() {
-  if (!topLevelsCache) {
-    let boxes = laid.packages.filter((box) => box.depth === 1);
-    if (!boxes.length && laid.packages.length) {
-      let shallow = Infinity;
-      for (const box of laid.packages) shallow = Math.min(shallow, box.depth);
-      boxes = laid.packages.filter((box) => box.depth === shallow);
-    }
-    topLevelsCache = boxes;
-  }
-  return topLevelsCache;
-}
-
-function topLevelId(id) {
-  if (typeof id !== "string") return id;
-  for (const box of topLevels()) {
-    if (id === box.id || id.startsWith(`${box.id}/`)) return box.id;
-  }
-  return id;
-}
-
-// The single origin for outgoing edges: the lowest point that is still above
-// every high-level package, centred over them. "Minimal" means no more height
-// than the tallest district roof demands. Layout heights only, so the point
-// does not jump when towers open and close.
-// The hub of a district: the centre of the district itself, lifted to the
-// lowest height that still clears every package inside it. Outgoing edges of
-// anything in the district leave from here, so the origin is over the source
-// it belongs to, not over the middle of the city.
-const districtHubs = new Map();
-
-// Just clear of the rooftops that are actually drawn: as high as the tallest
-// building in the district plus a hair. ownTop() would use the layout heights
-// of towers that are currently shut, which left the hub floating well above
-// the skyline it belongs to.
-const HUB_LIFT = 0.4;
-
-function districtHub(id) {
-  const district = topLevelId(id);
-  const cached = districtHubs.get(district);
-  if (cached) return cached;
-  const box = laid.packages.find((item) => item.id === district);
-  let top = 0;
-  for (const item of laid.packages) {
-    if (item.id !== district && !item.id.startsWith(`${district}/`)) continue;
-    top = Math.max(top, shownOwnTop(item.id));
-  }
-  const cx = box ? box.x + box.w / 2 : 0;
-  const cz = box ? box.z + box.d / 2 : 0;
-  const hub = [cx, top + HUB_LIFT, cz];
-  districtHubs.set(district, hub);
-  return hub;
-}
-
 function ownTop(id) {
   if (!ownTopCache) {
     ownTopCache = new Map();
@@ -1212,9 +1139,6 @@ function addArc(group, from, to, color, lift, data) {
 
 function applyMode() {
   syncLit();
-  // The skyline decides where the hub sits, and the skyline depends on what is
-  // selected (shut towers are shorter), so the hubs are re-derived here.
-  districtHubs.clear();
   updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
@@ -1604,9 +1528,8 @@ function linkColor(change, std) {
 
 function drawSelectionArcs(id, inbound) {
   clearGroup(selectArcs);
-  // One point for the whole fan, at the centre of the district the node lives
-  // in. Outgoing arcs leave that hub; inbound arcs land on it.
-  const hub = districtHub(id);
+  // The whole fan meets at the centre of the top of the selected package.
+  const hub = packageAnchor(id);
   if (!hub) return;
   const edges = packageEdges(id, inbound);
   for (const edge of edges) {
