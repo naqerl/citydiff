@@ -9,8 +9,13 @@
 #   AGENTS_MD=<file>            agent instructions file to point at the skill
 #   TAG=v0.0.1                  install a specific tag instead of the latest
 #   NO_PATH=1                   do not touch PATH
-#   NO_SKILLS=1                 do not write the skill / AGENTS.md pointer
-#   UNINSTALL=1                 remove binary, skill and AGENTS.md pointer
+#   NO_SKILLS=1                 do not write the skills / AGENTS.md pointer
+#   SKILL_TARGETS="d1 d2"       skill dirs for the citydiff-tour skill
+#                               (default: ~/.agents/skills, plus ~/.claude/skills
+#                               and ~/.cursor/skills when ~/.claude, ~/.cursor exist)
+#   SKILLS_ONLY=1               install the skills only, not the binary
+#   FROM_SOURCE=1               build the binary with git + go instead of a release
+#   UNINSTALL=1                 remove binary, skills and AGENTS.md pointer
 set -eu
 
 REPO="${REPO:-naqerl/citydiff}"
@@ -23,10 +28,14 @@ NO_PATH="${NO_PATH:-}"
 NO_SKILLS="${NO_SKILLS:-}"
 UNINSTALL="${UNINSTALL:-}"
 TAG="${TAG:-}"
+SKILL_TARGETS="${SKILL_TARGETS:-}"
+SKILLS_ONLY="${SKILLS_ONLY:-}"
+FROM_SOURCE="${FROM_SOURCE:-}"
+TOUR_SKILL="citydiff-tour"
 RELEASES_API="https://api.github.com/repos/$REPO/releases"
 
 usage() {
-  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 for arg in "$@"; do
@@ -39,6 +48,9 @@ for arg in "$@"; do
     --bin-dir=*) BIN_DIR="${arg#--bin-dir=}" ;;
     --skills-dir=*) SKILLS_DIR="${arg#--skills-dir=}" ;;
     --agents-md=*) AGENTS_MD="${arg#--agents-md=}" ;;
+    --skill-targets=*) SKILL_TARGETS="${arg#--skill-targets=}" ;;
+    --skills-only) SKILLS_ONLY=1 ;;
+    --from-source) FROM_SOURCE=1 ;;
     *) echo "unknown option: $arg" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -109,12 +121,73 @@ resolve_asset() {
     | grep -- "-${suffix}\.tar\.gz$" | head -1
 }
 
+# ------------------------------------------------------------ tour skill ---
+
+# The skill dirs agents read. ~/.agents/skills always; Claude's and Cursor's
+# only when that agent is installed, so no stray dot-directories appear.
+skill_targets() {
+  if [ -n "$SKILL_TARGETS" ]; then printf '%s\n' $SKILL_TARGETS; return 0; fi
+  printf '%s\n' "$SKILLS_DIR"
+  [ -d "$HOME/.claude" ] && printf '%s\n' "$HOME/.claude/skills"
+  [ -d "$HOME/.cursor" ] && printf '%s\n' "$HOME/.cursor/skills"
+  return 0
+}
+
+# The skill comes from this checkout when install.sh runs from one, else
+# from the repository at the installed tag (or main).
+tour_skill_source() {
+  here=$(dirname "$0" 2>/dev/null || printf .)
+  if [ -f "$here/skills/$TOUR_SKILL/SKILL.md" ]; then
+    cat "$here/skills/$TOUR_SKILL/SKILL.md"
+    return 0
+  fi
+  ref="${1:-main}"
+  fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$TOUR_SKILL/SKILL.md" 2>/dev/null \
+    || fetch "https://raw.githubusercontent.com/$REPO/main/skills/$TOUR_SKILL/SKILL.md"
+}
+
+install_tour_skill() {
+  body_file="$(mktemp)"
+  if ! tour_skill_source "${1:-}" > "$body_file" || ! grep -q "^name: $TOUR_SKILL\$" "$body_file"; then
+    rm -f "$body_file"
+    warn "  could not fetch the $TOUR_SKILL skill; skipped"
+    return 0
+  fi
+  for dir in $(skill_targets); do
+    target="$dir/$TOUR_SKILL"
+    if [ -e "$target" ] && [ ! -d "$target" ]; then
+      warn "  $target exists and is not a directory; skipped"
+      continue
+    fi
+    if [ -f "$target/SKILL.md" ] && ! grep -q "^name: $TOUR_SKILL\$" "$target/SKILL.md"; then
+      warn "  $target/SKILL.md is not ours; left alone"
+      continue
+    fi
+    mkdir -p "$target" || { warn "  cannot create $target; skipped"; continue; }
+    if [ -f "$target/SKILL.md" ] && cmp -s "$body_file" "$target/SKILL.md"; then
+      say "  $target/SKILL.md up to date"
+      continue
+    fi
+    cp "$body_file" "$target/SKILL.md.tmp.$$" && mv "$target/SKILL.md.tmp.$$" "$target/SKILL.md"
+    say "  wrote skill $target/SKILL.md"
+  done
+  rm -f "$body_file"
+}
+
 # --------------------------------------------------------------- uninstall ---
 
 uninstall() {
   say "uninstalling $BIN_NAME"
   if [ -e "$BIN_DIR/$BIN_NAME" ]; then rm -f "$BIN_DIR/$BIN_NAME"; say "  removed $BIN_DIR/$BIN_NAME"; fi
   if [ -d "$SKILLS_DIR/$SKILL_NAME" ]; then rm -rf "$SKILLS_DIR/$SKILL_NAME"; say "  removed $SKILLS_DIR/$SKILL_NAME"; fi
+  for dir in $(skill_targets); do
+    # Only a directory this installer wrote: it holds our SKILL.md and nothing else.
+    if [ -f "$dir/$TOUR_SKILL/SKILL.md" ] && grep -q "^name: $TOUR_SKILL\$" "$dir/$TOUR_SKILL/SKILL.md"; then
+      rm -f "$dir/$TOUR_SKILL/SKILL.md"
+      rmdir "$dir/$TOUR_SKILL" 2>/dev/null || true
+      say "  removed $dir/$TOUR_SKILL"
+    fi
+  done
   for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
     if [ -f "$f" ] && grep -q "^# citydiff/bin\|$BIN_DIR$" "$f" 2>/dev/null; then
       say "  note: $f may still export PATH containing $BIN_DIR — edit by hand if wanted"
@@ -140,6 +213,38 @@ if [ -n "$UNINSTALL" ]; then uninstall; exit 0; fi
 say "installing $BIN_NAME ($REPO) for $PLATFORM"
 say "  bin dir:    $BIN_DIR"
 say "  skills dir: $SKILLS_DIR"
+
+if [ -n "$SKILLS_ONLY" ]; then
+  install_tour_skill "$TAG"
+  say "skills installed."
+  exit 0
+fi
+
+build_from_source() {
+  need git
+  command -v go >/dev/null 2>&1 || die "go is needed to build from source (https://go.dev/dl/)"
+  src="$(mktemp -d)"
+  trap 'rm -rf "$src"' EXIT INT TERM
+  say "  building from source (${TAG:-main})"
+  if [ -n "$TAG" ]; then
+    git clone -q --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$src/citydiff"
+  else
+    git clone -q --depth 1 "https://github.com/$REPO.git" "$src/citydiff"
+  fi
+  (cd "$src/citydiff" && CGO_ENABLED=1 go build -o "$src/$BIN_NAME" ./cmd/cli) || die "go build failed (CGO and a C compiler are required)"
+  mkdir -p "$BIN_DIR"
+  cp "$src/$BIN_NAME" "$BIN_DIR/$BIN_NAME.tmp.$$" && chmod +x "$BIN_DIR/$BIN_NAME.tmp.$$" && mv "$BIN_DIR/$BIN_NAME.tmp.$$" "$BIN_DIR/$BIN_NAME"
+  say "  installed $BIN_DIR/$BIN_NAME (built from source)"
+}
+
+if [ -n "$FROM_SOURCE" ]; then
+  build_from_source
+  version="${TAG:-main}"
+  if [ -z "$NO_SKILLS" ]; then install_tour_skill "$TAG"; fi
+  say ""
+  say "$BIN_NAME $version installed."
+  exit 0
+fi
 
 json="$(release_json)"
 version="$(printf '%s' "$json" | json_field tag_name)"
@@ -234,6 +339,10 @@ A diff viewed from the outside inward, at three levels:
 3. **Call paths** — inside a function/method, which functions it calls, in order, and how that changed.
 
 The three levels are views of one diff.
+
+To walk someone through a range in the viewer, write a tour: see the
+\`citydiff-tour\` skill installed next to this one (\`citydiff nodes\`,
+\`citydiff tour validate\`, \`citydiff tour serve\`).
 
 ## Source of truth
 
@@ -419,6 +528,7 @@ if [ -n "$NO_SKILLS" ]; then
   say "  skills skipped (--no-skills)"
 else
   write_skill
+  install_tour_skill "$version"
   add_pointer "$(agents_md_target)"
 fi
 
@@ -429,3 +539,4 @@ say ""
 say "next:"
 say "  $BIN_NAME -path /path/to/go/repo -range A..B -json"
 say "  $BIN_NAME -path /path/to/go/repo -view &   # then open http://127.0.0.1:8787"
+say "  $BIN_NAME nodes -path /path/to/repo -range A..B -changed   # names for a tour (skill: $TOUR_SKILL)"

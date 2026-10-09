@@ -35,8 +35,11 @@ curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | s
 ```
 
 The installer resolves the latest [release](https://github.com/naqerl/citydiff/releases),
-verifies its published `sha256`, installs the binary to `~/.local/bin`, and writes an agent
-skill to `~/.agents/skills/citydiff`. It also supports env vars and flags:
+verifies its published `sha256`, installs the binary to `~/.local/bin`, and writes two agent
+skills: `citydiff` to `~/.agents/skills/citydiff`, and `citydiff-tour` (writing [tours](#tours))
+to `~/.agents/skills/citydiff-tour`, plus `~/.claude/skills` and `~/.cursor/skills` when those
+agents are installed. Re-running it is safe: it only rewrites files it owns and leaves a
+`SKILL.md` it did not write alone. It also supports env vars and flags:
 
 ```sh
 # a specific tag
@@ -46,8 +49,15 @@ curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | s
 BIN_DIR=~/.local/bin SKILLS_DIR=~/.agents/skills AGENTS_MD=~/AGENTS.md \
   sh install.sh
 
-# skip the agent skill / don't touch PATH
+# skip the agent skills / don't touch PATH
 sh install.sh --no-skills --no-path
+
+# only the tour skill, into chosen skill dirs
+curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | \
+  SKILL_TARGETS="$HOME/.claude/skills $HOME/.agents/skills" sh -s -- --skills-only
+
+# build the binary from source (git, go and a C compiler) instead of a release
+sh install.sh --from-source
 
 # remove binary, skill and AGENTS.md pointer
 sh install.sh --uninstall
@@ -83,7 +93,10 @@ viewer assets are embedded in the binary.
 ## Command line
 
 ```
-citydiff [-json | -scene | -view] -path file-or-directory [-range A..B]
+citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]
+citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]
+citydiff tour validate|serve [-path dir] [-range A..B] [-json] [-addr host:port] tour.json
+citydiff tour schema
 ```
 
 | Flag | Meaning |
@@ -94,6 +107,7 @@ citydiff [-json | -scene | -view] -path file-or-directory [-range A..B]
 | `-scene` | print the scene graph the viewer draws, instead of text. |
 | `-view` | serve the 3D viewer over HTTP (long-running). |
 | `-addr` | listen address for `-view` (default `127.0.0.1:8787`). |
+| `-tour` | with `-view`, a [tour](#tours) script the viewer loads and plays. |
 
 Notes:
 
@@ -139,6 +153,66 @@ entry.
 | `0` | reset the view |
 | `m`, `1`, `2` | overview / changes |
 | `?` | legend |
+
+## Tours
+
+A tour is a versioned JSON script over the scene of one commit range: an ordered list of
+steps the viewer plays. It is meant to be written by an agent (see the `citydiff-tour`
+[skill](skills/citydiff-tour/SKILL.md)) or by hand. The schema is
+[`lib/tour/tour.schema.json`](lib/tour/tour.schema.json) (`citydiff tour schema` prints it), and
+[`examples/barse-flashcard-versions.tour.json`](examples/barse-flashcard-versions.tour.json)
+is a full example.
+
+```json
+{
+  "version": 1,
+  "title": "Flashcard versions",
+  "range": "dbdafc00..061e9aed",
+  "steps": [
+    { "title": "The whole change", "note": "Markdown **note**.", "mode": "changes", "camera": "overview" },
+    { "title": "The generator", "select": "service/flashcard/generator" },
+    { "title": "Picking the final", "focus": "review.Service.SelectFinal", "code": "review.Service.SelectFinal" },
+    { "title": "Handler to view", "path": { "from": "handler.handlePostSelectFinal", "to": "meetings/view.versionBar" } },
+    { "title": "Storage", "highlight": ["db.Queries.SetGenerationFinal", "generator.FinalVersion"], "dim": false }
+  ]
+}
+```
+
+| Step field | Effect |
+| --- | --- |
+| `title` | required; the roadmap entry and note heading |
+| `note` | markdown shown in the note panel (top right) |
+| `duration` | seconds autoplay stays on the step (default 8) |
+| `mode` | `changes` or `full` |
+| `select` | select a package or external import and fly to it |
+| `focus` | open a function's or method's call focus; select a type, variable or package |
+| `highlight` | light several nodes and the calls between them |
+| `path` | `{from, to}`: light the shortest resolved call path between two functions, with its arcs |
+| `dim` | with `highlight`/`path`, `false` keeps the rest of the city bright |
+| `camera` | `overview`, `top`, `fit` or `close` |
+| `zoom` | multiply the camera distance (`0.5` is twice as close) |
+| `code` | show a declaration's source under the note, as a line diff when it changed |
+
+Names are what you would write: a package path or a unique tail of it (`barse/db`, `db`), a Go
+declaration (`pkg/path.Func`, `pkg.Type.Method`, `Type.Method`), a Rust item
+(`crate::mod::f`, `<T as Trait>::m`), or a scene id. A name matching several nodes is an error
+that lists the candidates; an unknown name comes with suggestions.
+
+```sh
+citydiff nodes -path ~/src/barse -range dbdafc00..061e9aed -changed       # the names to use
+citydiff tour validate -path ~/src/barse tour.json                         # resolve every name; exit 1 on problems
+citydiff tour validate -path ~/src/barse tour.json -json                   # the resolved script
+citydiff tour serve -path ~/src/barse -addr 127.0.0.1:8787 tour.json       # validate, then serve the viewer with it
+```
+
+`-range` defaults to the script's own `range`; ranges are compared by commit, so abbreviated
+hashes and refs match. A running viewer also plays `?tour=<url>` (fetched by the browser) and a
+script dropped onto the page; the server resolves those through `POST /api/tour` with the same
+checks as the CLI.
+
+The player: **space** plays and pauses (autoplay uses the durations), **←** / **→** step,
+and the roadmap under the note jumps to any step and marks the current one. Dragging or
+clicking in the city pauses autoplay.
 
 ## JSON output
 
@@ -237,7 +311,11 @@ On a `v*` tag it also publishes a GitHub Release with
 | `lib/git/` | git source: reads trees at refs via go-git |
 | `lib/files/` | filesystem source |
 | `view/` | embedded browser viewer (three.js) |
-| `install.sh` | one-command install of the binary and the agent skill |
+| `lib/tour/` | tour scripts: schema, name resolution, validation, call paths, code snippets |
+| `cmd/cli/tour.go` | the `nodes` and `tour` subcommands and the tour HTTP endpoints |
+| `skills/citydiff-tour/` | the agent skill for writing tours |
+| `examples/` | example tours |
+| `install.sh` | one-command install of the binary and the agent skills |
 
 ## Known limitations
 
