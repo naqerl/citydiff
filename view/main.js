@@ -807,6 +807,12 @@ function topLevelId(id) {
 // it belongs to, not over the middle of the city.
 const districtHubs = new Map();
 
+// Just clear of the rooftops that are actually drawn: as high as the tallest
+// building in the district plus a hair. ownTop() would use the layout heights
+// of towers that are currently shut, which left the hub floating well above
+// the skyline it belongs to.
+const HUB_LIFT = 0.4;
+
 function districtHub(id) {
   const district = topLevelId(id);
   const cached = districtHubs.get(district);
@@ -815,11 +821,11 @@ function districtHub(id) {
   let top = 0;
   for (const item of laid.packages) {
     if (item.id !== district && !item.id.startsWith(`${district}/`)) continue;
-    top = Math.max(top, ownTop(item.id));
+    top = Math.max(top, shownOwnTop(item.id));
   }
   const cx = box ? box.x + box.w / 2 : 0;
   const cz = box ? box.z + box.d / 2 : 0;
-  const hub = [cx, top + LAND, cz];
+  const hub = [cx, top + HUB_LIFT, cz];
   districtHubs.set(district, hub);
   return hub;
 }
@@ -1204,6 +1210,9 @@ function addArc(group, from, to, color, lift, data) {
 
 function applyMode() {
   syncLit();
+  // The skyline decides where the hub sits, and the skyline depends on what is
+  // selected (shut towers are shorter), so the hubs are re-derived here.
+  districtHubs.clear();
   updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
