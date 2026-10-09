@@ -905,7 +905,9 @@ function segmentRectSpan(from, to, box) {
 // is capped so one tall neighbor cannot throw the whole fan into the sky.
 function clearanceLift(from, to) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  const bow = Math.max(3, Math.min(dist * 0.22, 18));
+  // A low bow: arcs skim the roofs instead of sweeping over the city. The loop
+  // below still raises any arc that would otherwise pass through a building.
+  const bow = Math.max(2, Math.min(dist * 0.1, 8));
   let lift = bow;
   const y0 = from[1];
   const y1 = to[1];
@@ -927,7 +929,7 @@ function clearanceLift(from, to) {
       if (need > lift) lift = need;
     }
   }
-  return Math.min(lift, 22);
+  return Math.min(lift, 13);
 }
 
 // The call leaves the rendered top of the caller and lands on the callee.
@@ -1108,9 +1110,9 @@ function makeFlow(from, to, color, lift) {
     lengths[i] = total;
   }
   if (!(total > 0)) return null;
-  // Few and small: the march is a hint about direction, not a light show.
-  const count = Math.max(2, Math.min(6, Math.round(dist / 12)));
-  const size = Math.max(0.32, Math.min(dist * 0.0055, 0.85));
+  // Small, but visible: the march is a hint about direction, not a light show.
+  const count = Math.max(3, Math.min(8, Math.round(dist / 9)));
+  const size = Math.max(0.5, Math.min(dist * 0.009, 1.25));
   const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
