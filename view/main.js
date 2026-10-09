@@ -122,12 +122,6 @@ let lastActivity = 0;
 const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
-// The idle orbit is slow and the scene is static, so it does not need every
-// frame. 30fps halves the render cost and reads the same.
-const IDLE_FRAME_MS = 33;
-// A frame that carries only decoration — marching particles, the halo band —
-// runs slower still. 20fps is plenty for a 0.2 rad/s orbit and a slow march.
-const DECOR_FRAME_MS = 50;
 // The search box swallows the fly keys while it has focus. The idle orbit is
 // not a fly key: it keeps turning in every focus, this box included.
 const NO_KEYS = new Set();
@@ -167,7 +161,6 @@ function parkLoop() {
 const plinths = [];
 const entitySlots = [];
 const slotById = new Map();
-const openByPkg = new Map();
 
 const viewEl = document.querySelector("#view");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -745,7 +738,7 @@ function buildArcs() {
     drawn.add(from + "\0" + to);
     addArc(arcGroup, start, end, changeColor(change), clearLift(start, end, [from, to]), {
       kind: "dep", id: to, label: to, change, from,
-    });
+    }, from, to);
   };
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
@@ -914,6 +907,28 @@ function worstPenetration(points, margin = 0, skip) {
 // endpoint (which, in a treemap, is every child tower at the ends), and it
 // capped the result, turning every large requirement into a silent collision.
 function clearLift(from, to, ends) {
+  return Math.min(measuredLift(from, to, ends), liftCap(from, to));
+}
+
+// The lift that puts the middle of the arc a little above the tallest roof in
+// the city, or a fair bow for the distance, whichever is more. A loop that
+// chases an obstacle beside an endpoint can ask for several times that and
+// send the arc far out of frame.
+function liftCap(from, to) {
+  const dist = Math.hypot(to[0] - from[0], to[2] - from[2]);
+  const base = Math.min(from[1], to[1]);
+  const over = (laid.bounds.maxY + 2 - base) / 0.75;
+  return Math.max(3, dist * 0.25, over);
+}
+
+// A call arc bows like main's call arcs did: a fifth of the distance, between
+// 3 and 26.
+function callLift(from, to) {
+  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  return Math.max(3, Math.min(dist * 0.22, 26)) / 0.75;
+}
+
+function measuredLift(from, to, ends) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   let lift = Math.max(3, Math.min(dist * 0.2, 20));
   // Sampled finer than the tube is drawn, with a margin, so a thin tower cannot
@@ -967,12 +982,14 @@ function makeLink(from, to, color, lift, roofFrom, roofTo) {
   for (const p of [to, roofTo]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
   const curve = new THREE.CatmullRomCurve3(path);
   const radius = Math.max(0.07, Math.min(dist * 0.0028, 0.22));
-  const segs = Math.max(16, Math.min(64, Math.round(dist)));
+  // As many segments as main's bows had. Twice that doubled the triangles the
+  // overview draws and bought nothing visible at this radius.
+  const segs = (dist > 48 ? 28 : 16) + (roofFrom ? 2 : 0) + (roofTo ? 2 : 0);
   const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
   const mat = new THREE.MeshBasicMaterial({ color, fog: false });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.frustumCulled = false;
-  return mesh;
+  // The tube has real vertices, so its bounds are right and it can be culled
+  // when the camera is inside the city.
+  return new THREE.Mesh(geo, mat);
 }
 function isStdPackage(id) {
   const pkg = byPackage.get(id);
@@ -1021,8 +1038,11 @@ const flowMaterial = new THREE.ShaderMaterial({
       vec3 p0 = texture2D(uPath, vec2((i0 + 0.5) / SAMPLES, row)).xyz;
       vec3 p1 = texture2D(uPath, vec2((i0 + 1.5) / SAMPLES, row)).xyz;
       vec4 mv = modelViewMatrix * vec4(mix(p0, p1, f), 1.0);
+      // The dot rides the centre of the arc's tube. Bring it out in front of
+      // the tube so the tube does not hide it.
+      mv.xyz += normalize(-mv.xyz) * aSize * 0.6;
       gl_Position = projectionMatrix * mv;
-      gl_PointSize = max(1.0, aSize * uScale / max(0.001, -mv.z));
+      gl_PointSize = clamp(aSize * uScale / max(0.001, -mv.z), 4.0, 12.0);
       vColor = aColor;
     }
   `,
@@ -1042,6 +1062,14 @@ const flowMaterial = new THREE.ShaderMaterial({
   depthWrite: false,
   fog: false,
 });
+
+// Particle sizes are in world units: the scale is the drawing buffer height
+// over the height of the view frustum at distance 1.
+updatePointScale = () => {
+  const h = renderer.domElement.height || 1;
+  flowMaterial.uniforms.uScale.value = h / (2 * Math.tan((camera.fov * Math.PI) / 360));
+};
+updatePointScale();
 
 function ensureFlowTexture(height) {
   if (flowTexture && flowTexture.image.height === height) return flowTexture;
@@ -1074,7 +1102,12 @@ function writeFlowRow(flow, row) {
 function syncFlowTexture() {
   flowRows = Math.max(1, flows.length);
   ensureFlowTexture(flowRows);
-  for (let i = 0; i < flows.length; i++) writeFlowRow(flows[i].userData.flow, i);
+  for (let i = 0; i < flows.length; i++) {
+    writeFlowRow(flows[i].userData.flow, i);
+    const rows = flows[i].geometry.getAttribute("aRow");
+    rows.array.fill(i);
+    rows.needsUpdate = true;
+  }
 }
 
 function wrapUnit(value) {
@@ -1091,9 +1124,10 @@ function makeFlow(from, to, color, lift) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
   // The particle path is the same curve the line is drawn along, sampled evenly.
-  const samples = arcSamples(from, to, lift, FLOW_SAMPLES);
+  // writeFlowRow reads x, y, z flat, three numbers per sample.
+  const samples = arcSamples(from, to, lift, FLOW_SAMPLES - 1).flat();
   const count = Math.max(3, Math.min(8, Math.round(dist / 9)));
-  const size = Math.max(0.5, Math.min(dist * 0.009, 1.25));
+  const size = Math.max(1.2, Math.min(dist * 0.016, 2.4));
   const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
@@ -1177,7 +1211,7 @@ function arcCollisions() {
         if (Math.hypot(v.x - e[0], v.z - e[2]) <= ANCHOR_REACH + 0.6) riser = true;
       }
       if (riser) continue;
-      const skipIds = [child.userData.from, child.userData.id];
+      const skipIds = [child.userData.from, child.userData.to || child.userData.id];
       for (const box of laid.packages) {
         if (skipIds.some((id) => inSubtree(box.id, id))) continue;
         if (v.x < box.x || v.x > box.x + box.w || v.z < box.z || v.z > box.z + box.d) continue;
@@ -1208,8 +1242,10 @@ window.citydiffCheck = () => {
   return hits.length;
 };
 
-function addArc(group, from, to, color, lift, data) {
-  const mesh = makeLink(from, to, color, lift, packageRoof(data.from), packageRoof(data.id));
+// fromId and toId name the packages whose roofs the arc rises from and lands
+// on. A call arc between towers has neither.
+function addArc(group, from, to, color, lift, data, fromId, toId) {
+  const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null);
   if (!mesh) return;
   mesh.userData = data;
   group.add(mesh);
@@ -1452,7 +1488,7 @@ function drawCallLinks(group, links) {
     const std = !!(link.target.pkg && isStdPackage(link.target.pkg.id));
     const color = linkColor(link.change, std);
     const data = { kind: "call", entityId: link.target.entity.id, step: link.step, label: entityLabel(link.target.entity) };
-    addArc(group, from, to, color, undefined, data);
+    addArc(group, from, to, color, callLift(from, to), data);
     points.push(to);
   }
   linkPoints = points;
@@ -1477,33 +1513,16 @@ function recolor(mesh) {
   mesh.instanceColor.needsUpdate = true;
 }
 
-function openness(box) {
-  if (!lit && entered === box.id) return 1;
-  const center = scratch.a.set(box.x + box.w / 2, box.y + box.h, box.z + box.d / 2);
-  const dist = camera.position.distanceTo(center);
-  const span = Math.max(box.w, box.d, 4);
-  const near = span * 0.9;
-  const far = span * 1.75;
-  if (dist <= near) return 1;
-  if (dist >= far) return 0;
-  const t = (dist - near) / (far - near);
-  const s = t * t * (3 - 2 * t);
-  return 1 - s;
-}
-
 // One called function does not open the rest of its package.
 // Only the functions on the call stay up. The others shut.
 function slotOpen(slot) {
-  if (!lit) return openByPkg.get(slot.pkgId) || 0;
+  if (!lit) return 1;
   if (lit.entities) return lit.entities.has(slot.id) ? 1 : 0;
   if (lit.browse && slot.pkgId === lit.browse) return 1;
   return 0;
 }
 
 function refreshInstances() {
-  if (!lit) {
-    for (const box of laid.packages) openByPkg.set(box.id, openness(box));
-  }
   if (!solidMesh) return;
   let changed = false;
   solidMesh.userData.slots.forEach((slot, index) => {
@@ -1620,12 +1639,16 @@ function drawSelectionArcs(id, inbound) {
     const to = inbound ? hub : far;
     const color = linkColor(edge.change, isStdPackage(edge.to));
     const target = byPackage.get(farId);
-    addArc(selectArcs, from, to, color, clearLift(from, to), {
+    const fromId = inbound ? farId : id;
+    const toId = inbound ? id : farId;
+    addArc(selectArcs, from, to, color, clearLift(from, to, [fromId, toId]), {
       kind: "dep",
       id: farId,
       label: (target && (target.name || target.id)) || farId,
       external: !!(target && target.external),
-    });
+      from: fromId,
+      to: toId,
+    }, fromId, toId);
   }
 }
 
@@ -1787,6 +1810,7 @@ function clearGroup(group) {
       if (obj.material) {
         const list = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const mat of list) {
+          if (mat === flowMaterial || mat === haloMaterial) continue;
           if (mat.map) mat.map.dispose();
           mat.dispose();
         }
@@ -2426,8 +2450,8 @@ function animate(now) {
   const moved = tweening || flying ||
     camera.position.distanceToSquared(settledPos) > 1e-6 ||
     controls.target.distanceToSquared(settledTarget) > 1e-6;
-  if ((moved || viewDirty) && laid) {
-    refreshInstances();
+  if (viewDirty && laid) refreshInstances();
+  if (moved) {
     settledPos.copy(camera.position);
     settledTarget.copy(controls.target);
   }
@@ -2444,7 +2468,7 @@ function animate(now) {
     hovered = pointerDirty;
     if (pointerDirty) onHover(null);
     pointerDirty = false;
-  } else if (pointerDirty || moved) {
+  } else if (pointerDirty && !pointerDown) {
     onHover(hitTest());
     hovered = pointerDirty;
     pointerDirty = false;
@@ -2454,7 +2478,7 @@ function animate(now) {
     viewDirty = false;
   }
   if (motion || idleSpin || flowing || halo.visible || introSpin) {
-    requestFrame(motion ? 0 : (idleSpin ? IDLE_FRAME_MS : DECOR_FRAME_MS));
+    requestFrame();
   } else {
     parkLoop();
   }
