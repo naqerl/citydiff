@@ -74,6 +74,8 @@ let pointerDown = null;
 const byEntity = new Map();
 const byPackage = new Map();
 const byDecl = new Map();
+// entity id → Map of caller id → { target, change, step }
+const callersOf = new Map();
 const catalog = [];
 let searchHits = [];
 let searchCursor = 0;
@@ -127,6 +129,11 @@ function setSide(open) {
 }
 let arcSubject = null;
 let entitySubject = null;
+// Show calls draws what the tower calls, particles leaving it. Show callers
+// draws what calls the tower. The arcs are the same curve with the ends
+// swapped, so the particles run back toward the tower.
+let callInbound = false;
+let callMenuTarget = null;
 let lit = null;
 // A tour step's highlight: what it lights, and the call arcs it draws.
 let tourLit = null;
@@ -417,6 +424,9 @@ function clearTour() {
 function applyTourStep(step) {
   const t = step.targets || {};
   clearTourMarks();
+  // A tour step draws the calls it names. Callers mode would reverse them.
+  callInbound = false;
+  closeCallMenu();
   if (focus) dropFocus();
   selected = null;
   entered = null;
@@ -597,6 +607,7 @@ function indexScene() {
       if (found) found.box = block;
     }
   }
+  indexCallers();
 }
 
 function declKey(file, recv, name) {
@@ -1576,10 +1587,49 @@ function entityLinks(found) {
   return [...byTarget.values()];
 }
 
+function isCallable(found) {
+  if (!found) return false;
+  const kind = found.entity.kind;
+  return kind === "function" || kind === "method";
+}
+
+// One arc per caller. Several calls from the same function share it,
+// and the stronger change is the one the arc keeps.
+function indexCallers() {
+  callersOf.clear();
+  for (const found of byEntity.values()) {
+    if (!isCallable(found) || !found.box) continue;
+    for (const step of found.entity.calls || []) {
+      const target = declaredTarget(step);
+      if (!target || target.entity.id === found.entity.id) continue;
+      let byCaller = callersOf.get(target.entity.id);
+      if (!byCaller) {
+        byCaller = new Map();
+        callersOf.set(target.entity.id, byCaller);
+      }
+      const prev = byCaller.get(found.entity.id);
+      if (!prev) byCaller.set(found.entity.id, { target: found, change: step.change, step });
+      else prev.change = strongerChange(prev.change, step.change);
+    }
+  }
+}
+
+function callerLinks(found) {
+  if (!found) return [];
+  const byCaller = callersOf.get(found.entity.id);
+  return byCaller ? [...byCaller.values()] : [];
+}
+
+// Types keep their methods either way. Only a function or method has a call list to reverse.
+function subjectLinks(found) {
+  if (callInbound && isCallable(found)) return callerLinks(found);
+  return entityLinks(found);
+}
+
 function litForEntity(found) {
   if (!found) return null;
   const entities = new Set([found.entity.id]);
-  for (const link of entityLinks(found)) entities.add(link.target.entity.id);
+  for (const link of subjectLinks(found)) entities.add(link.target.entity.id);
   return { entities, packages: null };
 }
 
@@ -1652,7 +1702,13 @@ function syncLit() {
 }
 
 function drawEntityLinks(group, found) {
-  const links = entityLinks(found).map((link) => ({ from: found, target: link.target, change: link.change, step: link.step }));
+  // Callers are stored as the link target, the same shape as a callee. The
+  // arc is drawn from the caller to this tower, so the particle walk, which
+  // always runs from the first end to the second, comes back in.
+  const inbound = callInbound && isCallable(found);
+  const links = subjectLinks(found).map((link) => (inbound
+    ? { from: link.target, target: found, far: link.target, change: link.change, step: link.step }
+    : { from: found, target: link.target, far: link.target, change: link.change, step: link.step }));
   drawCallLinks(group, links);
   if (!linkPoints || !linkPoints.length) {
     const top = towerTop(found);
@@ -1668,13 +1724,14 @@ function drawCallLinks(group, links) {
     const from = towerTop(link.from);
     const to = towerTop(link.target);
     if (!from || !to) continue;
-    if (points.length === 0) points.push(from);
-    const std = !!(link.target.pkg && isStdPackage(link.target.pkg.id));
+    // Every caller is its own end. Pushing `from` once would keep only the first.
+    points.push(from, to);
+    const far = link.far || link.target;
+    const std = !!(far.pkg && isStdPackage(far.pkg.id));
     const color = linkColor(link.change, std);
-    const data = { kind: "call", entityId: link.target.entity.id, step: link.step, label: entityLabel(link.target.entity) };
+    const data = { kind: "call", entityId: far.entity.id, step: link.step, label: entityLabel(far.entity) };
     const lift = callLift(from, to);
     addArc(group, from, to, color, lift, data);
-    points.push(to);
     frame.push(...entityExtent(link.from), ...entityExtent(link.target));
     frame.push([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift * 0.75, (from[2] + to[2]) / 2]);
   }
@@ -1923,6 +1980,8 @@ function buildFocus() {
     return;
   }
   drawEntityLinks(focusGroup, found);
+  // The ghost of the old body sits on the tower itself (#17). The call arcs
+  // are drawn from whichever end the direction picks.
   addBodyBars(found.entity, mode === "overlay");
   focus.points = linkPoints ? linkPoints.slice() : [];
 }
@@ -2414,8 +2473,13 @@ function entityDetail(entity) {
     size.textContent = sizeText(entity);
     wrap.append(size);
     const hint = document.createElement("p");
-    hint.textContent = "Click again or press enter to open the call diff.";
+    hint.textContent = callInbound
+      ? "Showing callers. Right-click the tower to show calls."
+      : "Showing calls. Right-click the tower to show callers.";
     wrap.append(hint);
+    const again = document.createElement("p");
+    again.textContent = "Click again or press enter to open the call diff.";
+    wrap.append(again);
   }
   if (entity.fields && entity.fields.length) {
     const line = document.createElement("p");
@@ -2432,6 +2496,10 @@ function focusDetail(entity) {
   title.append(titleClip);
   attachMarquee(title, titleClip);
   wrap.append(title);
+  if (callInbound) {
+    wrap.append(callerDetail(entity));
+    return wrap;
+  }
   const meta = document.createElement("p");
   const steps = (entity.calls || []).filter((step) => declaredTarget(step));
   const added = steps.filter((step) => step.change === "added").length;
@@ -2475,6 +2543,53 @@ function focusDetail(entity) {
   return wrap;
 }
 
+function callerDetail(entity) {
+  const wrap = document.createDocumentFragment();
+  const found = byEntity.get(entity.id);
+  const links = callerLinks(found).slice().sort((a, b) => entityLabel(a.target.entity).localeCompare(entityLabel(b.target.entity)));
+  const meta = document.createElement("p");
+  meta.append(sizeText(entity));
+  if (mode === "overlay") {
+    const added = links.filter((link) => link.change === "added").length;
+    const removed = links.filter((link) => link.change === "removed").length;
+    meta.append("  ");
+    const plus = document.createElement("span");
+    plus.className = "added";
+    plus.textContent = "+" + added;
+    const minus = document.createElement("span");
+    minus.className = "removed";
+    minus.textContent = " −" + removed;
+    meta.append(plus, minus, " callers");
+  } else {
+    meta.append("   " + links.length + " caller" + (links.length === 1 ? "" : "s"));
+  }
+  wrap.append(meta);
+  const show = mode === "overlay" ? links.filter((link) => link.change !== "same") : links.slice(0, 40);
+  if (!show.length) {
+    const empty = document.createElement("p");
+    empty.textContent = links.length ? "The caller list is unchanged." : "No function in this codebase calls this one.";
+    wrap.append(empty);
+    return wrap;
+  }
+  const list = document.createElement("ul");
+  for (const link of show) {
+    const li = document.createElement("li");
+    li.className = mode === "overlay" ? link.change : "";
+    const mark = link.change === "added" ? "+ " : link.change === "removed" ? "− " : "";
+    const line = clipText((mode === "overlay" ? mark : "") + entityLabel(link.target.entity));
+    li.append(line);
+    attachMarquee(li, line);
+    list.append(li);
+  }
+  wrap.append(list);
+  if (mode !== "overlay" && links.length > 40) {
+    const more = document.createElement("p");
+    more.textContent = links.length - 40 + " more callers.";
+    wrap.append(more);
+  }
+  return wrap;
+}
+
 function sizeText(entity) {
   const after = entity.change === "removed" ? 0 : (entity.bodyBytes || 0);
   if (mode === "overlay" && entity.bodyBytesBefore != null && entity.bodyBytesBefore !== after) {
@@ -2512,6 +2627,8 @@ function resetView() {
   entered = null;
   entitySubject = null;
   arcSubject = null;
+  callInbound = false;
+  closeCallMenu();
   selected = null;
   jumps = [];
   jumpIndex = -1;
@@ -2722,7 +2839,8 @@ function animate(now) {
     if (pointerDirty) onHover(null);
     pointerDirty = false;
   } else if (pointerDirty && !pointerDown) {
-    onHover(hitTest());
+    if (callMenu.hidden) onHover(hitTest());
+    else onHover(null);
     hovered = pointerDirty;
     pointerDirty = false;
   }
@@ -2740,8 +2858,79 @@ function animate(now) {
 hud.overview.addEventListener("click", () => { mode = "overview"; applyMode(); });
 hud.changes.addEventListener("click", () => { mode = "overlay"; applyMode(); });
 
+const callMenu = document.querySelector("#call-menu");
+
+function closeCallMenu() {
+  callMenu.hidden = true;
+  callMenuTarget = null;
+}
+
+function syncCallMenu() {
+  for (const button of callMenu.querySelectorAll("button")) {
+    const on = (button.dataset.dir === "in") === callInbound;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-checked", on ? "true" : "false");
+  }
+}
+
+function openCallMenu(event) {
+  const hit = describeHit(hitTest());
+  const found = hit && hit.kind === "entity" ? byEntity.get(hit.id) : null;
+  if (!found || !found.box || !isCallable(found)) {
+    closeCallMenu();
+    return;
+  }
+  callMenuTarget = found.entity.id;
+  syncCallMenu();
+  callMenu.hidden = false;
+  hud.tag.style.display = "none";
+  const pad = 8;
+  callMenu.style.left = "0px";
+  callMenu.style.top = "0px";
+  const rect = callMenu.getBoundingClientRect();
+  let x = event.clientX;
+  let y = event.clientY;
+  if (x + rect.width + pad > window.innerWidth) x = window.innerWidth - rect.width - pad;
+  if (y + rect.height + pad > window.innerHeight) y = window.innerHeight - rect.height - pad;
+  callMenu.style.left = Math.max(pad, x) + "px";
+  callMenu.style.top = Math.max(pad, y) + "px";
+}
+
+// Pick a direction for the tower under the menu. The choice stays on until
+// the other option is picked, or the view is reset.
+function setCallDirection(inbound, id) {
+  callInbound = inbound;
+  closeCallMenu();
+  const found = byEntity.get(id);
+  if (!found || !found.box || !isCallable(found)) return;
+  if (focus && focus.entity.id === id) {
+    applyMode();
+    const cam = focusCamera();
+    flyTo(cam.pos, cam.target);
+    return;
+  }
+  if (selected && selected.kind === "entity" && selected.id === id) {
+    if (focus) dropFocus();
+    applyMode();
+    const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
+    const pose = framePose(points);
+    flyTo(pose.pos, pose.target);
+    return;
+  }
+  if (focus) dropFocus();
+  selectEntity(id);
+}
+
+callMenu.addEventListener("mousedown", (event) => event.preventDefault());
+callMenu.addEventListener("contextmenu", (event) => event.preventDefault());
+callMenu.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button || !callMenuTarget) return;
+  setCallDirection(button.dataset.dir === "in", callMenuTarget);
+});
+
 renderer.domElement.addEventListener("pointerdown", (event) => {
-  pointerDown = { x: event.clientX, y: event.clientY };
+  pointerDown = { x: event.clientX, y: event.clientY, button: event.button, menu: !callMenu.hidden };
   if (tourUI) tourUI.userTookOver();
   tween = null;
 });
@@ -2754,9 +2943,19 @@ renderer.domElement.addEventListener("pointermove", (event) => {
 });
 renderer.domElement.addEventListener("pointerup", (event) => {
   if (!pointerDown) return;
-  const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
+  const start = pointerDown;
+  const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   pointerDown = null;
-  if (moved > 5) return;
+  if (start.button === 2) {
+    if (moved <= 5) openCallMenu(event);
+    return;
+  }
+  if (moved > 5 || start.button !== 0) return;
+  // The press that dismisses the menu should not also select a tower.
+  if (start.menu) {
+    closeCallMenu();
+    return;
+  }
   activate(describeHit(hitTest()));
 });
 
@@ -2856,7 +3055,13 @@ function goToResult(item) {
 
 hud.search.addEventListener("input", onSearch);
 
-window.addEventListener("pointerdown", () => { noteActivity(); endIntro(); requestFrame(); });
+window.addEventListener("pointerdown", (event) => {
+  noteActivity();
+  endIntro();
+  requestFrame();
+  if (callMenu.hidden || callMenu.contains(event.target)) return;
+  closeCallMenu();
+});
 // A moving cursor is not activity: it redraws the hover it is over, but it must
 // not reset the idle clock, or the orbit and the animations would never settle.
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
@@ -2890,6 +3095,11 @@ window.addEventListener("keydown", (event) => {
   if (!typing && event.key === "Escape" && !hud.legend.hidden) {
     event.preventDefault();
     setLegend(false);
+    return;
+  }
+  if (!typing && event.key === "Escape" && !callMenu.hidden) {
+    event.preventDefault();
+    closeCallMenu();
     return;
   }
   const flyKey = flyToken(event.key);

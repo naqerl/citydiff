@@ -16,6 +16,7 @@ export const KEYBINDS = [
   { keys: ["drag"], does: "orbit" },
   { keys: ["scroll"], does: "zoom" },
   { keys: ["click"], does: "enters" },
+  { keys: ["right-click"], does: "calls / callers" },
   { keys: ["enter"], does: "opens a function" },
   { keys: ["o", "i"], does: "jump back / forward" },
   { keys: ["esc"], does: "back" },
