@@ -27,16 +27,22 @@ step, and a player bar has play/pause, prev/next and a step counter.
    start wide (overview of the change), then go package by package, then down
    to the functions and call paths that matter. 5–12 steps is a good length.
 
-3. **Validate** it. Every name is resolved against the real scene. Fix every
-   problem it prints; unknown names come with suggestions, ambiguous names
-   list the candidates to pick from.
+3. **Validate** it. This is the only check a tour needs: `citydiff tour
+   validate` is the **sole source of truth** for whether a tour is correct. It
+   resolves every name against the real scene the viewer builds, so a tour it
+   accepts needs no other validation — do not open the viewer, take a
+   screenshot, or drive a browser to confirm one. Fix every problem it prints;
+   unknown names come with suggestions, ambiguous names list the candidates to
+   pick from.
 
    ```sh
    citydiff tour validate -path REPO tour.json            # range comes from the script
    citydiff tour validate -path REPO tour.json -json      # the resolved script (scene ids, call paths)
    ```
 
-4. **Open** it. The server never exits, so run it in the background.
+4. **Open** it. This is for watching, not for checking: validation already
+   decided whether the script is correct. The server never exits, so run it in
+   the background.
 
    ```sh
    nohup citydiff tour serve -path REPO -addr 127.0.0.1:8787 tour.json > /tmp/citydiff-tour.log 2>&1 &
@@ -121,3 +127,6 @@ pauses autoplay. The × on the roadmap closes the tour.
   concrete hop, or use `highlight` on both ends instead.
 - Keep notes short (2–4 sentences). Put names in backticks.
 - Validate after every edit. Validate exits 1 on any problem.
+- `citydiff tour validate` is the sole source of truth. A tour it accepts is
+  correct, so never re-check one in a browser, a screenshot, or by reading the
+  viewer's JavaScript — `serve` is for watching a tour, not for validating it.
