@@ -285,7 +285,7 @@ go-git reads the trees at the two refs, so the working tree does not need to be 
 Parse a single file or a project tree (one-shot, prints JSON):
 
 \`\`\`sh
-$BIN_NAME -path /home/user/src/barse -json | jq '.[] | {path, entries: (.entries | length)}'
+$BIN_NAME -path /home/user/src/barse -json | jq '.[] | {path, decls: (.entries | length)}'
 \`\`\`
 
 Diff a commit range — the main use:
@@ -293,7 +293,7 @@ Diff a commit range — the main use:
 \`\`\`sh
 cd /home/user/src/barse
 $BIN_NAME -path . -range 6ca8b06..3aff57d -json > /tmp/diff.json
-jq '.[] | {path, entries: [.entries[] | {name, kind, calls}]}' /tmp/diff.json
+jq '[.[] | select(.action=="modified") | {path, changes: [.changes[] | {action, name: (.left.entry.name // .right.entry.name)}]}]' /tmp/diff.json
 \`\`\`
 
 Diff the last N commits of the current branch:
@@ -341,13 +341,38 @@ CGO is mandatory: \`CGO_ENABLED=0\` fails with *"build constraints exclude all G
 
 ## Reading the output
 
-- **\`entries[].kind\`** — the declaration kind (func, method, type, …).
-- **\`entries[].calls\`** — direct calls recorded on that declaration, in source order,
-  including calls inside nested function literals; a call whose target is outside the
+**Plain parse (\`-json\` without \`-range\`)** — one object per file:
+
+\`\`\`json
+[{"path": "pkg/x.go", "entries": [{"name": "...", "kind": "...", "calls": [...]}]}]
+\`\`\`
+
+**Diff (\`-range\`)** — one object per file, \`action\` = \`added\` / \`modified\` / \`deleted\`, and
+\`changes[]\` holds one entry per declaration change, each with its own \`action\` and a \`left\`
+and/or \`right\` side:
+
+\`\`\`json
+[{"path": "db/flashcard.sql.go", "action": "modified",
+  "changes": [{"action": "added",
+               "right": {"kind": "method",
+                         "entry": {"name": "ClearGenerationFinal",
+                                   "parameters": [{"name": "ctx", "type": "context.Context"}],
+                                   "returnArgs": [{"type": "error"}],
+                                   "calls": [{"expr": "q.db.ExecContext"}]},
+                         "bodyHash": "67a9fdd5…"}}]}]
+\`\`\`
+
+- \`entry.kind\` — the declaration kind (func, method, type, …).
+- \`entry.calls\` — direct calls recorded on that declaration, in source order, including
+  calls inside nested function literals. \`expr\` is the call expression; a \`ref\` is filled in
+  when the callee is declared inside the same snapshot. A call whose target lies outside the
   snapshot stays **unresolved** and is kept.
-- **body hashes** — the signal that a body changed beyond its call list.
+- \`bodyHash\` — the signal that a body changed beyond its call list.
 - Unresolved calls are not errors: the snapshot is the closed world for that parse, and the
   diff decides which calls matter.
+
+The viewer consumes the scene graph \`{module, root, diff, packages}\`; \`GET /scene.json\`
+returns exactly that for whatever the process was launched with.
 
 ## Repo map (for questions)
 
