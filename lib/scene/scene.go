@@ -584,8 +584,15 @@ func callsOf(entry lib.Entity) []lib.Call {
 	}
 }
 
+// normRecv is the type a method belongs to. A Rust trait impl owner
+// <T as Trait> belongs to T.
 func normRecv(name string) string {
 	name = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(name), "*"))
+	if strings.HasPrefix(name, "<") {
+		if i := strings.Index(name, " as "); i > 0 {
+			name = name[1:i]
+		}
+	}
 	if i := strings.IndexByte(name, '['); i >= 0 {
 		name = name[:i]
 	}
