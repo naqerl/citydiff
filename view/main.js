@@ -2444,7 +2444,7 @@ function selectEntity(id) {
   if (!found || !found.box) return;
   // A function is here for its calls: selecting one opens the call diff
   // straight away, on the calls side, instead of asking for a second click.
-  // Escape leaves the diff and stays on the node.
+  // Escape leaves the diff and the node with it.
   if (found.entity.kind === "function" || found.entity.kind === "method") {
     enterFocus(found);
     return;
@@ -2479,15 +2479,6 @@ function dropFocus() {
   clearGroup(focusGroup);
   selectArcs.visible = true;
   arcGroup.visible = mode === "overlay";
-}
-
-function exitFocus() {
-  const back = returnPose;
-  focus = null;
-  returnPose = null;
-  clearGroup(focusGroup);
-  applyMode();
-  if (back) flyTo(back.pos, back.target);
 }
 
 function circlePositions(segments) {
@@ -3592,12 +3583,11 @@ function goBack() {
   noteJump();
 }
 
+// Escape always lets go of the node: the call diff, the selection and the
+// package it sits in, and flies back to the whole city.
 function goBackInner() {
-  if (focus) {
-    exitFocus();
-    return;
-  }
-  const hadSelection = selected || entered || entitySubject || arcSubject;
+  const hadSelection = focus || selected || entered || entitySubject || arcSubject;
+  if (focus) dropFocus();
   entered = null;
   entitySubject = null;
   arcSubject = null;

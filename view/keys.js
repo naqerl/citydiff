@@ -20,7 +20,7 @@ export const KEYBINDS = [
   { keys: ["enter"], does: "opens a function" },
   { keys: ["E"], does: "open in nvim" },
   { keys: ["o", "i"], does: "jump back / forward" },
-  { keys: ["esc"], does: "back" },
+  { keys: ["esc"], does: "deselect, back to the city" },
   { keys: ["space"], does: "tour play / pause" },
   { keys: [",", "."], does: "tour previous / next" },
   { keys: ["?"], does: "legend" },

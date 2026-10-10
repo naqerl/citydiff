@@ -145,7 +145,7 @@ restored selection is flown to the way a click would.
 | `c` | show calls or callers |
 | `enter` | open a function |
 | `E` | open the selected node in nvim |
-| `esc` | go back |
+| `esc` | deselect and fly back to the city |
 | `o` `i` | jump back / forward through the selection history |
 | `b` | show / hide the left sidebar |
 | `t` | show / hide the tour sidebar |
