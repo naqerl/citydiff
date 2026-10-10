@@ -93,7 +93,9 @@ Two modes, toggled by the `Overview` / `Changes` buttons, `m`, or keys `1` and `
 - **Overview** — the city as it is: packages, their sub-packages, types and towers, and the
   cross-module dependency arcs between packages.
 - **Changes** — the same city with the diff laid on top: added and deleted towers appear,
-  changed ones take the change colour, and changed cross-module calls are drawn.
+  changed ones take the change colour, and the calls the range changed are drawn between the
+  towers that make them. Added and removed module dependencies stay at module level, drawn
+  between the packages.
 
 Selecting a package descends into it; selecting a tower opens its call path. The sidebar
 shows the change for whatever is selected, with the resolved calls in source order.

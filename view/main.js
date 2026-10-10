@@ -4,7 +4,6 @@ import { deletedFirst } from "./changes.js";
 import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
-import { packageCallEdges } from "./edges.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
 import { KEYBINDS } from "./keys.js";
@@ -1362,8 +1361,13 @@ function vary(id, color) {
 // The overview draws an arc for every import that was added or deleted, and
 // for every pair of modules whose calls changed while the import stayed.
 function buildArcs() {
-  // An edge runs from the centre of the top of the package the calls come
-  // from to the centre of the top of the package they go to.
+  // The calls the diff changed are drawn between the towers that make them:
+  // the same arcs a selection draws, for the whole range at once. The frame
+  // the selection would use is left alone — the overview is not a selection.
+  // This comes first because it starts from an empty group.
+  drawCallLinks(arcGroup, mergePairLinks(changedCallLinks()), false);
+  // Added and removed package dependencies stay module-level: they are edges
+  // between modules, not calls, and there is no tower to hang them on.
   const drawn = new Set();
   const draw = (from, to, change) => {
     const start = packageAnchor(from);
@@ -1381,21 +1385,20 @@ function buildArcs() {
       draw(pkg.id, dep.to, dep.change);
     }
   }
-  for (const edge of packageCallEdges(changedCalls())) {
-    if (!drawn.has(edge.from + "\0" + edge.to)) draw(edge.from, edge.to, edge.change);
-  }
 }
 
-function changedCalls() {
-  const calls = [];
+// Every call the diff changed, as a link between the two towers involved.
+function changedCallLinks() {
+  const links = [];
   for (const found of byEntity.values()) {
-    if (!found.box || !found.pkg) continue;
+    if (!found.box) continue;
     for (const link of entityLinks(found)) {
-      if (!link.step || !link.target.pkg) continue;
-      calls.push({ from: found.pkg.id, to: link.target.pkg.id, change: link.change });
+      const change = link.step && link.step.change;
+      if (!change || change === "same") continue;
+      links.push({ from: found, target: link.target, far: link.target, change, step: link.step });
     }
   }
-  return calls;
+  return links;
 }
 
 // The arc starts a little above the roof, so it is plainly leaving the
@@ -2254,7 +2257,7 @@ function drawEntityLinks(group, found) {
   }
 }
 
-function drawCallLinks(group, links) {
+function drawCallLinks(group, links, publish = true) {
   clearGroup(group);
   const points = [];
   const frame = [];
@@ -2273,8 +2276,10 @@ function drawCallLinks(group, links) {
     frame.push(...entityExtent(link.from), ...entityExtent(link.target));
     frame.push([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift * 0.75, (from[2] + to[2]) / 2]);
   }
-  linkPoints = points;
-  linkFrame = frame;
+  if (publish) {
+    linkPoints = points;
+    linkFrame = frame;
+  }
 }
 
 function changeColor(change) {
