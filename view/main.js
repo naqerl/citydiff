@@ -596,8 +596,8 @@ let updatePointScale = () => {};
 let viewInsets = { left: 0, right: 0, free: 1, width: 1, height: 1 };
 // The theme menu frames the city in the middle 70% and takes the keys.
 let skinPicking = false;
-// Applying a preview plays the circle. The camera and the sidebars stay put
-// until it finishes, so the still of the new theme lines up with the old one.
+// Applying a preview walks the lines outward. The camera and the sidebars stay
+// put until it finishes, so the still of the new theme lines up with the old one.
 let skinRevealing = false;
 
 function coverOf(selector) {
@@ -4016,6 +4016,47 @@ window.addEventListener("pointerdown", (event) => {
 // not reset the idle clock, or the orbit and the animations would never settle.
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
+// Registered first, and on the capture path, so it runs before the viewer's
+// own keys and before the tour. While the menu is open those keys do nothing.
+window.addEventListener("keydown", (event) => {
+  if (event.target === hud.search) return;
+  if (!skinPicking && !skinRevealing) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  requestFrame();
+  if (skinRevealing) return;
+  noteActivity();
+  endIntro();
+  if (!confirmEl.hidden) {
+    if (event.key === "Escape") confirmIgnoreSkin();
+    return;
+  }
+  const plain = !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey;
+  if (event.key === "Escape") {
+    clearSkinFind();
+    requestCloseSkinPanel();
+    return;
+  }
+  if (plain && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    moveSkinCursor(event.key === "ArrowRight" ? 1 : -1);
+    return;
+  }
+  if (event.key === "Enter" && !event.repeat) {
+    void acceptSkin();
+    return;
+  }
+  if (plain && event.key === "Backspace") {
+    if (!skinFind) return;
+    const rest = skinFind.slice(0, -1);
+    if (!rest) clearSkinFind();
+    else queueSkinFind(rest);
+    return;
+  }
+  if (plain && event.key.length === 1 && /[a-z0-9- ]/i.test(event.key)) {
+    queueSkinFind(skinFind + event.key.toLowerCase());
+  }
+}, true);
+
 window.addEventListener("keydown", (event) => {
   // The terminal owns the keyboard while it is up; esc closes an error.
   if (editorActive()) {
@@ -4036,42 +4077,6 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   const typing = event.target === hud.search;
-  // The circle owns the keyboard until the new theme covers the view.
-  if (!typing && skinRevealing) {
-    event.preventDefault();
-    return;
-  }
-  // The theme menu owns the keyboard: left and right walk themes, enter
-  // applies the one on screen, and nothing in the diff can be selected.
-  if (!typing && skinPicking) {
-    noteActivity();
-    endIntro();
-    if (!confirmEl.hidden) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        confirmIgnoreSkin();
-      }
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      requestCloseSkinPanel();
-      return;
-    }
-    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      event.preventDefault();
-      moveSkinCursor(event.key === "ArrowRight" ? 1 : -1);
-      return;
-    }
-    if (event.key === "Enter" && !event.repeat) {
-      event.preventDefault();
-      if (unsavedPreview()) saveSkin();
-      else closeSkinPanel();
-      return;
-    }
-    event.preventDefault();
-    return;
-  }
   const sidebarKey = !typing && event.key === "b" && !event.metaKey && !event.ctrlKey && !event.altKey;
   const helpKey = !typing && event.key === "?";
   if (!sidebarKey && !helpKey) {
@@ -4217,10 +4222,10 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 
 window.addEventListener("resize", resizeView);
 
-// Themes: what the /skin command opens. Arrows preview in place. Enter, and
-// Change on the question, apply the preview: the menu closes and a circle
-// grows from the centre, the new theme inside and the old one outside.
-// Closing any other way drops the preview.
+// Themes: what the /skin command opens. Arrows preview in place. Letters find
+// a theme by the start of its name. Enter, and Change on the question, apply
+// the preview: the two diagonal lines move out to the edges, the new theme
+// between them and the old one outside. Closing any other way drops the preview.
 
 const SKIN_KEY = "citydiff.skin";
 
@@ -4243,6 +4248,7 @@ const skinMenu = document.querySelector("#skin-menu");
 const skinPrev = document.querySelector("#skin-prev");
 const skinNext = document.querySelector("#skin-next");
 const skinName = document.querySelector("#skin-name");
+const skinCount = document.querySelector("#skin-count");
 const skinLinePrev = document.querySelector("#skin-line-prev");
 const skinLineNext = document.querySelector("#skin-line-next");
 let skinChoices = null;
@@ -4250,7 +4256,14 @@ let skinPreview = null;
 let skinPose = null;
 let skinGen = 0;
 let skinError = "";
+let skinFind = "";
+let skinFindTimer = 0;
+let skinFindGen = 0;
+let skinFindJob = null;
+let skinAccepting = false;
 const skinById = new Map();
+const SKIN_INSET = 0.15;
+const SKIN_FIND_MS = 400;
 
 async function loadSkinChoices() {
   if (skinChoices) return skinChoices;
@@ -4276,22 +4289,39 @@ async function cachedSkin(id) {
   return skin;
 }
 
-// The two dividers lean the same way, 12 degrees, and cross mid-height at
-// 15% and 85%. The gap between them stays 70% of the width.
-function layoutSkinFrame() {
-  if (!skinPicking) return;
+// The two dividers lean the same way, 12 degrees. At rest they cross
+// mid-height at 15% and 85%, so the gap between them is 70% of the width.
+// inset is that margin: 0 puts a line on each edge, and past 0 the line
+// has left the screen.
+function skinFrame(inset) {
   const w = skinMenu.clientWidth;
   const h = skinMenu.clientHeight;
-  if (w < 2 || h < 2) return;
   const slide = Math.tan(12 * Math.PI / 180) * h * 0.5;
-  const leftTop = w * 0.15 + slide;
-  const leftBot = w * 0.15 - slide;
-  const rightTop = w * 0.85 + slide;
-  const rightBot = w * 0.85 - slide;
+  const left = w * inset;
+  const right = w * (1 - inset);
+  return {
+    w, h, slide,
+    leftTop: left + slide,
+    leftBot: left - slide,
+    rightTop: right + slide,
+    rightBot: right - slide,
+  };
+}
+
+function paintSkinFrame(frame) {
+  const { w, h, leftTop, leftBot, rightTop, rightBot } = frame;
   skinPrev.style.clipPath = "polygon(0px 0px, " + leftTop + "px 0px, " + leftBot + "px " + h + "px, 0px " + h + "px)";
   skinNext.style.clipPath = "polygon(" + rightTop + "px 0px, " + w + "px 0px, " + w + "px " + h + "px, " + rightBot + "px " + h + "px)";
   placeSkinLine(skinLinePrev, leftTop, leftBot, h);
   placeSkinLine(skinLineNext, rightTop, rightBot, h);
+  return "polygon(" + leftTop + "px 0px, " + rightTop + "px 0px, " + rightBot + "px " + h + "px, " + leftBot + "px " + h + "px)";
+}
+
+function layoutSkinFrame() {
+  if (!skinPicking || skinRevealing) return;
+  const frame = skinFrame(SKIN_INSET);
+  if (frame.w < 2 || frame.h < 2) return;
+  paintSkinFrame(frame);
 }
 
 function placeSkinLine(line, x1, x2, h) {
@@ -4305,6 +4335,7 @@ function paintSkinMenu() {
   const id = skinPreview || storedSkin();
   const at = skinChoices ? skinChoices.indexOf(id) : -1;
   skinName.textContent = skinError || skinLabel(id);
+  skinCount.textContent = at >= 0 && skinChoices.length ? (at + 1) + "/" + skinChoices.length : "";
   const prev = at > 0 ? skinChoices[at - 1] : "";
   const next = at >= 0 && skinChoices && at < skinChoices.length - 1 ? skinChoices[at + 1] : "";
   paintWing(skinPrev, prev);
@@ -4313,6 +4344,7 @@ function paintSkinMenu() {
 
 async function paintWing(el, id) {
   el.dataset.skin = id || "";
+  el.style.transition = "";
   if (!id) {
     el.style.opacity = "0";
     el.style.pointerEvents = "none";
@@ -4361,7 +4393,7 @@ async function previewSkin(id) {
   paintSkinMenu();
 }
 
-// Drop the 450 ms page fade so the circle is the only transition. The class
+// Drop the 450 ms page fade so the lines are the only transition. The class
 // comes back after the new values are committed, or the background would ease
 // under the still.
 function snapPage(next) {
@@ -4375,8 +4407,8 @@ function snapPage(next) {
   }
 }
 
-// Paint a theme in one frame. The fade leaves colours mid-lerp, and the circle
-// needs a finished picture of each side.
+// Paint a theme in one frame. The fade leaves colours mid-lerp, and the lines
+// need a finished picture of each side.
 function showThemeNow(next) {
   if (!next) return;
   themeFade = null;
@@ -4395,7 +4427,8 @@ function showThemeNow(next) {
 }
 
 // The WebGL canvas is one theme at a time. A still of the new theme, clipped
-// to a growing circle, sits over the live city painted with the old one.
+// to the band between the two lines, sits over the live city painted with the
+// old one. Walking the lines outward uncovers the new theme.
 function snapshotView() {
   const src = renderer.domElement;
   if (!src.width || !src.height) return null;
@@ -4409,26 +4442,33 @@ function snapshotView() {
     if (!ctx) return null;
     ctx.drawImage(src, 0, 0);
     const rect = src.getBoundingClientRect();
-    const cx = window.innerWidth * 0.5 - rect.left;
-    const cy = window.innerHeight * 0.5 - rect.top;
-    snap.dataset.cx = String(cx);
-    snap.dataset.cy = String(cy);
-    snap.dataset.radius = String(Math.hypot(Math.max(cx, rect.width - cx), Math.max(cy, rect.height - cy)) + 2);
     snap.style.left = rect.left + "px";
     snap.style.top = rect.top + "px";
     snap.style.width = rect.width + "px";
     snap.style.height = rect.height + "px";
-    snap.style.clipPath = "circle(0px at " + cx + "px " + cy + "px)";
+    snap.style.clipPath = paintSkinFrame(skinFrame(SKIN_INSET));
     return snap;
   } catch {
     return null;
   }
 }
 
-function growCircle(snap) {
-  const cx = snap.dataset.cx;
-  const cy = snap.dataset.cy;
-  const radius = Number(snap.dataset.radius) || 0;
+function hideSkinWings() {
+  // The stylesheet fades a wing's opacity. Applying needs the old city
+  // outside the lines on the first frame, not a neighbour colour easing away.
+  for (const wing of [skinPrev, skinNext]) {
+    wing.style.transition = "none";
+    wing.style.opacity = "0";
+    wing.style.pointerEvents = "none";
+  }
+}
+
+// inset runs from the resting 15% out past the edges, so the last frame has
+// both lines off the screen and the still covers the view.
+function spreadLines(snap) {
+  const start = SKIN_INSET;
+  const wide = skinFrame(0);
+  const end = wide.w > 0 ? -(wide.slide + 4) / wide.w : -0.2;
   const t0 = performance.now();
   return new Promise((resolve) => {
     const step = (now) => {
@@ -4438,7 +4478,7 @@ function growCircle(snap) {
       }
       const k = Math.min(1, (now - t0) / THEME_REVEAL_MS);
       const eased = 1 - (1 - k) * (1 - k) * (1 - k);
-      snap.style.clipPath = "circle(" + (radius * eased).toFixed(1) + "px at " + cx + "px " + cy + "px)";
+      snap.style.clipPath = paintSkinFrame(skinFrame(start + (end - start) * eased));
       if (k < 1) requestAnimationFrame(step);
       else resolve();
     };
@@ -4446,8 +4486,8 @@ function growCircle(snap) {
   });
 }
 
-// Enter and Change both come through here. Arrows never do: a preview is the
-// fade, and the circle is the moment the preview becomes the saved theme.
+// Enter and Change both come through here. Arrows and letters never do: a
+// preview is the fade, and the lines leaving the screen is the apply.
 async function saveSkin() {
   if (skinRevealing) return;
   if (!skinPreview || skinPreview === storedSkin()) {
@@ -4475,10 +4515,10 @@ async function saveSkin() {
       snap = snapshotView();
       if (snap) showThemeNow(prev);
     }
-    skinMenu.hidden = true;
+    hideSkinWings();
     if (snap) {
       document.body.appendChild(snap);
-      await growCircle(snap);
+      await spreadLines(snap);
       showThemeNow(next);
       snap.remove();
       snap = null;
@@ -4506,14 +4546,88 @@ async function saveSkin() {
 // that way. Each step previews what it lands on.
 function moveSkinCursor(step) {
   if (skinRevealing || !skinChoices.length) return;
+  clearSkinFind();
   const at = skinChoices.indexOf(skinPreview || storedSkin());
   const next = (at < 0 ? 0 : at) + step;
   if (next < 0 || next >= skinChoices.length) return;
   previewSkin(skinChoices[next]);
 }
 
+// Letters find a theme by the start of its id or its displayed name.
+// "to" matches tokyo-night. The pause lets a second letter arrive before
+// the city recolours, so a word does not step through every prefix.
+function clearSkinFind() {
+  clearTimeout(skinFindTimer);
+  skinFindTimer = 0;
+  skinFind = "";
+  skinFindGen++;
+  skinGen++;
+}
+
+function skinFindMatch(query) {
+  const q = String(query || "").toLowerCase();
+  if (!q.trim() || !skinChoices) return "";
+  const fold = (value) => value.toLowerCase().replace(/[\s_-]+/g, "");
+  const qFold = fold(q);
+  return skinChoices.find((id) => {
+    if (id.toLowerCase().startsWith(q)) return true;
+    const label = skinLabel(id).toLowerCase();
+    return label.startsWith(q) || fold(id).startsWith(qFold) || fold(label).startsWith(qFold);
+  }) || "";
+}
+
+function queueSkinFind(text) {
+  skinFind = text;
+  clearTimeout(skinFindTimer);
+  // A letter replaces a jump that has not landed yet. The pause starts over.
+  skinFindGen++;
+  skinGen++;
+  skinFindTimer = setTimeout(() => {
+    skinFindJob = applySkinFind();
+  }, SKIN_FIND_MS);
+}
+
+async function applySkinFind() {
+  const gen = skinFindGen;
+  skinFindTimer = 0;
+  const query = skinFind;
+  skinFind = "";
+  if (!query || gen !== skinFindGen || skinRevealing || !skinPicking) return;
+  const match = skinFindMatch(query);
+  if (!match || match === (skinPreview || storedSkin())) return;
+  await previewSkin(match);
+}
+
+async function commitSkinFind() {
+  clearTimeout(skinFindTimer);
+  skinFindTimer = 0;
+  if (skinFindJob) {
+    const job = skinFindJob;
+    skinFindJob = null;
+    await job;
+  }
+  if (!skinFind) return;
+  skinFindJob = applySkinFind();
+  const job = skinFindJob;
+  skinFindJob = null;
+  await job;
+}
+
+async function acceptSkin() {
+  if (skinAccepting || skinRevealing) return;
+  skinAccepting = true;
+  try {
+    await commitSkinFind();
+    if (unsavedPreview()) await saveSkin();
+    else closeSkinPanel();
+  } finally {
+    skinAccepting = false;
+  }
+}
+
 async function openSkinPanel() {
   if (skinRevealing) return;
+  clearSkinFind();
   closeSearch();
   hud.search.blur();
   setLegend(false);
@@ -4543,6 +4657,7 @@ async function openSkinPanel() {
 
 async function closeSkinPanel() {
   if (!skinPicking || skinRevealing) return;
+  clearSkinFind();
   const preview = skinPreview;
   skinPreview = null;
   skinPicking = false;

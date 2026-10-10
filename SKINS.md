@@ -34,23 +34,29 @@ theme menu over the city. `↑` / `↓` and `tab` / `shift-tab` walk the complet
 
 The left sidebar hides while the menu is open, and clicks no longer select anything. Two
 diagonal lines sit 15% in from each side. The whole city is framed in the middle, between
-them, and the theme name sits at the bottom of that middle. A side band is the colour of
-the theme in that direction, under a transparent haze. The first theme has no left band,
-and the last theme has no right band.
+them, and the theme name sits at the bottom of that middle. The top left corner counts
+where this theme sits, as in 6/10. A side band is the colour of the theme in that
+direction, under a transparent haze. The first theme has no left band, and the last theme
+has no right band. The viewer's other keys do nothing while the menu is open.
 
 - **`←` and `→`** preview the previous and next theme. A click on a side band does the
-  same. The city recolours in place, in a 450 ms fade, and the bands and the name follow.
-  The menu holds the camera: it frames the city while it is open, and puts the camera back
-  when it closes. The selection, the focus, the mode and an open tour stay where they are.
-- **Enter** applies the previewed theme. The menu closes, and a circle grows from the
-  centre of the screen: inside the circle is the new theme, outside it is the old one,
-  and the new theme covers the view as the circle reaches the corners. Then the sidebar
-  and the camera come back. Until then, nothing is remembered.
+  same. The city recolours in place, in a 450 ms fade, and the bands, the name and the
+  count follow. The menu holds the camera: it frames the city while it is open, and puts
+  the camera back when it closes. The selection, the focus, the mode and an open tour
+  stay where they are.
+- **Letters** find a theme by the start of its name. `d` moves to the first theme that
+  starts with d. A short pause waits for another letter, so `da` does not stop on `d`
+  and then jump again. The move is the same preview as an arrow.
+- **Enter** applies the previewed theme. The two diagonal lines move out to the edges of
+  the screen: between them is the new theme, outside them is the old one, and the new
+  theme covers the view as the lines leave. Then the sidebar and the camera come back.
+  Until then, nothing is remembered.
 - **Closing asks when there is something to lose.** With a preview that was never saved,
-  `esc` opens a question: **Change** applies the previewed theme with that same circle,
-  and **Ignore** drops it and puts the saved theme back, with no circle. `esc` on the
-  question is Ignore. With nothing new previewed, `esc` just closes. A browser that asks
-  for reduced motion applies the theme with no circle.
+  `esc` opens a question: **Change** applies the previewed theme with that same movement
+  of the lines, and **Ignore** drops it and puts the saved theme back, with the lines
+  staying where they are. `esc` on the question is Ignore. With nothing new previewed,
+  `esc` just closes. A browser that asks for reduced motion applies the theme with the
+  lines unmoved.
 
 `/skin` also works while the viewer serves a tour (`citydiff tour serve`). The tour sidebar
 hides for the menu and comes back when the menu closes. The theme outlives the tour.

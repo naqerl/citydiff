@@ -528,8 +528,20 @@
       text-shadow: 0 0 16px var(--bg), 0 1px 2px var(--bg);
       pointer-events: none;
     }
-    /* The apply still. clip-path grows from the centre: inside is the new
-       theme, and the live city behind it is the one being replaced. */
+    #skin-count {
+      position: absolute;
+      z-index: 2;
+      top: 22px;
+      left: 24px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--fg);
+      text-shadow: 0 0 16px var(--bg), 0 1px 2px var(--bg);
+      pointer-events: none;
+    }
+    /* The apply still. The clip is the band between the two diagonal lines:
+       inside is the new theme, and the live city behind it is the old one. */
     #skin-reveal {
       position: fixed;
       z-index: 4;
@@ -753,6 +765,7 @@
       <line id="skin-line-prev"></line>
       <line id="skin-line-next"></line>
     </svg>
+    <div id="skin-count"></div>
     <div id="skin-name"></div>
   </div>
   <div id="tag"></div>
