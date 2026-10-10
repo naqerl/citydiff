@@ -227,6 +227,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     loadURL,
     loadText,
     close,
+    setOpen,
     // A drag or click in the city takes over from autoplay.
     userTookOver() {
       if (player && player.state.playing) player.pause();

@@ -5,7 +5,7 @@ import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layo
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
-import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
+import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf } from "./viewport.js";
 import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
 import { KEYBINDS, birdAction, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
@@ -541,9 +541,67 @@ function attachMarquee(host, clip) {
 
 function setSide(open) {
   hud.side.classList.toggle("is-collapsed", !open);
+  if (open) sheetPane = "side";
+  syncSheet();
   requestAnimationFrame(resizeView);
   syncURL();
 }
+
+// A phone gets one sheet along the bottom in place of the two sidebars.
+const narrow = window.matchMedia("(max-width: 720px)");
+
+// The phone's sheet shows one sidebar at a time, picked by the tabs under it:
+// the city's own panel, the tour, and the theme menu. A sidebar that opens
+// takes the sheet; tapping the tab that is showing folds it away.
+const sheetTabs = {
+  side: document.querySelector("#tab-side"),
+  tour: document.querySelector("#tab-tour"),
+  theme: document.querySelector("#tab-theme"),
+};
+let sheetPane = "side";
+let tourWasOpen = false;
+
+function tourOpen() {
+  const tour = document.querySelector("#tour-side");
+  return !tour.hidden && !tour.classList.contains("is-collapsed");
+}
+
+function syncSheet() {
+  const hasTour = !document.querySelector("#tour-side").hidden;
+  const open = tourOpen();
+  if (open && !tourWasOpen) sheetPane = "tour";
+  tourWasOpen = open;
+  if (!hasTour && sheetPane === "tour") sheetPane = "side";
+  document.body.classList.toggle("sheet-tour", sheetPane === "tour");
+  sheetTabs.tour.hidden = !hasTour;
+  const sideShown = sheetPane === "side" && !hud.side.classList.contains("is-collapsed");
+  const tourShown = sheetPane === "tour" && open;
+  sheetTabs.side.classList.toggle("on", sideShown);
+  sheetTabs.tour.classList.toggle("on", tourShown);
+  sheetTabs.side.setAttribute("aria-pressed", String(sideShown));
+  sheetTabs.tour.setAttribute("aria-pressed", String(tourShown));
+}
+
+sheetTabs.side.addEventListener("click", () => {
+  setSide(sheetPane !== "side" || hud.side.classList.contains("is-collapsed"));
+});
+sheetTabs.tour.addEventListener("click", () => {
+  if (!tourUI) return;
+  if (sheetPane === "tour" && tourOpen()) {
+    tourUI.setOpen(false);
+    return;
+  }
+  sheetPane = "tour";
+  tourWasOpen = true;
+  tourUI.setOpen(true);
+});
+sheetTabs.theme.addEventListener("click", () => openSkinPanel());
+narrow.addEventListener("change", () => {
+  closeSearch();
+  syncSheet();
+  requestAnimationFrame(resizeView);
+});
+syncSheet();
 let arcSubject = null;
 let entitySubject = null;
 // Show calls draws what the node calls, particles leaving it. Show callers
@@ -634,7 +692,7 @@ const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 // resize hook is assigned there; until then resizing has nothing to rescale.
 let updatePointScale = () => {};
 
-let viewInsets = { left: 0, right: 0, free: 1, width: 1, height: 1 };
+let viewInsets = { left: 0, right: 0, bottom: 0, free: 1, width: 1, height: 1, fov: 42 };
 // The theme menu frames the city in the middle 70% and takes the keys.
 let skinPicking = false;
 // Applying a preview walks the lines outward. The camera and the sidebars stay
@@ -647,10 +705,24 @@ function coverOf(selector) {
   return el.getBoundingClientRect().width;
 }
 
+// How much of the view the bottom sheet and its tabs cover, on a phone.
+function coverBelow() {
+  if (!narrow.matches || skinPicking) return 0;
+  const view = viewEl.getBoundingClientRect();
+  let edge = view.bottom;
+  for (const selector of ["#sheet-tabs", "#side", "#tour-side"]) {
+    const el = document.querySelector(selector);
+    if (!el || el.hidden) continue;
+    const box = el.getBoundingClientRect();
+    if (box.height >= 1) edge = Math.min(edge, box.top);
+  }
+  return Math.max(0, view.bottom - edge);
+}
+
 // The camera fit for a box, in the free area between the sidebars.
 function fitTo(points, dir = FIT_DIR) {
   const pose = fitPose(boxOf(points), dir, {
-    fov: camera.fov,
+    fov: viewInsets.fov,
     width: viewInsets.width,
     height: viewInsets.height,
     left: viewInsets.left,
@@ -672,17 +744,24 @@ function resizeView() {
   // the middle of the free area, and fits use only its width.
   // The theme menu uses the middle 70%. Otherwise the tour takes the right edge.
   const band = skinPicking ? w * 0.15 : 0;
-  const right = skinPicking ? band : coverOf("#tour-side");
-  const left = skinPicking ? band : coverOf("#side");
+  // On a phone the sheet covers the bottom instead, and the city sits above it.
+  const side = !skinPicking && !narrow.matches;
+  const right = skinPicking ? band : side ? coverOf("#tour-side") : 0;
+  const left = skinPicking ? band : side ? coverOf("#side") : 0;
+  const bottom = Math.min(coverBelow(), Math.max(0, h - 160));
   viewInsets = insets(w, left, right);
   viewInsets.width = w;
-  viewInsets.height = h;
+  viewInsets.height = h - bottom;
+  viewInsets.bottom = bottom;
+  viewInsets.fov = freeFov(camera.fov, h, bottom);
   // The loading bar centres in the same free area the camera frames: the full
-  // stage spans the window, and the sidebars cover its edges.
+  // stage spans the window, and the sidebars (or the bottom sheet) cover its edges.
   loadUI.root.style.paddingLeft = viewInsets.left + "px";
   loadUI.root.style.paddingRight = viewInsets.right + "px";
+  loadUI.root.style.paddingBottom = bottom + "px";
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
-  if (offset) camera.setViewOffset(w, h, offset, 0, w, h);
+  const lift = viewOffsetY(bottom);
+  if (offset || lift) camera.setViewOffset(w, h, offset, lift, w, h);
   else camera.clearViewOffset();
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
@@ -987,6 +1066,7 @@ async function main() {
     apply: applyTourStep,
     clear: clearTour,
     layout: () => {
+      syncSheet();
       requestAnimationFrame(resizeView);
       if (!document.querySelector("#tour-side").hidden) tourSideWanted = true;
       syncURL();
@@ -1305,8 +1385,8 @@ function frameCity(margin = 0.92) {
   for (const ext of laid.externals) {
     points.push({ x: ext.x, y: ext.y + ext.h, z: ext.z });
   }
-  const aspect = (camera.aspect > 0.05 ? camera.aspect : 1) * (viewInsets.free / Math.max(1, viewInsets.width));
-  const dist = fitDistance(points, look, dir, camera.fov, aspect, margin);
+  const aspect = (viewInsets.width / Math.max(1, viewInsets.height)) * (viewInsets.free / Math.max(1, viewInsets.width));
+  const dist = fitDistance(points, look, dir, viewInsets.fov, aspect, margin);
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   return {
     pos: new THREE.Vector3(look.x + (dir.x / len) * dist, look.y + (dir.y / len) * dist, look.z + (dir.z / len) * dist),
@@ -4275,9 +4355,13 @@ function setCallDirection(inbound, node) {
 // Right-click has no menu of its own: the Calls / Callers buttons pick the
 // direction. The canvas still swallows the browser's context menu.
 renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
+// A tap is one finger that went down and came up in place. A second finger
+// makes it a pinch or a pan, and nothing it lifts off is a tap.
+const touching = new Set();
 renderer.domElement.addEventListener("pointerdown", (event) => {
+  touching.add(event.pointerId);
   if (skinPicking) return;
-  pointerDown = { x: event.clientX, y: event.clientY, button: event.button };
+  pointerDown = touching.size > 1 ? null : { x: event.clientX, y: event.clientY, button: event.button, touch: event.pointerType !== "mouse" };
   if (tourUI) tourUI.userTookOver();
   tween = null;
 });
@@ -4288,13 +4372,19 @@ renderer.domElement.addEventListener("pointermove", (event) => {
   pointerDirty = true;
   requestFrame();
 });
+renderer.domElement.addEventListener("pointercancel", (event) => {
+  touching.delete(event.pointerId);
+  pointerDown = null;
+});
 renderer.domElement.addEventListener("pointerup", (event) => {
+  touching.delete(event.pointerId);
   if (!pointerDown) return;
   const start = pointerDown;
   const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   pointerDown = null;
   if (skinPicking) return;
-  if (moved > 5 || start.button !== 0) return;
+  // A fingertip wobbles more than a mouse does.
+  if (moved > (start.touch ? 10 : 5) || start.button !== 0) return;
   if (bird.on) return;
   activate(describeHit(hitTest()));
 });
@@ -4361,6 +4451,8 @@ function placeResults() {
   list.style.left = box.left + "px";
   list.style.top = (box.bottom + 2) + "px";
   list.style.width = box.width + "px";
+  // On a phone the box sits low in the sheet: the list stops at the screen's edge.
+  list.style.maxHeight = Math.max(120, Math.min(280, window.innerHeight - box.bottom - 10)) + "px";
 }
 
 // The box finds nodes. A value that starts with a slash is a command: the
@@ -5204,8 +5296,43 @@ function requestCloseSkinPanel() {
   closeSkinPanel();
 }
 
-skinPrev.addEventListener("click", () => moveSkinCursor(-1));
-skinNext.addEventListener("click", () => moveSkinCursor(1));
+// On a touch screen the themes are a strip: a swipe to the left brings the
+// next one in from the right, and a swipe to the right the previous one. The
+// window hears it on the capture path, so the wings and the city behind the
+// menu do not have to. A swipe that ends on a wing is not also a tap on it.
+let skinSwipe = null;
+let skinSwiped = 0;
+const SKIN_SWIPE_PX = 40;
+
+window.addEventListener("pointerdown", (event) => {
+  if (!skinPicking || skinRevealing || event.pointerType === "mouse" || !confirmEl.hidden) return;
+  if (event.target.closest && event.target.closest("#skin-actions")) return;
+  skinSwipe = { id: event.pointerId, x: event.clientX, y: event.clientY };
+}, true);
+window.addEventListener("pointercancel", () => { skinSwipe = null; }, true);
+window.addEventListener("pointerup", (event) => {
+  const start = skinSwipe;
+  if (!start || start.id !== event.pointerId) return;
+  skinSwipe = null;
+  if (!skinPicking) return;
+  const dx = event.clientX - start.x;
+  const dy = event.clientY - start.y;
+  if (Math.abs(dx) < SKIN_SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  skinSwiped = performance.now();
+  noteActivity();
+  moveSkinCursor(dx < 0 ? 1 : -1);
+  requestFrame();
+}, true);
+
+function swipedJustNow() {
+  return performance.now() - skinSwiped < 400;
+}
+
+skinPrev.addEventListener("click", () => { if (!swipedJustNow()) moveSkinCursor(-1); });
+skinNext.addEventListener("click", () => { if (!swipedJustNow()) moveSkinCursor(1); });
+// Without a keyboard there is no Enter or Escape: these two stand in for them.
+document.querySelector("#skin-apply").addEventListener("click", () => { void acceptSkin(); });
+document.querySelector("#skin-cancel").addEventListener("click", () => closeSkinPanel());
 confirmChange.addEventListener("click", confirmChangeSkin);
 confirmIgnore.addEventListener("click", confirmIgnoreSkin);
 confirmEl.addEventListener("click", (event) => { if (event.target === confirmEl) confirmIgnoreSkin(); });
@@ -5407,7 +5534,7 @@ function enterBird() {
   birdHide();
   const b = laid.bounds;
   const box = { min: [b.minX, 0, b.minZ], max: [b.maxX, b.maxY * 0.3, b.maxZ] };
-  const pose = fitPose(box, [0, 1, 0.0005], { fov: camera.fov, width: viewInsets.width, height: viewInsets.height, left: viewInsets.left, right: viewInsets.right, fill: 0.94 });
+  const pose = fitPose(box, [0, 1, 0.0005], { fov: viewInsets.fov, width: viewInsets.width, height: viewInsets.height, left: viewInsets.left, right: viewInsets.right, fill: 0.94 });
   controls.maxDistance = Math.max(controls.maxDistance, pose.dist * 1.6);
   controls.enableRotate = false;
   flyTo(new THREE.Vector3(...pose.pos), new THREE.Vector3(...pose.target));

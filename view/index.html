@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>citydiff</title>
   <style>
     :root {
@@ -128,7 +128,7 @@
     @media (prefers-reduced-motion: reduce) {
       html.theme-ready { transition: none; }
     }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; overscroll-behavior: none; }
     body { font: 13px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
     #detail, #results, .legend-card, #diff-body {
       scrollbar-width: thin;
@@ -150,7 +150,7 @@
     .legend-card::-webkit-scrollbar-track,
     #diff-body::-webkit-scrollbar-track { background: transparent; }
     button, input { font: inherit; color: inherit; }
-    button { cursor: pointer; }
+    button { cursor: pointer; touch-action: manipulation; }
     #app { height: 100%; background: var(--bg); }
     #work { height: 100%; min-height: 0; display: flex; position: relative; }
     #side {
@@ -562,6 +562,9 @@
       pointer-events: none;
     }
     #skin-menu:focus, #skin-menu:focus-visible { outline: none; }
+    /* A swipe across the menu is a theme step, never a page scroll. */
+    #skin-menu * { touch-action: none; }
+    #skin-actions { display: none; }
     .skin-wing {
       position: absolute;
       inset: 0;
@@ -721,6 +724,104 @@
       pointer-events: none;
     }
     #detail .refs { margin: 8px 0 6px; }
+    #sheet-tabs { display: none; }
+
+    /* Touch screens without a keyboard get the theme menu's Apply and Cancel,
+       and the swipe hint, in place of Enter, Escape and the arrows. */
+    @media (max-width: 720px), (hover: none) {
+      #skin-actions {
+        position: absolute;
+        z-index: 3;
+        left: 16px;
+        right: 16px;
+        bottom: calc(16px + env(safe-area-inset-bottom));
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        pointer-events: auto;
+      }
+      #skin-actions button {
+        flex: none;
+        min-width: 92px;
+        padding: 11px 14px;
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--line-strong);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      #skin-actions button.primary { border-color: var(--fg); }
+      #skin-hint { flex: 1; text-align: center; color: var(--fg); font-size: 12px; text-shadow: 0 0 12px var(--bg); }
+      #skin-name { bottom: calc(84px + env(safe-area-inset-bottom)); left: 8%; right: 8%; }
+    }
+
+    /* A phone: the two sidebars become one sheet along the bottom, and the
+       tabs under it pick which one it shows (see syncSheet in main.js). */
+    @media (max-width: 720px) {
+      #sheet-tabs {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 6;
+        display: flex;
+        height: 48px;
+        padding-bottom: env(safe-area-inset-bottom);
+        background: var(--panel);
+        border-top: 1px solid var(--edge);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      #sheet-tabs button {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0;
+        background: transparent;
+        color: var(--muted);
+        border: 0;
+        border-right: 1px solid var(--line);
+        letter-spacing: 0.08em;
+      }
+      #sheet-tabs button:last-child { border-right: 0; }
+      #sheet-tabs button[hidden] { display: none; }
+      #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 2px 0 var(--accent); }
+      body.skin-open #sheet-tabs { display: none; }
+
+      #side, #tour-side {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: calc(48px + env(safe-area-inset-bottom));
+        width: auto;
+        height: 55vh;
+        height: min(55dvh, 520px);
+        border-left: 0;
+        border-right: 0;
+        border-top: 1px solid var(--edge);
+      }
+      #side.is-collapsed, #tour-side.is-collapsed,
+      body.sheet-tour #side, body:not(.sheet-tour) #tour-side { display: none; }
+      /* The fold arrows point down, toward the tabs the sheet folds into. */
+      #side-toggle svg { transform: rotate(-90deg); }
+      #tour-toggle svg { transform: rotate(90deg); }
+      #side-toggle, #side-help, #tour-toggle, #tour-close { width: 34px; height: 34px; }
+      .modes button { padding: 10px 8px; }
+      /* 16px keeps iOS from zooming the page when the box takes focus. */
+      #search { font-size: 16px; padding: 9px 10px; }
+      .section-head { padding: 11px 14px; }
+      #detail button.row, #detail .section-body button.row { padding-top: 9px; padding-bottom: 9px; }
+      #results button { padding: 11px 10px; }
+      #tour-steps button { padding: 9px 8px; }
+      #tour-controls { gap: 8px; }
+      #tour-controls button { width: 44px; height: 38px; }
+      #tour-keys { display: none; }
+      #diff, #editor { inset: 0; }
+      .legend-card { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 14px; }
+      .keys { grid-template-columns: 1fr; }
+    }
   </style>
   <script type="importmap">
   {
@@ -808,6 +909,11 @@
       </aside>
       <div id="tour-drop" hidden>Drop a tour script</div>
       <div id="results" hidden></div>
+      <nav id="sheet-tabs" aria-label="Panels">
+        <button id="tab-side" type="button" aria-pressed="true">city</button>
+        <button id="tab-tour" type="button" aria-pressed="false" hidden>tour</button>
+        <button id="tab-theme" type="button">theme</button>
+      </nav>
       <div id="stage">
         <div id="view"></div>
         <div id="load" hidden role="progressbar" aria-label="Loading the city" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -828,6 +934,11 @@
     </svg>
     <div id="skin-count"></div>
     <div id="skin-name"></div>
+    <div id="skin-actions">
+      <button type="button" id="skin-cancel">Cancel</button>
+      <span id="skin-hint">‹ swipe ›</span>
+      <button type="button" id="skin-apply" class="primary">Apply</button>
+    </div>
   </div>
   <div id="tag"></div>
   <div id="confirm" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
