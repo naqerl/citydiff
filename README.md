@@ -91,7 +91,6 @@ The same viewer runs in Docker. From this repository, `make run-docker` builds
 the image, mounts the project at `/work`, and diffs the two latest commits:
 
 ```sh
-make run-docker
 make run-docker DOCKER_PATH=~/src/myrepo DOCKER_RANGE=main~5..main
 ```
 
