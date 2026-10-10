@@ -2,33 +2,12 @@
 
 ![thumb](https://s3.naqerl.com/public/demo/citydiff.png)
 
-**A 3D diff for Go, Rust and Swift.** Read one change from the outside inward, at three levels:
-
-1. **Cross-module dependencies** — which packages gained or lost an import edge.
-2. **Entity relationships** — which declarations changed, and how.
-3. **Call paths** — which calls a function or method gained, lost, or kept, in source order.
-
-The outer level *places* the change. The inner level shows what the code *does* differently.
-All three are views of the same diff.
-
-```mermaid
-flowchart TB
-    change(["one change"])
-
-    change --> modules["1 · Cross-module dependencies<br/>which packages gained or lost an import edge"]
-    modules --> entities["2 · Entity relationships<br/>which declarations changed, and how"]
-    entities --> paths["3 · Call paths<br/>which calls a function gained, lost or kept, in source order"]
-
-    modules -.->|drawn as| city["packages as buildings,<br/>imports as arcs"]
-    entities -.->|drawn as| towers["types as pale blocks,<br/>functions as towers sized by body"]
-    paths -.->|drawn as| arcs["arcs from caller top<br/>to callee top, in order"]
-```
+**Higher order** diff tool that helps humans to control architecture and agents to generate interactive tours over their changes.
 
 The city is the code. Packages are buildings; a package's sub-packages stand on its roof.
 A **type** is a wide pale block holding its methods. A **function** or **method** is a tower
-whose **height is its body size**. A **call** is one smooth arc from the top of the caller to
-the top of what it calls. Colour marks change: green is added, red is deleted, yellow is
-modified; arcs that stayed are cyan.
+whose **height is its body size**. A **call** is an arc from the top of the caller to
+the top of what it calls.
 
 ## Install
 
