@@ -435,6 +435,13 @@ const hud = {
   logo: document.querySelector("#side-logo"),
 };
 
+const loadUI = {
+  root: document.querySelector("#load"),
+  label: document.querySelector("#load-label"),
+  percent: document.querySelector("#load-percent"),
+  bar: document.querySelector("#load-bar"),
+};
+
 let sceneDoc = null;
 let laid = null;
 let mode = "overview";
@@ -643,6 +650,10 @@ function resizeView() {
   viewInsets = insets(w, left, right);
   viewInsets.width = w;
   viewInsets.height = h;
+  // The loading bar centres in the same free area the camera frames: the full
+  // stage spans the window, and the sidebars cover its edges.
+  loadUI.root.style.paddingLeft = viewInsets.left + "px";
+  loadUI.root.style.paddingRight = viewInsets.right + "px";
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
   if (offset) camera.setViewOffset(w, h, offset, 0, w, h);
   else camera.clearViewOffset();
@@ -796,13 +807,6 @@ function tintEmissive(material) {
     );
   };
 }
-
-const loadUI = {
-  root: document.querySelector("#load"),
-  label: document.querySelector("#load-label"),
-  percent: document.querySelector("#load-percent"),
-  bar: document.querySelector("#load-bar"),
-};
 
 // The loading bar owns fixed bands of the pipeline, so a stage reports its own
 // fraction and the bar still adds up to one. theme 0–5%, scene 5–30%,
