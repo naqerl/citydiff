@@ -3269,7 +3269,8 @@ function entityRow(entity) {
   const name = clipText(entityLabel(entity));
   button.append(name);
   attachMarquee(button, name);
-  const mark = changeMark(entity.change, entity.part);
+  const named = entity.kind === "function" || entity.kind === "method";
+  const mark = changeMark(entity.change, entity.part, named);
   if (mark) {
     mark.classList.add("mark");
     button.append(mark);
@@ -3474,6 +3475,17 @@ function sizeText(entity) {
   return "";
 }
 
+// changePart is the word for what changed in a function or method: the mark
+// says "~ body" rather than leaving a colour to be decoded, and the tooltip
+// says the whole sentence. A declaration that is not callable has no parts.
+function changePart(change, part, named) {
+  if (!named || change !== "modified") return "";
+  if (part === "body") return "body";
+  if (part === "signature") return "signature";
+  if (part === "both") return "both";
+  return "";
+}
+
 function modifiedClass(part) {
   if (part === "body" || part === "both") return "modified " + part;
   return "modified";
@@ -3514,7 +3526,8 @@ function changeMark(change, part, named) {
   } else {
     return null;
   }
-  span.textContent = CHANGE_GLYPH[change] || "~";
+  const word = changePart(change, part, named);
+  span.textContent = (CHANGE_GLYPH[change] || "~") + (word ? " " + word : "");
   span.title = changeWord(change, part, named);
   return span;
 }
