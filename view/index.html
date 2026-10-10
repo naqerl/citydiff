@@ -339,6 +339,34 @@
       z-index: 6;
     }
     #legend[hidden] { display: none; }
+    #confirm {
+      position: fixed;
+      inset: 0;
+      background: var(--scrim);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 7;
+    }
+    #confirm[hidden] { display: none; }
+    #confirm .card {
+      width: min(420px, calc(100vw - 48px));
+      background: var(--bg);
+      border: 1px solid var(--line-strong);
+      padding: 16px 18px 18px;
+    }
+    #confirm h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    #confirm p { margin: 0 0 14px; color: var(--muted); }
+    #confirm .actions { display: flex; gap: 8px; }
+    #confirm button {
+      flex: 1;
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--line-strong);
+      padding: 8px 10px;
+    }
+    #confirm button:hover, #confirm button:focus-visible { background: var(--on); outline: none; }
+    #confirm button.primary { border-color: var(--fg); }
     .legend-card {
       width: min(680px, calc(100vw - 48px));
       max-height: min(82vh, 760px);
@@ -675,6 +703,16 @@
     </div>
   </div>
   <div id="tag"></div>
+  <div id="confirm" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="card">
+      <h2 id="confirm-title">Keep this theme?</h2>
+      <p id="confirm-text"></p>
+      <div class="actions">
+        <button id="confirm-change" class="primary" type="button">Change</button>
+        <button id="confirm-ignore" type="button">Ignore</button>
+      </div>
+    </div>
+  </div>
   <div id="legend" hidden>
     <div class="legend-card">
       <header>

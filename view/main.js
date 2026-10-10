@@ -3796,9 +3796,14 @@ window.addEventListener("keydown", (event) => {
     setLegend(false);
     return;
   }
+  if (!typing && event.key === "Escape" && !confirmEl.hidden) {
+    event.preventDefault();
+    confirmIgnoreSkin();
+    return;
+  }
   if (!typing && event.key === "Escape" && !skinSide.hidden) {
     event.preventDefault();
-    closeSkinPanel();
+    requestCloseSkinPanel();
     return;
   }
   // The theme panel takes the arrows while it is open: a theme is walked
@@ -3969,8 +3974,8 @@ function markSkin() {
   }
   skinSave.disabled = !skinPreview || skinPreview === saved;
   if (skinError) skinNote.textContent = skinError;
-  else if (skinPreview && skinPreview !== saved) skinNote.textContent = "Previewing " + skinPreview + ". Save keeps it.";
-  else skinNote.textContent = "Click a theme to preview it. Save keeps it.";
+  else if (skinPreview && skinPreview !== saved) skinNote.textContent = "Previewing " + skinPreview + ". Save keeps it, esc asks first.";
+  else skinNote.textContent = "Click a theme to preview it. Save keeps it, esc asks first.";
 }
 
 function renderSkinList() {
@@ -4078,8 +4083,56 @@ async function closeSkinPanel() {
   } catch { /* the saved theme is gone; keep what is on screen */ }
 }
 
-document.querySelector("#skin-close").addEventListener("click", closeSkinPanel);
+// A preview that was never saved is the one case where leaving the panel loses
+// something the user asked for. Escape, the × and the backdrop all come through
+// here: they ask, rather than quietly putting the old theme back.
+const confirmEl = document.querySelector("#confirm");
+const confirmText = document.querySelector("#confirm-text");
+const confirmChange = document.querySelector("#confirm-change");
+const confirmIgnore = document.querySelector("#confirm-ignore");
+
+function unsavedPreview() {
+  return !!skinPreview && skinPreview !== storedSkin();
+}
+
+function askAboutSkin() {
+  if (skinSide.hidden) return false;
+  if (!unsavedPreview()) return false;
+  confirmText.textContent =
+    "\u201c" + skinPreview + "\u201d is previewed and not saved. Change to it, or ignore the preview and stay on \u201c" + storedSkin() + "\u201d.";
+  confirmEl.hidden = false;
+  confirmChange.focus();
+  return true;
+}
+
+function closeConfirm() {
+  confirmEl.hidden = true;
+  if (!skinSide.hidden) skinSide.focus({ preventScroll: true });
+}
+
+// Change: what was previewed becomes the saved theme, and the panel closes.
+function confirmChangeSkin() {
+  closeConfirm();
+  saveSkin();
+}
+
+// Ignore: the preview is dropped and the saved theme comes back.
+function confirmIgnoreSkin() {
+  closeConfirm();
+  closeSkinPanel();
+}
+
+// The way out of the panel: ask when there is something to lose.
+function requestCloseSkinPanel() {
+  if (askAboutSkin()) return;
+  closeSkinPanel();
+}
+
+document.querySelector("#skin-close").addEventListener("click", requestCloseSkinPanel);
 skinSave.addEventListener("click", saveSkin);
+confirmChange.addEventListener("click", confirmChangeSkin);
+confirmIgnore.addEventListener("click", confirmIgnoreSkin);
+confirmEl.addEventListener("click", (event) => { if (event.target === confirmEl) confirmIgnoreSkin(); });
 
 main();
 
