@@ -84,7 +84,7 @@ export function layoutCity(packages, options = {}) {
     placePackage(rootNodes[0], -size / 2, -size / 2, size, size, 0, 0, placed);
   } else if (rootNodes.length > 1) {
     const span = size * Math.max(1, Math.sqrt(rootNodes.length));
-    const cells = treemap(rootNodes.map((node) => ({ weight: node.weight, node })), -span / 2, -size / 2, span, size);
+    const cells = treemap(rootNodes.map((node) => ({ weight: node.weight, node })), -span / 2, -size / 2, span, size, streetWidth(span, size));
     for (const cell of cells) {
       placePackage(cell.node, cell.x, cell.z, cell.w, cell.d, 0, 0, placed);
     }
@@ -118,7 +118,7 @@ export function layoutCity(packages, options = {}) {
 
 function placePackage(node, x, z, w, d, y, depth, out) {
   const locals = blocksOf(node.pkg);
-  const pad = Math.min(Math.min(w, d) * 0.05 + 0.55, Math.min(w, d) / 4);
+  const pad = Math.min(Math.min(w, d) * 0.012 + 0.5, Math.min(w, d) / 4);
   const ix = x + pad;
   const iz = z + pad;
   const iw = w - pad * 2;
@@ -152,7 +152,7 @@ function placePackage(node, x, z, w, d, y, depth, out) {
   }
   out.push(record);
   if (childRect && kids.length) {
-    const cells = treemap(kids.map((child) => ({ weight: child.weight, node: child })), childRect.x, childRect.z, childRect.w, childRect.d);
+    const cells = treemap(kids.map((child) => ({ weight: child.weight, node: child })), childRect.x, childRect.z, childRect.w, childRect.d, streetWidth(childRect.w, childRect.d));
     for (const cell of cells) placePackage(cell.node, cell.x, cell.z, cell.w, cell.d, y + plinthH, depth + 1, out);
   }
 }
@@ -270,14 +270,33 @@ function shelfPack(items, x, z, w, d) {
   return packed.out.map((item) => ({ ...item, x: item.x + ox, z: item.z + oz }));
 }
 
-function treemap(items, x, z, w, d) {
+// treemap squarifies items into rect. With a street, each strip of cells
+// but the last gives up `street` on the side facing the strips after it, so
+// every cell faces a street along one whole side: the last strip faces the
+// street of the strip before it, and a lone strip gives up its far side.
+function treemap(items, x, z, w, d, street = 0) {
   const out = [];
   if (!items.length || w <= 0 || d <= 0) return out;
   const total = items.reduce((sum, item) => sum + Math.max(item.weight, 0.001), 0);
   const scale = (w * d) / total;
   const rows = items.map((item) => ({ ...item, area: Math.max(item.weight, 0.001) * scale }));
   squarify(rows, [], x, z, w, d, out);
+  if (street > 0) openStreets(out, street);
   return out;
+}
+
+function openStreets(cells, street) {
+  const last = cells.reduce((max, cell) => Math.max(max, cell.strip), 0);
+  for (const cell of cells) {
+    if (cell.strip === last && last > 0) continue;
+    if (cell.trail === "x") {
+      const cut = Math.min(street, cell.w * 0.5);
+      cell.w -= cut;
+    } else {
+      const cut = Math.min(street, cell.d * 0.5);
+      cell.d -= cut;
+    }
+  }
 }
 
 function squarify(children, row, x, z, w, d, out) {
@@ -309,12 +328,13 @@ function worst(row, w) {
 
 function layoutRow(row, x, z, w, d, out) {
   const sum = row.reduce((total, item) => total + item.area, 0);
+  const strip = out.length ? out[out.length - 1].strip + 1 : 0;
   if (w >= d) {
     const thickness = sum / Math.max(d, 0.001);
     let offset = z;
     for (const item of row) {
       const len = item.area / Math.max(thickness, 0.001);
-      out.push({ ...item, x, z: offset, w: thickness, d: len });
+      out.push({ ...item, x, z: offset, w: thickness, d: len, strip, trail: "x" });
       offset += len;
     }
     return { x: x + thickness, z, w: Math.max(0, w - thickness), d };
@@ -323,10 +343,17 @@ function layoutRow(row, x, z, w, d, out) {
   let offset = x;
   for (const item of row) {
     const len = item.area / Math.max(thickness, 0.001);
-    out.push({ ...item, x: offset, z, w: len, d: thickness });
+    out.push({ ...item, x: offset, z, w: len, d: thickness, strip, trail: "z" });
     offset += len;
   }
   return { x, z: z + thickness, w, d: Math.max(0, d - thickness) };
+}
+
+// streetWidth is the street between strips of sibling blocks: wider than the
+// 1.0 that counts as tight (enclosure.js), and a little wider in a big rect,
+// where the blocks and their labels are bigger too.
+export function streetWidth(w, d) {
+  return clamp(Math.min(w, d) * 0.03, 1.3, 2.6);
 }
 
 function clamp(value, min, max) {
