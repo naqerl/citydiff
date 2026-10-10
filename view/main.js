@@ -545,6 +545,11 @@ let idleSpin = false;
 // view: overview, a selected package, and a call focus.
 let introSpin = true;
 let viewDirty = true;
+// The loader is up until main() paints the finished city. While it is, the
+// animate loop must not draw: the loader covers the canvas, and rendering a
+// half-built city every frame the loader yields is pure waste — on a large
+// codebase it can cost more than the build itself.
+let loading = true;
 let pointerDirty = false;
 let frameQueued = false;
 let idleTimer = 0;
@@ -792,28 +797,147 @@ function tintEmissive(material) {
   };
 }
 
+const loadUI = {
+  root: document.querySelector("#load"),
+  label: document.querySelector("#load-label"),
+  percent: document.querySelector("#load-percent"),
+  bar: document.querySelector("#load-bar"),
+};
+
+// The loading bar owns fixed bands of the pipeline, so a stage reports its own
+// fraction and the bar still adds up to one. theme 0–5%, scene 5–30%,
+// layout 30–40%, index 40–48%, city 48–85%, arcs 85–100%.
+const LOAD_BANDS = {
+  theme: [0, 0.05],
+  scene: [0.05, 0.30],
+  layout: [0.30, 0.40],
+  index: [0.40, 0.48],
+  city: [0.48, 0.85],
+  arcs: [0.85, 1],
+};
+
+function loadAt(band, fraction = 1) {
+  const [from, to] = LOAD_BANDS[band];
+  const f = Math.max(0, Math.min(1, Number(fraction) || 0));
+  return from + (to - from) * f;
+}
+
+// showLoad paints the bar at an absolute fraction of the whole load. A null
+// label keeps the stage's name, which is what the inner loops pass.
+function showLoad(label, fraction) {
+  loadUI.root.hidden = false;
+  const pct = Math.max(0, Math.min(1, Number(fraction) || 0));
+  if (label != null) loadUI.label.textContent = label;
+  loadUI.bar.style.transform = "scaleX(" + pct + ")";
+  loadUI.percent.textContent = Math.round(pct * 100) + "%";
+  loadUI.root.setAttribute("aria-valuenow", String(Math.round(pct * 100)));
+}
+
+function hideLoad() {
+  loadUI.root.hidden = true;
+}
+
+// One painted frame. requestAnimationFrame does not fire in a hidden tab, so a
+// timeout is the floor: a build nobody is watching must not stall.
+function nextPaint() {
+  return new Promise((resolve) => {
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    requestAnimationFrame(go);
+    setTimeout(go, 50);
+  });
+}
+
+// Slices a long synchronous loop across frames when someone is watching the
+// progress: the work still runs on the main thread, but it hands the browser a
+// frame often enough to paint the bar. The budget is one painted frame's worth;
+// a shorter one buys smoother motion at the cost of more frames spent on the
+// bar itself. Without a progress callback the loop runs in one go, so
+// interactive paths stay synchronous. n === 0 is complete.
+const SLICE_MS = 100;
+async function sliced(n, progress, fn) {
+  if (!progress) {
+    for (let i = 0; i < n; i++) fn(i);
+    return;
+  }
+  let start = performance.now();
+  for (let i = 0; i < n; i++) {
+    fn(i);
+    if (performance.now() - start < SLICE_MS) continue;
+    progress((i + 1) / n);
+    start = performance.now();
+    await nextPaint();
+  }
+  progress(1);
+}
+
+// Reads scene.json with the download's own progress. The server sends a
+// Content-Length; without one the stage is passed at the end, because a guess
+// would be worse than a bar that holds still.
+async function readScene(response) {
+  const total = Number(response.headers.get("Content-Length") || 0);
+  if (!response.body || !total) return response.json();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    showLoad(null, loadAt("scene", got / total));
+  }
+  const bytes = new Uint8Array(got);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
 async function main() {
+  showLoad("Reading the theme…", loadAt("theme", 0));
+  await nextPaint();
   const loaded = await readTheme();
   if (!loaded) {
+    hideLoad();
+    loading = false;
     hud.note.textContent = skinWarning;
     return;
   }
   useTheme(loaded);
   boot();
+  showLoad("Reading the scene…", loadAt("theme"));
+  await nextPaint();
   let response;
   try {
     response = await fetch("./scene.json");
     if (!response.ok) throw new Error(response.statusText);
-    sceneDoc = await response.json();
+    sceneDoc = await readScene(response);
   } catch (err) {
+    hideLoad();
+    loading = false;
     hud.note.textContent = "Could not read the scene. " + err.message;
     requestFrame();
     return;
   }
+  showLoad("Laying out the city…", loadAt("scene"));
+  await nextPaint();
   laid = layoutCity(sceneDoc.packages || []);
+  showLoad("Indexing declarations…", loadAt("layout"));
+  await nextPaint();
   indexScene();
-  buildCity();
-  buildArcs();
+  showLoad("Building the city…", loadAt("index"));
+  await nextPaint();
+  await buildCity((f) => showLoad(null, loadAt("city", f)));
+  showLoad("Drawing the call arcs…", loadAt("city"));
+  await nextPaint();
+  await buildArcs((f) => showLoad(null, loadAt("arcs", f)));
   cityPose = frameCity();
   camera.position.copy(cityPose.pos);
   controls.target.copy(cityPose.target);
@@ -821,6 +945,12 @@ async function main() {
   controls.update();
   applyMode();
   const named = applyQuery();
+  // Fit and paint the finished city behind the bar before it goes, so the first
+  // thing on screen is the city, not an empty canvas for a frame.
+  resizeView();
+  renderer.render(scene, camera);
+  hideLoad();
+  loading = false;
   requestFrame();
   tourUI = mountTour({
     apply: applyTourStep,
@@ -1160,7 +1290,7 @@ function applyFitLimits(pose) {
   camera.updateProjectionMatrix();
 }
 
-function buildCity() {
+async function buildCity(progress = () => {}) {
   const span = citySpan();
   scene.fog.color.set(theme.fog.color);
   scene.fog.density = theme.fog.falloff / span;
@@ -1209,7 +1339,10 @@ function buildCity() {
   horizonMesh.position.y = 0.01;
   city.add(horizonMesh);
 
-  for (const box of laid.packages) {
+  // A sign is a canvas texture, one per package, so this loop is the slow half
+  // of the stage. It is sliced so the bar keeps moving while it runs.
+  await sliced(laid.packages.length, (f) => progress(f * 0.5), (i) => {
+    const box = laid.packages[i];
     const pkg = byPackage.get(box.id);
     const geom = new THREE.BoxGeometry(box.w, box.h, box.d);
     const material = new THREE.MeshLambertMaterial({
@@ -1226,7 +1359,7 @@ function buildCity() {
     const plate = namePlate(box);
     if (plate) mesh.add(plate);
     plinths.push({ id: box.id, box, mesh, material, plate, pkg });
-  }
+  });
 
   for (const box of laid.externals) {
     const mesh = new THREE.Mesh(
@@ -1247,7 +1380,8 @@ function buildCity() {
   }
 
   const solids = [];
-  for (const box of laid.packages) {
+  await sliced(laid.packages.length, (f) => progress(0.5 + f * 0.15), (i) => {
+    const box = laid.packages[i];
     for (const block of box.entities) {
       const found = byEntity.get(block.id);
       if (!found) continue;
@@ -1262,7 +1396,7 @@ function buildCity() {
       entitySlots.push(slot);
       slotById.set(slot.id, slot);
     }
-  }
+  });
 
   const geo = coloredBox();
   if (theme.entity.vertexSource && theme.entity.vertexSource.includes("aHouse")) {
@@ -1276,7 +1410,7 @@ function buildCity() {
   });
   tintEmissive(solidMat);
   rememberShade(dress(solidMat, theme.entity, theme), theme.entity);
-  solidMesh = makeInstances(geo, solidMat, solids);
+  solidMesh = await makeInstances(geo, solidMat, solids, (f) => progress(0.65 + f * 0.35));
   if (solidMesh) city.add(solidMesh);
 }
 
@@ -1306,12 +1440,18 @@ function varyUnit(id) {
   return (hash % 1000) / 999;
 }
 
-function makeInstances(geo, material, slots) {
-  if (!slots.length) return null;
+async function makeInstances(geo, material, slots, progress = null) {
+  if (!slots.length) {
+    if (progress) progress(1);
+    return null;
+  }
   const mesh = new THREE.InstancedMesh(geo, material, slots.length);
   mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(slots.length * 3), 3);
   const color = new THREE.Color();
-  slots.forEach((slot, index) => {
+  // One matrix and one colour per declaration: slicing it keeps the bar alive
+  // on a codebase with tens of thousands of them.
+  await sliced(slots.length, progress, (index) => {
+    const slot = slots[index];
     color.copy(entityColor(slot.entity));
     mesh.setColorAt(index, color);
     writeSlot(mesh, index, slot, 1);
@@ -1473,12 +1613,12 @@ function vary(id, color) {
 
 // The overview draws an arc for every import that was added or deleted, and
 // for every pair of modules whose calls changed while the import stayed.
-function buildArcs() {
+async function buildArcs(progress = () => {}) {
   // The calls the diff changed are drawn between the towers that make them:
   // the same arcs a selection draws, for the whole range at once. The frame
   // the selection would use is left alone — the overview is not a selection.
   // This comes first because it starts from an empty group.
-  drawCallLinks(arcGroup, mergePairLinks(changedCallLinks()), false);
+  await drawCallLinks(arcGroup, mergePairLinks(changedCallLinks()), false, (f) => progress(f * 0.85));
   // Added and removed package dependencies stay module-level: they are edges
   // between modules, not calls, and there is no tower to hang them on.
   const drawn = new Set();
@@ -1491,13 +1631,17 @@ function buildArcs() {
       kind: "dep", id: to, label: to, change, from,
     }, from, to);
   };
+  const deps = [];
   for (const pkg of sceneDoc.packages || []) {
     if (pkg.external) continue;
     for (const dep of pkg.deps || []) {
       if (dep.change !== "added" && dep.change !== "removed") continue;
-      draw(pkg.id, dep.to, dep.change);
+      deps.push([pkg.id, dep.to, dep.change]);
     }
   }
+  await sliced(deps.length, (f) => progress(0.85 + f * 0.15), (i) => {
+    draw(deps[i][0], deps[i][1], deps[i][2]);
+  });
 }
 
 // Every call the diff changed, as a link between the two towers involved.
@@ -2387,14 +2531,18 @@ function drawEntityLinks(group, found) {
   }
 }
 
-function drawCallLinks(group, links, publish = true) {
+// The arcs for a list of links. The initial build passes a progress callback and
+// is sliced across frames; every interactive caller passes none, so the loop
+// runs in one go and linkPoints / linkFrame are ready before the call returns.
+async function drawCallLinks(group, links, publish = true, progress = null) {
   clearGroup(group);
   const points = [];
   const frame = [];
-  for (const link of links) {
+  const drawOne = (i) => {
+    const link = links[i];
     const from = towerTop(link.from);
     const to = towerTop(link.target);
-    if (!from || !to) continue;
+    if (!from || !to) return;
     // Every caller is its own end. Pushing `from` once would keep only the first.
     points.push(from, to);
     const far = link.far || link.target;
@@ -2405,7 +2553,9 @@ function drawCallLinks(group, links, publish = true) {
     addArc(group, from, to, color, lift, data);
     frame.push(...entityExtent(link.from), ...entityExtent(link.target));
     frame.push([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift * 0.75, (from[2] + to[2]) / 2]);
-  }
+  };
+  if (progress) await sliced(links.length, progress, drawOne);
+  else for (let i = 0; i < links.length; i++) drawOne(i);
   if (publish) {
     linkPoints = points;
     linkFrame = frame;
@@ -3809,6 +3959,7 @@ function flyCamera(dt, now) {
 
 function animate(now) {
   frameQueued = false;
+  if (loading) return;
   const t = now || performance.now();
   const dt = lastFrame ? Math.min(0.05, Math.max(0, (t - lastFrame) / 1000)) : 0.016;
   lastFrame = t;
