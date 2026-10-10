@@ -4946,12 +4946,15 @@ window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFram
 window.addEventListener("keydown", (event) => {
   if (event.target === hud.search) return;
   // The theme menu's own find box types freely; Enter and Escape are its.
+  // Enter (the keyboard's done key) only finishes typing: it shows the match
+  // at once and puts the keyboard away. The menu stays open, and nothing is
+  // saved until Apply.
   if (event.target === skinSearch) {
     event.stopImmediatePropagation();
-    if (event.key === "Enter") {
+    if (event.key === "Enter" || event.keyCode === 13) {
       event.preventDefault();
+      void commitSkinFind();
       skinSearch.blur();
-      void acceptSkin();
     } else if (event.key === "Escape") {
       event.preventDefault();
       closeSkinSearch();
@@ -4979,8 +4982,9 @@ window.addEventListener("keydown", (event) => {
     moveSkinCursor(event.key === "ArrowRight" ? 1 : -1);
     return;
   }
+  // On a touch screen only Apply saves; Enter is the desktop's way.
   if (event.key === "Enter" && !event.repeat) {
-    void acceptSkin();
+    if (!touchUI.matches) void acceptSkin();
     return;
   }
   if (plain && event.key === "Backspace") {
@@ -5763,6 +5767,8 @@ skinSearch.addEventListener("input", () => {
   if (query) queueSkinFind(query);
   else clearSkinFind();
 });
+// Some keyboards report their done key only as a change of the box.
+skinSearch.addEventListener("change", () => { void commitSkinFind(); });
 skinSearch.addEventListener("blur", () => {
   if (!skinSearch.value) skinSearch.hidden = true;
 });
