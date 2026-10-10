@@ -65,6 +65,7 @@ type Dep struct {
 // Parent is the type a method belongs to, when that type is in the same package.
 // BodyBytes is the right-hand body length. BodyBytesBefore is the left-hand
 // length for a function or method that exists on the left.
+// Part is signature, body, or both when a function or method was modified.
 type Entity struct {
 	ID              string     `json:"id"`
 	Kind            string     `json:"kind"`
@@ -73,6 +74,7 @@ type Entity struct {
 	File            string     `json:"file"`
 	Parent          string     `json:"parent,omitempty"`
 	Change          string     `json:"change"`
+	Part            string     `json:"part,omitempty"`
 	Fields          []string   `json:"fields,omitempty"`
 	BodyBytes       int        `json:"bodyBytes,omitempty"`
 	BodyBytesBefore *int       `json:"bodyBytesBefore,omitempty"`
@@ -539,6 +541,9 @@ func sceneEntity(pair paired) (Entity, bool) {
 	}
 	if out.Kind == "function" || out.Kind == "method" {
 		out.Calls = alignCalls(callsOf(pair.left), callsOf(pair.right), pair.change)
+		if pair.change == modified {
+			out.Part = diff.PartOf(pair.left, pair.right)
+		}
 	}
 	return out, true
 }

@@ -20,6 +20,8 @@ const paint = {
   added: new THREE.Color(),
   removed: new THREE.Color(),
   modified: new THREE.Color(),
+  body: new THREE.Color(),
+  both: new THREE.Color(),
   moved: new THREE.Color(),
   same: new THREE.Color(),
   call: new THREE.Color(),
@@ -34,6 +36,8 @@ function syncPaint(next) {
   paint.added.set(next.change.added);
   paint.removed.set(next.change.removed);
   paint.modified.set(next.change.modified);
+  paint.body.set(next.change.body || next.change.modified);
+  paint.both.set(next.change.both || next.change.modified);
   paint.moved.set(next.change.moved);
   paint.same.set(next.change.same);
   paint.call.set(next.call.color);
@@ -425,10 +429,13 @@ let mode = "overview";
 let selected = null;
 // Vim-style jump list over the nodes the user has selected. `o` steps to the
 // older entry (vim's <C-o>), `i` to the newer one (<C-i>). Replaying an entry
-// must not record itself, so noteJump is a no-op while jumping.
+// must not record itself, so noteJump is a no-op while jumping. Esc back to
+// the bare city detaches the cursor instead of pushing the city, so the next
+// older step restores the node just left.
 let jumps = [];
 let jumpIndex = -1;
 let jumping = false;
+let jumpDetached = false;
 let entered = null;
 let focus = null;
 let returnPose = null;
@@ -1345,7 +1352,7 @@ function plinthColor(depth, synthetic) {
 
 function entityColor(entity) {
   if (mode === "overlay" && entity.change && entity.change !== "same") {
-    return changeColor(entity.change);
+    return changeColor(entity.change, entity.part);
   }
   const base = entity.kind === "type" ? paint.type : entity.kind === "method" ? paint.method : paint.function;
   return vary(entity.id, base);
@@ -2282,10 +2289,14 @@ function drawCallLinks(group, links, publish = true) {
   }
 }
 
-function changeColor(change) {
+function changeColor(change, part) {
   if (change === "added") return paint.added;
   if (change === "removed") return paint.removed;
-  if (change === "modified") return paint.modified;
+  if (change === "modified") {
+    if (part === "body") return paint.body;
+    if (part === "both") return paint.both;
+    return paint.modified;
+  }
   if (change === "moved") return paint.moved;
   return paint.same;
 }
@@ -2740,7 +2751,7 @@ function updateHUD() {
   } else if (mode === "overlay") {
     note = "Added is green, deleted is red, changed is yellow.";
   }
-  if (jumps.length > 1) {
+  if (jumps.length > 1 && !jumpDetached) {
     const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
     note = note ? note + "  ·  " + at : at;
   }
@@ -3083,7 +3094,7 @@ function entityRow(entity) {
   const name = clipText(entityLabel(entity));
   button.append(name);
   attachMarquee(button, name);
-  const mark = changeMark(entity.change);
+  const mark = changeMark(entity.change, entity.part);
   if (mark) {
     mark.classList.add("mark");
     button.append(mark);
@@ -3152,7 +3163,8 @@ function entityDetail(entity) {
   const titleClip = clipText(entityLabel(entity));
   title.append(titleClip);
   attachMarquee(title, titleClip);
-  const mark = changeMark(entity.change);
+  const named = entity.kind === "function" || entity.kind === "method";
+  const mark = changeMark(entity.change, entity.part, named);
   if (mark) title.append(mark);
   wrap.append(title);
   const meta = document.createElement("p");
@@ -3183,6 +3195,8 @@ function focusDetail(entity) {
   const titleClip = clipText(entityLabel(entity));
   title.append(titleClip);
   attachMarquee(title, titleClip);
+  const mark = changeMark(entity.change, entity.part, true);
+  if (mark) title.append(mark);
   wrap.append(title);
   appendRefs(wrap);
   if (callInbound) {
@@ -3288,7 +3302,20 @@ function sizeText(entity) {
   return "";
 }
 
-function changeMark(change) {
+function modifiedClass(part) {
+  if (part === "body" || part === "both") return "modified " + part;
+  return "modified";
+}
+
+function modifiedWord(part, named) {
+  if (!named) return "changed";
+  if (part === "body") return "body changed";
+  if (part === "signature") return "signature changed";
+  if (part === "both") return "signature and body changed";
+  return "changed";
+}
+
+function changeMark(change, part, named) {
   if (!change || change === "same" || mode !== "overlay") return null;
   const span = document.createElement("span");
   if (change === "added") {
@@ -3298,8 +3325,8 @@ function changeMark(change) {
     span.className = "removed";
     span.textContent = "deleted";
   } else if (change === "modified") {
-    span.className = "modified";
-    span.textContent = "changed";
+    span.className = modifiedClass(part);
+    span.textContent = modifiedWord(part, named);
   } else if (change === "moved") {
     span.className = "moved";
     span.textContent = "moved";
@@ -3320,6 +3347,7 @@ function resetView() {
   selected = null;
   jumps = [];
   jumpIndex = -1;
+  jumpDetached = false;
   ring.visible = false;
   applyMode();
   cityPose = frameCity();
@@ -3328,7 +3356,13 @@ function resetView() {
 }
 
 function goBack() {
+  const leftNode = !!(selected || focus);
   goBackInner();
+  if (leftNode && !selected && !focus && jumpIndex >= 0) {
+    jumpDetached = true;
+    updateHUD();
+    return;
+  }
   noteJump();
 }
 
@@ -3337,23 +3371,17 @@ function goBackInner() {
     exitFocus();
     return;
   }
-  if (entered || entitySubject || arcSubject) {
-    entered = null;
-    entitySubject = null;
-    arcSubject = null;
-    selected = sceneDoc.root ? { kind: "package", id: sceneDoc.root } : null;
-    ring.visible = false;
-    applyMode();
-    cityPose = frameCity();
-    applyFitLimits(cityPose);
-    flyTo(cityPose.pos, cityPose.target);
-    return;
-  }
-  selected = null;
-  ring.visible = false;
+  const hadSelection = selected || entered || entitySubject || arcSubject;
+  entered = null;
   entitySubject = null;
   arcSubject = null;
+  selected = null;
+  ring.visible = false;
   applyMode();
+  if (!hadSelection) return;
+  cityPose = frameCity();
+  applyFitLimits(cityPose);
+  flyTo(cityPose.pos, cityPose.target);
 }
 
 // What a jump restores: the whole navigation state, not just the camera.
@@ -3386,7 +3414,12 @@ function noteJump() {
   const now = subjectNow();
   if (!now.selected && !now.focus) return;
   const current = jumps[jumpIndex];
-  if (current && sameSubject(current, now)) return;
+  const wasDetached = jumpDetached;
+  jumpDetached = false;
+  if (current && sameSubject(current, now)) {
+    if (wasDetached) updateHUD();
+    return;
+  }
   jumps = jumps.slice(0, jumpIndex + 1);
   jumps.push(now);
   jumpIndex = jumps.length - 1;
@@ -3437,9 +3470,10 @@ function restoreSubject(entry) {
 // step is -1 for the older entry, +1 for the newer one.
 function jumpStep(step) {
   if (!jumps.length) return;
-  const next = jumpIndex + step;
+  const next = jumpDetached ? jumpIndex + (step < 0 ? 0 : step) : jumpIndex + step;
   if (next < 0 || next >= jumps.length) return;
   jumpIndex = next;
+  jumpDetached = false;
   jumping = true;
   try {
     restoreSubject(jumps[jumpIndex]);

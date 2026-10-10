@@ -66,6 +66,8 @@
     "added": "#71d083",
     "removed": "#e5484d",
     "modified": "#ffc53d",
+    "body": "#b36b00",
+    "both": "#fff1a0",
     "moved": "#7d66d9",
     "same": "#f4f4f5"
   },
@@ -118,6 +120,8 @@
     "addedText": "#71d083",
     "removedText": "#e5484d",
     "modifiedText": "#ffc53d",
+    "bodyText": "#b36b00",
+    "bothText": "#fff1a0",
     "movedText": "#7d66d9",
     "codeBg": "rgba(12, 12, 14, 0.8)",
     "drop": "rgba(9, 9, 11, 0.6)",
