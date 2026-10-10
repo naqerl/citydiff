@@ -14,9 +14,9 @@ import (
 )
 
 // The viewer is a browser program. Which skin is open is the page's business:
-// the page reads ?skin=, keeps the choice in its own address, and switches
-// skins without a reload. The process only has to know where the skins that
-// are not in the binary live, and that is configuration, not a flag.
+// the page keeps the choice in localStorage and switches skins without a
+// reload. The process only has to know where the skins that are not in the
+// binary live, and that is configuration, not a flag.
 const skinsEnv = "CITYDIFF_SKINS_DIR"
 
 // defaultSkinsDir is the extra skins directory when the environment says
