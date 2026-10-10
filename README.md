@@ -119,6 +119,22 @@ and `<C-i>`. Selecting a new node after going back truncates the forward tail, e
 vim does. The sidebar note shows your position (`jump 2/5`) once the list has more than one
 entry.
 
+The address bar follows the view, so a reload — or a link you send — opens on the same
+place. It is written to be read and edited by hand:
+
+```
+?select=citydiff:lib:diff:TestCoolStuff&mode=changes&refs=callers&side=closed&tourside=closed
+```
+
+`select` is the node's path from the top of the tree down, one `:` per step: a package is
+`citydiff:lib:diff`, a function in it `citydiff:lib:diff:TestCoolStuff`, a type
+`citydiff:lib:Parser` and its method `citydiff:lib:Parser:Parse`. When two declarations share
+a path (two `init` functions in one package), the file follows: `citydiff:cmd:init@cmd/a.go`.
+`mode=changes`, `refs=callers`, `side=closed` and `tourside=closed` are only there when they
+differ from the default (overview, calls, both sidebars open). The camera is not stored; a
+restored selection is flown to the way a click would. When a tour is loaded and the address names a view, the
+tour waits instead of replacing it: play, `.` or a roadmap click starts it.
+
 | Key | Action |
 | --- | --- |
 | `/` | search for a package or function |
@@ -131,7 +147,7 @@ entry.
 | `enter` | open a function |
 | `E` | open the selected node in nvim |
 | `D` | show the selected node's diff |
-| `esc` | go back |
+| `esc` | deselect and fly back to the city |
 | `o` `i` | jump back / forward through the selection history |
 | `b` | show / hide the left sidebar |
 | `t` | show / hide the tour sidebar |

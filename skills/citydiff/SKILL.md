@@ -118,7 +118,10 @@ the diagonal lines move out to the edges, the new theme between them and the old
 outside. Change after esc does the same. Ignore drops the preview with the lines unmoved.
 The choice lives in the browser (localStorage); the process has no say in it, and
 `CITYDIFF_SKINS_DIR` is what points at extra skins. Selecting a node shows its calls or its
-callers, drawn between the towers that make them.
+callers, drawn between the towers that make them. The address bar follows the view —
+`?select=citydiff:lib:diff:Name&mode=changes&refs=callers` (the node's path, one `:` per step;
+a method is `…:Type:Name`), plus `side=closed` / `tourside=closed` — so a link to the viewer
+can open on a given node.
 
 ## Building from source (no release available)
 

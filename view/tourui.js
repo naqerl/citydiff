@@ -8,7 +8,7 @@ import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
 import { tourAction } from "./keys.js";
 import { renderMarkdown, lineDiff, escapeHTML } from "./markdown.js";
 
-export function mountTour({ apply, clear, layout }) {
+export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   const root = document.getElementById("tour-side");
   const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
@@ -90,6 +90,9 @@ export function mountTour({ apply, clear, layout }) {
     ui.code.hidden = false;
   }
 
+  // hold: the address bar already named a view, so the first tour comes up
+  // without applying a step; play, next or a roadmap click starts it.
+  let holdFirst = hold;
   function start(resolved) {
     if (player) player.stop();
     tour = resolved;
@@ -109,7 +112,9 @@ export function mountTour({ apply, clear, layout }) {
     });
     show$(true);
     player = createPlayer(resolved.steps, { show, change });
-    player.start();
+    if (holdFirst) change(player.state);
+    else player.start();
+    holdFirst = false;
   }
 
   function close() {
@@ -122,9 +127,13 @@ export function mountTour({ apply, clear, layout }) {
 
   // show$ puts the sidebar up or takes it away, and tells the scene its
   // width changed so the camera re-centres in the free area.
+  // The first tour opens the way the address bar left it (tourside=closed);
+  // every later one opens.
+  let startOpen = open;
   function show$(on) {
     root.hidden = !on;
-    if (on) root.classList.remove("is-collapsed");
+    if (on) root.classList.toggle("is-collapsed", !startOpen);
+    if (on) startOpen = true;
     layout();
   }
 

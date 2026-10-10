@@ -7,6 +7,7 @@ import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
 import { KEYBINDS, editAction, diffAction } from "./keys.js";
+import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
 import { applyPage, loadSkin } from "./skin.js";
@@ -449,7 +450,6 @@ let jumping = false;
 let jumpDetached = false;
 let entered = null;
 let focus = null;
-let returnPose = null;
 let cityPose = null;
 let pointerDown = null;
 
@@ -508,6 +508,7 @@ function attachMarquee(host, clip) {
 function setSide(open) {
   hud.side.classList.toggle("is-collapsed", !open);
   requestAnimationFrame(resizeView);
+  syncURL();
 }
 let arcSubject = null;
 let entitySubject = null;
@@ -819,9 +820,19 @@ async function main() {
   applyFitLimits(cityPose);
   controls.update();
   applyMode();
-  applyQuery();
+  const named = applyQuery();
   requestFrame();
-  tourUI = mountTour({ apply: applyTourStep, clear: clearTour, layout: () => requestAnimationFrame(resizeView) });
+  tourUI = mountTour({
+    apply: applyTourStep,
+    clear: clearTour,
+    layout: () => {
+      requestAnimationFrame(resizeView);
+      if (!document.querySelector("#tour-side").hidden) tourSideWanted = true;
+      syncURL();
+    },
+    open: tourSideWanted,
+    hold: named,
+  });
   const wanted = new URLSearchParams(location.search).get("tour");
   tourUI.loadURL(wanted || "./tour.json");
 }
@@ -969,23 +980,67 @@ function tourCallLinks(path, highlight) {
   return links.length ? links : null;
 }
 
+// The view the address bar names (see state.js), put back once the city is
+// built. Until then the address is left alone, so the first applyMode does
+// not write the defaults over it. enter= and fn= are the older debug forms.
+// Returns whether the address named a view, so a tour does not replace it.
 function applyQuery() {
+  const state = readState(location.search);
   const params = new URLSearchParams(location.search);
-  if (params.get("mode") === "changes") mode = "overlay";
-  const enter = params.get("enter");
-  if (enter && byPackage.has(enter)) selectPackage(enter, true);
-  const want = params.get("fn");
-  if (!want) {
-    if (mode === "overlay") applyMode();
-    return;
+  if (state.mode === "changes") mode = "overlay";
+  callInbound = state.refs === "callers";
+  if (!state.side) {
+    setSide(false);
+    // The fly-to below frames the free area, so the insets must be current.
+    resizeView();
   }
-  const picks = [...byEntity.values()].filter((item) => item.box && (item.entity.kind === "function" || item.entity.kind === "method"));
-  const named = want === "1" ? null : picks.find((item) => item.entity.id === want);
-  const changed = picks.find((item) => (item.entity.calls || []).some((step) => step.change !== "same"));
-  const busy = picks.find((item) => (item.entity.calls || []).length > 3 && (item.entity.calls || []).length < 40);
-  const pick = named || (want === "1" ? changed || busy || picks[0] : null);
-  if (pick) enterFocus(pick);
-  else if (mode === "overlay") applyMode();
+  tourSideWanted = state.tourSide;
+  urlReady = true;
+  const node = readNode(state.select, nodeNames);
+  if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
+  else if (node && node.kind === "external" && laid.externals.some((item) => item.id === node.id)) selectExternal(node.id, callInbound);
+  else if (node && node.kind === "entity") selectEntity(node.id);
+  const enter = params.get("enter");
+  if (!selected && enter && byPackage.has(enter)) selectPackage(enter, true);
+  const want = params.get("fn");
+  if (!selected && want) {
+    const picks = [...byEntity.values()].filter((item) => item.box && (item.entity.kind === "function" || item.entity.kind === "method"));
+    const named = want === "1" ? null : picks.find((item) => item.entity.id === want);
+    const changed = picks.find((item) => (item.entity.calls || []).some((step) => step.change !== "same"));
+    const busy = picks.find((item) => (item.entity.calls || []).length > 3 && (item.entity.calls || []).length < 40);
+    const pick = named || (want === "1" ? changed || busy || picks[0] : null);
+    if (pick) enterFocus(pick);
+  }
+  if (!selected) applyMode();
+  return !!(state.select || state.mode === "changes" || state.refs === "callers");
+}
+
+// The address bar follows the view: written in place, so a reload keeps it
+// and the browser history is not one entry per click.
+let urlReady = false;
+let nodeNames = new Map();
+// tourside= waits for the tour: until one is on screen the address keeps
+// what it said, and once one is, the sidebar itself is the answer.
+let tourSideWanted = true;
+
+function syncURL() {
+  if (!urlReady) return;
+  const found = selected && selected.kind === "entity" ? byEntity.get(selected.id) : null;
+  const node = found ? { kind: "entity", entity: found.entity, pkg: found.pkg.id } : selected && selected.kind !== "entity" ? selected : null;
+  const tourSide = document.querySelector("#tour-side");
+  const query = writeState(location.search, {
+    select: writeNode(node, nodeNames),
+    mode: mode === "overlay" ? "changes" : "overview",
+    refs: callInbound ? "callers" : "calls",
+    side: !hud.side.classList.contains("is-collapsed"),
+    tourSide: !tourSide || tourSide.hidden ? tourSideWanted : !tourSide.classList.contains("is-collapsed"),
+  });
+  if (query === location.search) return;
+  // Safari throws once a page rewrites its address too often. A missed write
+  // must not take applyMode down with it; the next change writes it again.
+  try {
+    history.replaceState(history.state, "", location.pathname + query + location.hash);
+  } catch { /* the address keeps the previous view */ }
 }
 
 function indexScene() {
@@ -1024,6 +1079,12 @@ function indexScene() {
       if (found) found.box = block;
     }
   }
+  // Packages go in first, so a package keeps its bare path if a declaration
+  // ever spells the same one.
+  nodeNames = nameIndex([
+    ...(sceneDoc.packages || []).map((pkg) => ({ kind: pkg.external ? "external" : "package", id: pkg.id })),
+    ...[...byEntity.values()].filter((item) => item.box).map((item) => ({ kind: "entity", entity: item.entity, pkg: item.pkg.id })),
+  ]);
   indexCallers();
 }
 
@@ -2066,6 +2127,7 @@ function applyMode() {
   }
   paintPlinths();
   updateHUD();
+  syncURL();
   viewDirty = true;
   requestFrame();
 }
@@ -2410,8 +2472,9 @@ function selectEntity(id) {
   const found = byEntity.get(id);
   if (!found || !found.box) return;
   // A function is here for its calls: selecting one opens the call diff
-  // straight away, on the calls side, instead of asking for a second click.
-  // Escape leaves the diff and stays on the node.
+  // straight away, on the side calls or callers is set to, instead of asking
+  // for a second click.
+  // Escape leaves the diff and the node with it.
   if (found.entity.kind === "function" || found.entity.kind === "method") {
     enterFocus(found);
     return;
@@ -2428,7 +2491,6 @@ function selectEntity(id) {
 }
 
 function enterFocus(found) {
-  if (!returnPose) returnPose = { pos: camera.position.clone(), target: controls.target.clone() };
   focus = found;
   selected = { kind: "entity", id: found.entity.id };
   entered = found.pkg.id;
@@ -2442,19 +2504,9 @@ function enterFocus(found) {
 
 function dropFocus() {
   focus = null;
-  returnPose = null;
   clearGroup(focusGroup);
   selectArcs.visible = true;
   arcGroup.visible = mode === "overlay";
-}
-
-function exitFocus() {
-  const back = returnPose;
-  focus = null;
-  returnPose = null;
-  clearGroup(focusGroup);
-  applyMode();
-  if (back) flyTo(back.pos, back.target);
 }
 
 function circlePositions(segments) {
@@ -2744,7 +2796,6 @@ function activate(found) {
     clearGroup(focusGroup);
     if (target.entity.kind === "function" || target.entity.kind === "method") enterFocus(target);
     else {
-      returnPose = null;
       selectEntity(target.entity.id);
       applyMode();
     }
@@ -2759,7 +2810,10 @@ function activate(found) {
     applyMode();
     return;
   }
-  if (focus) return;
+  // A click on another node leaves the call diff for it, the same as picking
+  // it in the sidebar: no Escape first.
+  if (focus && !(found.kind === "entity" && found.id === focus.entity.id)) dropFocus();
+  else if (focus) return;
   if (found.kind === "external") {
     selectExternal(found.id);
     return;
@@ -3541,7 +3595,6 @@ function changeMark(change, part, named) {
 
 function resetView() {
   focus = null;
-  returnPose = null;
   clearGroup(focusGroup);
   entered = null;
   entitySubject = null;
@@ -3569,12 +3622,11 @@ function goBack() {
   noteJump();
 }
 
+// Escape always lets go of the node: the call diff, the selection and the
+// package it sits in, and flies back to the whole city.
 function goBackInner() {
-  if (focus) {
-    exitFocus();
-    return;
-  }
-  const hadSelection = selected || entered || entitySubject || arcSubject;
+  const hadSelection = focus || selected || entered || entitySubject || arcSubject;
+  if (focus) dropFocus();
   entered = null;
   entitySubject = null;
   arcSubject = null;

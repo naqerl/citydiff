@@ -45,9 +45,12 @@ in mind, which is exactly the kind of context degradation that turns a correct c
 wrong one. So:
 
 - **View state belongs to the page.** Which skin is open, which sidebar is showing, what is
-  selected, how the camera sits: all of it is the browser's business, remembered in the
-  browser (localStorage) and reached through the viewer's own commands (`/skin` in the search
-  box). None of it is a flag, and none of it is a query parameter.
+  selected, how the camera sits: all of it is the browser's business, and none of it is a
+  flag. The skin is a preference, remembered in the browser (localStorage) and reached
+  through the viewer's own commands (`/skin` in the search box). Where you are in the diff —
+  the selected node, overview or changes, calls or callers, the sidebars — is in the address
+  bar, written by the page itself in a form a person can read (`view/state.js`), so a reload
+  or a shared link comes back to it. The camera is in neither.
 - **Paths and directories belong to the environment.** `CITYDIFF_SKINS_DIR` points at extra
   skins. Configuration like that is an environment variable with a sensible default, not
   another flag to explain.
