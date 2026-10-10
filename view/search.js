@@ -17,7 +17,7 @@ export function rankMatches(items, query, limit = 12) {
     else continue;
     if (item.kind === "package") score += 6;
     else if (item.kind === "function" || item.kind === "method") score += 3;
-    else if (item.kind === "type") score += 2;
+    else if (item.kind === "type" || item.kind === "variable") score += 2;
     scored.push({ item, score });
   }
   scored.sort((a, b) => b.score - a.score || String(a.item.name).localeCompare(String(b.item.name)));

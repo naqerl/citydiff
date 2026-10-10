@@ -67,7 +67,7 @@ export function layoutCity(packages, options = {}) {
     const pkg = byId.get(id);
     let weight = 4;
     for (const entity of pkg.entities || []) {
-      if (entity.kind === "type" || entity.kind === "function" || entity.kind === "method") weight += 1.7;
+      if (isDeclaration(entity)) weight += 1.7;
     }
     for (const child of childIds.get(id) || []) weight += weightOf(child);
     return weight;
@@ -157,8 +157,15 @@ function placePackage(node, x, z, w, d, y, depth, out) {
   }
 }
 
+// The kinds that get drawn and listed. A variable is a declaration like a
+// type or a function: const and static entries carry real changes, and a
+// package with only a variable change is not empty.
+function isDeclaration(entity) {
+  return entity.kind === "type" || entity.kind === "variable" || entity.kind === "function" || entity.kind === "method";
+}
+
 function blocksOf(pkg) {
-  const entities = (pkg.entities || []).filter((entity) => entity.kind === "type" || entity.kind === "function" || entity.kind === "method");
+  const entities = (pkg.entities || []).filter(isDeclaration);
   const methods = new Map();
   for (const entity of entities) {
     if (entity.kind !== "method" || !entity.parent) continue;
