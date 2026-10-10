@@ -90,7 +90,7 @@ export async function openEditor(target, onClose) {
     return;
   }
   if (session !== s) return;
-  const term = new mod.Terminal({ fontSize: 14, cursorBlink: true, theme: { background: "#0d1017", foreground: "#d6dbe4" } });
+  const term = new mod.Terminal({ fontSize: 14, cursorBlink: false, theme: { background: "#0d1017", foreground: "#d6dbe4" } });
   const fitter = new mod.FitAddon();
   term.loadAddon(fitter);
   term.open(root.querySelector(".editor-term"));

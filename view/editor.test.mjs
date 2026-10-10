@@ -44,3 +44,16 @@ test("nothing, or an external package, opens nothing", () => {
 test("the query carries the target and the terminal size", () => {
   assert.equal(editQuery({ file: "a.go", line: 3, col: 2 }, 100, 30), "file=a.go&line=3&col=2&cols=100&rows=30");
 });
+
+test("the city does not render under the editor, and restarts when it closes", async () => {
+  const { readFileSync } = await import("node:fs");
+  const main = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const animate = main.slice(main.indexOf("function animate(now) {"));
+  const head = animate.slice(0, animate.indexOf("const t = now"));
+  assert.match(head, /if \(editorActive\(\)\) \{[^}]*return;/, "animate returns before drawing while the editor is up");
+  assert.doesNotMatch(head, /requestAnimationFrame|requestFrame\(/, "and schedules no next frame");
+  const close = main.slice(main.indexOf("openEditor(target, () => {"), main.indexOf("openEditor(target, () => {") + 400);
+  assert.match(close, /noteActivity\(\)[\s\S]*requestFrame\(\)/, "closing resets the idle clock, then restarts the guarded loop");
+  const editor = readFileSync(new URL("./editor.js", import.meta.url), "utf8");
+  assert.match(editor, /cursorBlink: false/);
+});

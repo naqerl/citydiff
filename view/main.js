@@ -3964,6 +3964,12 @@ function flyCamera(dt, now) {
 function animate(now) {
   frameQueued = false;
   if (loading) return;
+  // The editor covers the city: no frames, no halo, no idle orbit until it
+  // closes, and the close starts the loop again.
+  if (editorActive()) {
+    clearTimeout(idleTimer);
+    return;
+  }
   const t = now || performance.now();
   const dt = lastFrame ? Math.min(0.05, Math.max(0, (t - lastFrame) / 1000)) : 0.016;
   lastFrame = t;
@@ -4319,7 +4325,13 @@ window.addEventListener("keydown", (event) => {
     if (target) {
       event.preventDefault();
       held.clear();
-      openEditor(target, () => { renderer.domElement.focus?.(); requestFrame(); });
+      openEditor(target, () => {
+        renderer.domElement.focus?.();
+        // Time in the editor is not idle time: the orbit waits its full delay.
+        noteActivity();
+        lastFrame = 0;
+        requestFrame();
+      });
     }
     return;
   }
