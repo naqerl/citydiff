@@ -72,9 +72,30 @@ jobs:
           name: dist-${{ matrix.os }}
           path: dist/*.tar.gz
 
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        # make test is vet, the Go tests and the viewer's node tests. Without
+        # this job a broken test target reaches main unnoticed: the build jobs
+        # only vet. CGO is required, as in the build job.
+        env:
+          CGO_ENABLED: '1'
+        run: make test
+
   release:
     name: publish release
-    needs: build
+    needs: [build, test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
