@@ -132,7 +132,8 @@ place. It is written to be read and edited by hand:
 a path (two `init` functions in one package), the file follows: `citydiff:cmd:init@cmd/a.go`.
 `mode=changes`, `refs=callers`, `side=closed` and `tourside=closed` are only there when they
 differ from the default (overview, calls, both sidebars open). The camera is not stored; a
-restored selection is flown to the way a click would.
+restored selection is flown to the way a click would. When a tour is loaded and the address names a view, the
+tour waits instead of replacing it: play, `.` or a roadmap click starts it.
 
 | Key | Action |
 | --- | --- |

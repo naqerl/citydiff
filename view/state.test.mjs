@@ -89,3 +89,19 @@ test("a name with characters a query cannot hold is escaped", () => {
   assert.equal(query, "?select=citydiff:a%26b%20c");
   assert.equal(readState(query).select, "citydiff:a&b c");
 });
+
+test("enter= and fn= are dropped once the view is written", () => {
+  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true };
+  assert.equal(writeState("?enter=citydiff/lib&fn=1&tour=t.json", state), "?tour=t.json");
+});
+
+test("an id with an @ in it reads whole, and a file still follows the last @", () => {
+  const scoped = nameIndex([
+    { kind: "package", id: "mod@v1/pkg" },
+    ent("mod@v1/pkg", "a.go#function#init", "function", "init", "a.go"),
+    ent("mod@v1/pkg", "b.go#function#init", "function", "init", "b.go"),
+  ]);
+  assert.deepEqual(readNode("mod@v1:pkg", scoped), { kind: "package", id: "mod@v1/pkg" });
+  assert.equal(writeNode({ kind: "entity", pkg: "mod@v1/pkg", entity: { id: "b.go#function#init", kind: "function", name: "init", file: "b.go" } }, scoped), "mod@v1:pkg:init@b.go");
+  assert.deepEqual(readNode("mod@v1:pkg:init@b.go", scoped), { kind: "entity", id: "b.go#function#init" });
+});

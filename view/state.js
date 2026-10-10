@@ -9,7 +9,9 @@
 // not here: restoring the selection flies to it the way a click does.
 
 // The parameters this file owns. Any other parameter (tour, check) is kept.
-export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside"];
+// enter= and fn= are the older debug forms of select=: read once at load, then
+// dropped, so a later Escape is not undone by the next reload.
+export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside", "enter", "fn"];
 
 // pathOf turns an id into its steps: citydiff/lib/diff is citydiff:lib:diff.
 export function pathOf(id) {
@@ -57,10 +59,12 @@ export function writeNode(node, index) {
 }
 
 // readNode is writeNode backwards: { kind, id }, with id the package id or the
-// entity id, or null when nothing in the scene has that path.
+// entity id, or null when nothing in the scene has that path. The whole text
+// is tried as a path first, so an id with an @ in it (mod@v1) still reads; the
+// file is what follows the last @.
 export function readNode(text, index) {
   if (!text) return null;
-  const at = text.indexOf("@");
+  const at = index.has(text) ? -1 : text.lastIndexOf("@");
   const key = at < 0 ? text : text.slice(0, at);
   const file = at < 0 ? "" : text.slice(at + 1);
   const list = index.get(key) || [];

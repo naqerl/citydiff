@@ -8,7 +8,7 @@ import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
 import { tourAction } from "./keys.js";
 import { renderMarkdown, lineDiff, escapeHTML } from "./markdown.js";
 
-export function mountTour({ apply, clear, layout, open = true }) {
+export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   const root = document.getElementById("tour-side");
   const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
@@ -90,6 +90,9 @@ export function mountTour({ apply, clear, layout, open = true }) {
     ui.code.hidden = false;
   }
 
+  // hold: the address bar already named a view, so the first tour comes up
+  // without applying a step; play, next or a roadmap click starts it.
+  let holdFirst = hold;
   function start(resolved) {
     if (player) player.stop();
     tour = resolved;
@@ -109,7 +112,9 @@ export function mountTour({ apply, clear, layout, open = true }) {
     });
     show$(true);
     player = createPlayer(resolved.steps, { show, change });
-    player.start();
+    if (holdFirst) change(player.state);
+    else player.start();
+    holdFirst = false;
   }
 
   function close() {

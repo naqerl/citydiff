@@ -448,7 +448,6 @@ let jumping = false;
 let jumpDetached = false;
 let entered = null;
 let focus = null;
-let returnPose = null;
 let cityPose = null;
 let pointerDown = null;
 
@@ -809,7 +808,7 @@ async function main() {
   applyFitLimits(cityPose);
   controls.update();
   applyMode();
-  applyQuery();
+  const named = applyQuery();
   requestFrame();
   tourUI = mountTour({
     apply: applyTourStep,
@@ -820,6 +819,7 @@ async function main() {
       syncURL();
     },
     open: tourSideWanted,
+    hold: named,
   });
   const wanted = new URLSearchParams(location.search).get("tour");
   tourUI.loadURL(wanted || "./tour.json");
@@ -971,12 +971,17 @@ function tourCallLinks(path, highlight) {
 // The view the address bar names (see state.js), put back once the city is
 // built. Until then the address is left alone, so the first applyMode does
 // not write the defaults over it. enter= and fn= are the older debug forms.
+// Returns whether the address named a view, so a tour does not replace it.
 function applyQuery() {
   const state = readState(location.search);
   const params = new URLSearchParams(location.search);
   if (state.mode === "changes") mode = "overlay";
   callInbound = state.refs === "callers";
-  if (!state.side) setSide(false);
+  if (!state.side) {
+    setSide(false);
+    // The fly-to below frames the free area, so the insets must be current.
+    resizeView();
+  }
   tourSideWanted = state.tourSide;
   urlReady = true;
   const node = readNode(state.select, nodeNames);
@@ -995,6 +1000,7 @@ function applyQuery() {
     if (pick) enterFocus(pick);
   }
   if (!selected) applyMode();
+  return !!(state.select || state.mode === "changes" || state.refs === "callers");
 }
 
 // The address bar follows the view: written in place, so a reload keeps it
@@ -1018,7 +1024,11 @@ function syncURL() {
     tourSide: !tourSide || tourSide.hidden ? tourSideWanted : !tourSide.classList.contains("is-collapsed"),
   });
   if (query === location.search) return;
-  history.replaceState(history.state, "", location.pathname + query + location.hash);
+  // Safari throws once a page rewrites its address too often. A missed write
+  // must not take applyMode down with it; the next change writes it again.
+  try {
+    history.replaceState(history.state, "", location.pathname + query + location.hash);
+  } catch { /* the address keeps the previous view */ }
 }
 
 function indexScene() {
@@ -2443,7 +2453,8 @@ function selectEntity(id) {
   const found = byEntity.get(id);
   if (!found || !found.box) return;
   // A function is here for its calls: selecting one opens the call diff
-  // straight away, on the calls side, instead of asking for a second click.
+  // straight away, on the side calls or callers is set to, instead of asking
+  // for a second click.
   // Escape leaves the diff and the node with it.
   if (found.entity.kind === "function" || found.entity.kind === "method") {
     enterFocus(found);
@@ -2461,7 +2472,6 @@ function selectEntity(id) {
 }
 
 function enterFocus(found) {
-  if (!returnPose) returnPose = { pos: camera.position.clone(), target: controls.target.clone() };
   focus = found;
   selected = { kind: "entity", id: found.entity.id };
   entered = found.pkg.id;
@@ -2475,7 +2485,6 @@ function enterFocus(found) {
 
 function dropFocus() {
   focus = null;
-  returnPose = null;
   clearGroup(focusGroup);
   selectArcs.visible = true;
   arcGroup.visible = mode === "overlay";
@@ -2768,7 +2777,6 @@ function activate(found) {
     clearGroup(focusGroup);
     if (target.entity.kind === "function" || target.entity.kind === "method") enterFocus(target);
     else {
-      returnPose = null;
       selectEntity(target.entity.id);
       applyMode();
     }
@@ -3555,7 +3563,6 @@ function changeMark(change, part, named) {
 
 function resetView() {
   focus = null;
-  returnPose = null;
   clearGroup(focusGroup);
   entered = null;
   entitySubject = null;
