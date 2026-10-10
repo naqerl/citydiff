@@ -673,7 +673,6 @@
     #tour-range { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #tour-range code { color: var(--muted); }
     #tour-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 18px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-    #tour-count { color: var(--faint); font-size: 11px; letter-spacing: 0.08em; }
     #tour-step-title { margin: 2px 0 8px; font-size: 14px; font-weight: 600; }
     #tour-body { color: var(--dim); }
     #tour-body p { margin: 0 0 8px; }
@@ -694,29 +693,6 @@
     #tour-code .ln-add { background: var(--added-bg); color: var(--added-fg); }
     #tour-code .ln-del { background: var(--removed-bg); color: var(--removed-fg); }
     #tour-code .ln-same { color: var(--muted); }
-    #tour-road-title {
-      margin: 16px 0 4px;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--faint);
-    }
-    #tour-steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
-    #tour-steps li { counter-increment: step; border-top: 1px solid var(--line); }
-    #tour-steps button {
-      width: 100%;
-      text-align: left;
-      background: transparent;
-      border: 0;
-      border-left: 2px solid transparent;
-      color: var(--muted);
-      padding: 4px 8px;
-    }
-    #tour-steps button::before { content: counter(step) ". "; color: var(--fainter); }
-    #tour-steps button:hover { color: var(--fg); background: var(--elev); }
-    #tour-steps li.is-done button { color: var(--faint); }
-    #tour-steps li.is-current button { color: var(--fg); border-left-color: var(--accent); background: var(--current-bg); }
     #tour-controls { display: flex; align-items: center; gap: 6px; padding: 10px 14px 12px; border-top: 1px solid var(--line); }
     #tour-controls button { width: 30px; height: 26px; background: transparent; border: 1px solid var(--line); color: var(--pre); padding: 0; }
     #tour-controls button:hover:not(:disabled) { border-color: var(--line-strong); color: var(--fg); }
@@ -812,12 +788,9 @@
           <div id="tour-range"></div>
         </div>
         <div id="tour-scroll">
-          <div id="tour-count"></div>
           <h2 id="tour-step-title"></h2>
           <div id="tour-body"></div>
           <div id="tour-code" hidden></div>
-          <h3 id="tour-road-title">Roadmap</h3>
-          <ol id="tour-steps"></ol>
         </div>
         <div id="tour-controls">
           <button type="button" id="tour-prev" title="Previous step (,)">‹</button>

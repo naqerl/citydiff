@@ -1,8 +1,8 @@
-// The tour sidebar on the right: title and range, the note, the code, the
-// roadmap, and the player controls at the bottom. It mirrors the left
-// sidebar: t hides and shows it like b does the left one. Everything here
-// runs on a step change or a click,
-// never per frame. The step itself is applied by the scene through apply().
+// The tour sidebar on the right: title and range, the note, the code, and
+// the player controls at the bottom. It mirrors the left sidebar: t hides
+// and shows it like b does the left one. Everything here runs on a step
+// change or a click, never per frame. The step itself is applied by the
+// scene through apply().
 
 import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
 import { tourAction } from "./keys.js";
@@ -13,13 +13,12 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
   const ui = {
-    count: el("tour-count"),
+    scroll: el("tour-scroll"),
     stepTitle: el("tour-step-title"),
     body: el("tour-body"),
     code: el("tour-code"),
     title: el("tour-title"),
     range: el("tour-range"),
-    steps: el("tour-steps"),
     play: el("tour-play"),
     counter: el("tour-counter"),
     progress: root.querySelector("#tour-progress i"),
@@ -31,20 +30,15 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   let codeWant = null;
 
   function show(index, step) {
-    const total = tour.steps.length;
-    ui.count.textContent = `${index + 1} / ${total}`;
     ui.stepTitle.textContent = step.title;
     ui.body.innerHTML = renderMarkdown(step.note || "");
     ui.code.hidden = true;
     ui.code.innerHTML = "";
     codeWant = step.targets && step.targets.code ? step.targets.code.id : null;
     if (codeWant) loadCode(codeWant);
-    for (const [i, li] of [...ui.steps.children].entries()) {
-      li.classList.toggle("is-current", i === index);
-      li.classList.toggle("is-done", i < index);
-    }
-    const current = ui.steps.children[index];
-    if (current) current.scrollIntoView({ block: "nearest" });
+    // A step change starts at the top, so the new step's note and code read
+    // from their first line; the player's counter and bar carry the position.
+    ui.scroll.scrollTop = 0;
     apply(step);
   }
 
@@ -91,7 +85,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   }
 
   // hold: the address bar already named a view, so the first tour comes up
-  // without applying a step; play, next or a roadmap click starts it.
+  // without applying a step; play or next starts it.
   let holdFirst = hold;
   function start(resolved) {
     if (player) player.stop();
@@ -100,16 +94,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     ui.title.title = resolved.title || "";
     const label = rangeLabel(resolved.range, resolved.scene && resolved.scene.range);
     ui.range.innerHTML = label ? `range <code>${escapeHTML(label)}</code>` : "no range: the plain tree";
-    ui.steps.innerHTML = "";
-    resolved.steps.forEach((step, i) => {
-      const li = document.createElement("li");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = step.title;
-      btn.addEventListener("click", () => player.jump(i));
-      li.append(btn);
-      ui.steps.append(li);
-    });
     show$(true);
     player = createPlayer(resolved.steps, { show, change });
     if (holdFirst) change(player.state);
@@ -146,7 +130,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   function problems(list, source) {
     show$(true);
     el("tour-controls").hidden = true;
-    ui.count.textContent = "";
     ui.stepTitle.textContent = "This tour does not fit the scene";
     ui.body.innerHTML =
       `<p>${escapeHTML(source)}</p><ul>` +
@@ -155,7 +138,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     ui.code.hidden = true;
     ui.title.textContent = "Tour";
     ui.range.textContent = "";
-    ui.steps.innerHTML = "";
   }
 
   // The server resolves every name against the scene it serves, so a

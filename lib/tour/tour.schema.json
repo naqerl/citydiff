@@ -8,7 +8,7 @@
   "required": ["version", "steps"],
   "properties": {
     "version": { "const": 1 },
-    "title": { "type": "string", "description": "Shown above the roadmap." },
+    "title": { "type": "string", "description": "Shown above the note panel." },
     "range": { "type": "string", "description": "The base..head the tour was written for, as passed to -range.", "examples": ["dbdafc00..061e9aed"] },
     "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } }
   },
@@ -23,7 +23,7 @@
       "additionalProperties": false,
       "required": ["title"],
       "properties": {
-        "title": { "type": "string", "minLength": 1, "description": "Roadmap entry and note heading." },
+        "title": { "type": "string", "minLength": 1, "description": "Note heading." },
         "note": { "type": "string", "description": "Markdown shown in the note panel: paragraphs, **bold**, *italic*, `code`, fenced code, lists, headings and http(s) links." },
         "duration": { "type": "number", "minimum": 0, "default": 8, "description": "Seconds the step plays before autoplay moves on." },
         "mode": { "enum": ["changes", "full"], "description": "changes colours the diff and draws the dependency arcs; full is the plain city." },
