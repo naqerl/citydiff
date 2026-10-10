@@ -20,6 +20,8 @@ const paint = {
   added: new THREE.Color(),
   removed: new THREE.Color(),
   modified: new THREE.Color(),
+  body: new THREE.Color(),
+  both: new THREE.Color(),
   moved: new THREE.Color(),
   same: new THREE.Color(),
   call: new THREE.Color(),
@@ -34,6 +36,8 @@ function syncPaint(next) {
   paint.added.set(next.change.added);
   paint.removed.set(next.change.removed);
   paint.modified.set(next.change.modified);
+  paint.body.set(next.change.body || next.change.modified);
+  paint.both.set(next.change.both || next.change.modified);
   paint.moved.set(next.change.moved);
   paint.same.set(next.change.same);
   paint.call.set(next.call.color);
@@ -1345,7 +1349,7 @@ function plinthColor(depth, synthetic) {
 
 function entityColor(entity) {
   if (mode === "overlay" && entity.change && entity.change !== "same") {
-    return changeColor(entity.change);
+    return changeColor(entity.change, entity.part);
   }
   const base = entity.kind === "type" ? paint.type : entity.kind === "method" ? paint.method : paint.function;
   return vary(entity.id, base);
@@ -2282,10 +2286,14 @@ function drawCallLinks(group, links, publish = true) {
   }
 }
 
-function changeColor(change) {
+function changeColor(change, part) {
   if (change === "added") return paint.added;
   if (change === "removed") return paint.removed;
-  if (change === "modified") return paint.modified;
+  if (change === "modified") {
+    if (part === "body") return paint.body;
+    if (part === "both") return paint.both;
+    return paint.modified;
+  }
   if (change === "moved") return paint.moved;
   return paint.same;
 }
@@ -3009,7 +3017,7 @@ function entityRow(entity) {
   const name = clipText(entityLabel(entity));
   button.append(name);
   attachMarquee(button, name);
-  const mark = changeMark(entity.change);
+  const mark = changeMark(entity.change, entity.part);
   if (mark) {
     mark.classList.add("mark");
     button.append(mark);
@@ -3078,12 +3086,14 @@ function entityDetail(entity) {
   const titleClip = clipText(entityLabel(entity));
   title.append(titleClip);
   attachMarquee(title, titleClip);
-  const mark = changeMark(entity.change);
+  const mark = changeMark(entity.change, entity.part);
   if (mark) title.append(mark);
   wrap.append(title);
   const meta = document.createElement("p");
   meta.textContent = [entity.kind, entity.file].filter(Boolean).join(" · ");
   wrap.append(meta);
+  const kind = changeKind(entity);
+  if (kind) wrap.append(kind);
   if (entity.kind === "function" || entity.kind === "method") {
     const size = document.createElement("p");
     size.textContent = sizeText(entity);
@@ -3110,6 +3120,8 @@ function focusDetail(entity) {
   title.append(titleClip);
   attachMarquee(title, titleClip);
   wrap.append(title);
+  const kind = changeKind(entity);
+  if (kind) wrap.append(kind);
   appendRefs(wrap);
   if (callInbound) {
     wrap.append(callerDetail(entity));
@@ -3214,7 +3226,27 @@ function sizeText(entity) {
   return "";
 }
 
-function changeMark(change) {
+function modifiedClass(part) {
+  if (part === "body" || part === "both") return "modified " + part;
+  return "modified";
+}
+
+function changeKind(entity) {
+  if (mode !== "overlay" || !entity || entity.change !== "modified") return null;
+  if (entity.kind !== "function" && entity.kind !== "method") return null;
+  const text = {
+    signature: "Signature changed.",
+    body: "Body changed.",
+    both: "Signature and body changed.",
+  }[entity.part];
+  if (!text) return null;
+  const line = document.createElement("p");
+  line.className = modifiedClass(entity.part);
+  line.textContent = text;
+  return line;
+}
+
+function changeMark(change, part) {
   if (!change || change === "same" || mode !== "overlay") return null;
   const span = document.createElement("span");
   if (change === "added") {
@@ -3224,7 +3256,7 @@ function changeMark(change) {
     span.className = "removed";
     span.textContent = "deleted";
   } else if (change === "modified") {
-    span.className = "modified";
+    span.className = modifiedClass(part);
     span.textContent = "changed";
   } else if (change === "moved") {
     span.className = "moved";

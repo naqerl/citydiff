@@ -243,6 +243,69 @@ func TestBuildFromParser(t *testing.T) {
 	}
 }
 
+func TestModifiedFunctionAndMethodParts(t *testing.T) {
+	params := []lib.Parameter{{Name: "n", Type: "int"}}
+	next := []lib.Parameter{{Name: "n", Type: "string"}}
+	left := []lib.ParsedFile{{
+		Path: "a.go", Package: "p", ImportPath: "p",
+		Entities: []lib.Entity{
+			lib.FunctionEntry{Name: "Sig", BodyHash: "s", Parameters: params},
+			lib.FunctionEntry{Name: "Body", BodyHash: "b", Calls: []lib.Call{{Expr: "old"}}},
+			lib.FunctionEntry{Name: "Both", BodyHash: "c", Parameters: params},
+			lib.FunctionEntry{Name: "Same", BodyHash: "d"},
+			lib.MethodEntry{FunctionEntry: lib.FunctionEntry{Name: "M", BodyHash: "m"}, Type: &lib.TypeEntry{Name: "*T"}},
+			lib.MethodEntry{FunctionEntry: lib.FunctionEntry{Name: "N", BodyHash: "n", Parameters: params}, Type: &lib.TypeEntry{Name: "T"}},
+			lib.MethodEntry{FunctionEntry: lib.FunctionEntry{Name: "P", BodyHash: "p", Parameters: params}, Type: &lib.TypeEntry{Name: "T"}},
+			lib.TypeEntry{Name: "T", Fields: []lib.Field{{Name: "A"}}},
+		},
+	}}
+	right := []lib.ParsedFile{{
+		Path: "a.go", Package: "p", ImportPath: "p",
+		Entities: []lib.Entity{
+			lib.FunctionEntry{Name: "Sig", BodyHash: "s", Parameters: next},
+			lib.FunctionEntry{Name: "Body", BodyHash: "b2", Calls: []lib.Call{{Expr: "new"}}},
+			lib.FunctionEntry{Name: "Both", BodyHash: "c2", Parameters: next},
+			lib.FunctionEntry{Name: "Same", BodyHash: "d"},
+			lib.MethodEntry{FunctionEntry: lib.FunctionEntry{Name: "M", BodyHash: "m2"}, Type: &lib.TypeEntry{Name: "*T"}},
+			lib.MethodEntry{FunctionEntry: lib.FunctionEntry{Name: "N", BodyHash: "n", Parameters: next}, Type: &lib.TypeEntry{Name: "*T"}},
+			lib.MethodEntry{FunctionEntry: lib.FunctionEntry{Name: "P", BodyHash: "p2", Parameters: next}, Type: &lib.TypeEntry{Name: "T"}},
+			lib.TypeEntry{Name: "T", Fields: []lib.Field{{Name: "A"}, {Name: "B"}}},
+		},
+	}}
+	pkg := mustPkg(t, Build(left, right), "p")
+	want := map[string]string{
+		"function Sig":  "signature",
+		"function Body": "body",
+		"function Both": "both",
+		"function Same": "",
+		"method M":      "body",
+		"method N":      "signature",
+		"method P":      "both",
+		"type T":        "",
+	}
+	for _, entity := range pkg.Entities {
+		key := entity.Kind + " " + entity.Name
+		part, ok := want[key]
+		if !ok {
+			t.Fatalf("unexpected %s", key)
+		}
+		if entity.Part != part {
+			t.Errorf("%s part = %q, want %q", key, entity.Part, part)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing %v", want)
+	}
+	raw, err := json.Marshal(mustEntity(t, pkg, "function", "Same"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"part"`) {
+		t.Fatalf("unchanged json = %s", raw)
+	}
+}
+
 func TestBodyBytesBeforeEncodesZero(t *testing.T) {
 	left := []lib.ParsedFile{{
 		Path: "a.go", Package: "p", ImportPath: "p",

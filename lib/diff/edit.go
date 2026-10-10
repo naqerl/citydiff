@@ -101,3 +101,30 @@ func receiverText(entry lib.MethodEntry) string {
 	}
 	return entry.Type.Name
 }
+
+// PartOf reports how a function or method changed.
+// signature is the parameters, the results, or the receiver.
+// body is the body hash, the body length, or the call list.
+// both is a signature change and a body change.
+// Any other pair returns an empty string.
+func PartOf(left, right lib.Entity) string {
+	signature, body := false, false
+	for _, edit := range editsBetween(left, right) {
+		switch edit.Field {
+		case "parameters", "returnArgs", "receiver":
+			signature = true
+		case "bodyHash", "bodyBytes", "calls":
+			body = true
+		}
+	}
+	switch {
+	case signature && body:
+		return "both"
+	case signature:
+		return "signature"
+	case body:
+		return "body"
+	default:
+		return ""
+	}
+}

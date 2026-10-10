@@ -214,6 +214,49 @@ func editFields(change Entry) string {
 	return strings.Join(names, ",")
 }
 
+func TestPartOfSplitsSignatureAndBody(t *testing.T) {
+	fn := func(hash string, params []lib.Parameter, calls []lib.Call) lib.FunctionEntry {
+		return lib.FunctionEntry{Name: "F", BodyHash: hash, Parameters: params, Calls: calls}
+	}
+	base := fn("same", []lib.Parameter{{Name: "n", Type: "int"}}, []lib.Call{{Expr: "old"}})
+	cases := []struct {
+		name  string
+		right lib.Entity
+		want  string
+	}{
+		{"parameters", fn("same", []lib.Parameter{{Name: "n", Type: "string"}}, base.Calls), "signature"},
+		{"results", lib.FunctionEntry{Name: "F", BodyHash: "same", ReturnArgs: []lib.Parameter{{Type: "error"}}, Calls: base.Calls}, "signature"},
+		{"body", fn("next", base.Parameters, base.Calls), "body"},
+		{"calls", fn("same", base.Parameters, []lib.Call{{Expr: "new"}}), "body"},
+		{"both", fn("next", []lib.Parameter{{Name: "n", Type: "string"}}, base.Calls), "both"},
+		{"same", base, ""},
+	}
+	for _, tc := range cases {
+		if got := PartOf(base, tc.right); got != tc.want {
+			t.Errorf("%s part = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	leftMethod := lib.MethodEntry{FunctionEntry: base, Type: &lib.TypeEntry{Name: "*Box"}}
+	recv := lib.MethodEntry{FunctionEntry: base, Type: &lib.TypeEntry{Name: "Box"}}
+	if got := PartOf(leftMethod, recv); got != "signature" {
+		t.Errorf("receiver part = %q", got)
+	}
+	bodyMethod := lib.MethodEntry{FunctionEntry: fn("next", base.Parameters, base.Calls), Type: &lib.TypeEntry{Name: "*Box"}}
+	if got := PartOf(leftMethod, bodyMethod); got != "body" {
+		t.Errorf("method body part = %q", got)
+	}
+	bothMethod := lib.MethodEntry{
+		FunctionEntry: fn("next", []lib.Parameter{{Name: "n", Type: "string"}}, base.Calls),
+		Type:          &lib.TypeEntry{Name: "Box"},
+	}
+	if got := PartOf(leftMethod, bothMethod); got != "both" {
+		t.Errorf("method both part = %q", got)
+	}
+	if got := PartOf(lib.TypeEntry{Name: "Box", Fields: []lib.Field{{Name: "A"}}}, lib.TypeEntry{Name: "Box", Fields: []lib.Field{{Name: "B"}}}); got != "" {
+		t.Errorf("type part = %q", got)
+	}
+}
+
 func TestEntriesBodyBytes(t *testing.T) {
 	left := []lib.Entity{lib.FunctionEntry{Name: "A", BodyHash: "a", BodyBytes: 10}}
 	right := []lib.Entity{lib.FunctionEntry{Name: "A", BodyHash: "b", BodyBytes: 14}}

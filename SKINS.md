@@ -115,7 +115,7 @@ Shaders and textures are optional. Leave them out and the element keeps the mate
 | `fragment` | `fog` | Replaces the fog on the city meshes. `fogFactor`, `fogColor`, `vFogDepth`, `vSkinWorld`, and `gl_FragColor` are in scope. |
 | `segments` | `plane` | How finely the floor grid is divided when it has a vertex shader. The default is 64. |
 
-On buildings, [`aHouse.x`](view/main.js#L1172) is `0` for a type, `1` for a function, and `2` for a method. `aHouse.y` is a variation from 0 to 1, steady for each declaration. Copy them to `vHouse` to use them in the fragment shader. `vLocalUp` is yours to set from `normal.y` when a fragment needs to know the top face. These names are read while the shader is compiled ([shade.js](view/shade.js)).
+On buildings, [`aHouse.x`](view/main.js#L1176) is `0` for a type, `1` for a function, and `2` for a method. `aHouse.y` is a variation from 0 to 1, steady for each declaration. Copy them to `vHouse` to use them in the fragment shader. `vLocalUp` is yours to set from `normal.y` when a fragment needs to know the top face. These names are read while the shader is compiled ([shade.js](view/shade.js)).
 
 A shader that names `uTime` keeps the picture moving. The floor around the disc can be a displaced grid. The disc itself stays the ground under the city.
 
@@ -147,7 +147,7 @@ The floor ignores clicks. The camera frames the city.
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L53) | `#09090b` | Clear colour behind the scene. Used on its own when `skybox` is omitted. |
+| [`color`](view/main.js#L57) | `#09090b` | Clear colour behind the scene. Used on its own when `skybox` is omitted. |
 | [`skybox`](view/sky.js#L30) | a gradient | The sky. Three shapes, below. |
 
 `skybox` is one of:
@@ -160,27 +160,27 @@ The floor ignores clicks. The camera frames the city.
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L54) | `#09090b` | Fog colour. Match it to the sky when you want the city to fade into the background. |
-| [`falloff`](view/main.js#L1054) | `0.07` | How fast the fog thickens. It is divided by the width of the city, so the same number fades a large city and a small city at a similar rate. Raise it to hide the distance sooner. |
+| [`color`](view/main.js#L58) | `#09090b` | Fog colour. Match it to the sky when you want the city to fade into the background. |
+| [`falloff`](view/main.js#L1058) | `0.07` | How fast the fog thickens. It is divided by the width of the city, so the same number fades a large city and a small city at a similar rate. Raise it to hide the distance sooner. |
 
 ### [`plane`](view/skin.js#L9)
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L1060) | `#2a2a32` | The floor under the city. |
+| [`color`](view/main.js#L1064) | `#2a2a32` | The floor under the city. |
 
 ### [`ground`](view/skin.js#L10)
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L1068) | `#18181b` | The disc the packages stand on. |
+| [`color`](view/main.js#L1072) | `#18181b` | The disc the packages stand on. |
 
 ### [`horizon`](view/skin.js#L11)
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L1077) | `#3f3f46` | The ring around the disc. |
-| [`opacity`](view/main.js#L1080) | `0.7` | How solid that ring is, from 0 to 1. |
+| [`color`](view/main.js#L1081) | `#3f3f46` | The ring around the disc. |
+| [`opacity`](view/main.js#L1084) | `0.7` | How solid that ring is, from 0 to 1. |
 
 ### [`light`](view/skin.js#L12)
 
@@ -188,22 +188,22 @@ Three lights and an exposure. Their directions are fixed. You set colour and str
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`exposure`](view/main.js#L52) | `1.08` | Overall brightness of the rendering. |
-| [`hemiSky`](view/main.js#L724) | `#f4f4f5` | Sky side of the hemisphere light, the light from above. |
-| [`hemiGround`](view/main.js#L724) | `#27272a` | Ground side of that light, the light bounced up from the floor. |
-| [`hemiIntensity`](view/main.js#L724) | `0.55` | Strength of the hemisphere light. |
-| [`key`](view/main.js#L726) | `#fafafa` | Colour of the main light. |
-| [`keyIntensity`](view/main.js#L726) | `0.8` | Strength of the main light. |
-| [`rim`](view/main.js#L729) | `#d4d4d8` | Colour of the rim light, on the opposite side from the key. |
-| [`rimIntensity`](view/main.js#L729) | `0.18` | Strength of the rim light. |
+| [`exposure`](view/main.js#L56) | `1.08` | Overall brightness of the rendering. |
+| [`hemiSky`](view/main.js#L728) | `#f4f4f5` | Sky side of the hemisphere light, the light from above. |
+| [`hemiGround`](view/main.js#L728) | `#27272a` | Ground side of that light, the light bounced up from the floor. |
+| [`hemiIntensity`](view/main.js#L728) | `0.55` | Strength of the hemisphere light. |
+| [`key`](view/main.js#L730) | `#fafafa` | Colour of the main light. |
+| [`keyIntensity`](view/main.js#L730) | `0.8` | Strength of the main light. |
+| [`rim`](view/main.js#L733) | `#d4d4d8` | Colour of the rim light, on the opposite side from the key. |
+| [`rimIntensity`](view/main.js#L733) | `0.18` | Strength of the rim light. |
 
 ## City
 
-Overview draws each declaration in its kind colour: [`type`](view/main.js#L41), [`function`](view/main.js#L42), or [`method`](view/main.js#L43). Towers of one kind still differ a little in lightness.
+Overview draws each declaration in its kind colour: [`type`](view/main.js#L45), [`function`](view/main.js#L46), or [`method`](view/main.js#L47). Towers of one kind still differ a little in lightness.
 
-The changes view paints a package or a declaration with the matching [`change`](view/main.js#L34) colour when its change is added, removed, modified, or moved. An unchanged declaration keeps its kind colour.
+The changes view paints a package or a declaration with the matching [`change`](view/main.js#L36) colour when its change is added, removed, modified, or moved. An unchanged declaration keeps its kind colour. A modified function or method uses three yellows: [`modified`](view/main.js#L39) when only the signature changed, [`body`](view/main.js#L40) when only the body changed, and [`both`](view/main.js#L41) when the signature and the body both changed. A modified package or type stays on `modified`.
 
-A package that is a dependency of the selection takes [`call.color`](view/main.js#L39) and the stronger dependency glow. Call arcs that changed take the change colour. An unchanged arc uses `call.color`, or [`call.std`](view/main.js#L40) when the other package is the standard library.
+A package that is a dependency of the selection takes [`call.color`](view/main.js#L43) and the stronger dependency glow. Call arcs that changed take the change colour. An unchanged arc uses `call.color`, or [`call.std`](view/main.js#L44) when the other package is the standard library.
 
 Anything outside the current focus is multiplied by [`dim`](view/skin.js#L23). `1` leaves a colour alone. `0` pushes it to black.
 
@@ -213,12 +213,12 @@ A package is a block. Deeper packages walk the `steps` list and stop on the last
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`steps`](view/main.js#L1338) | `#27272a`, `#3f3f46`, `#52525b`, `#71717a` | Fill by depth. The first colour is the shallowest package. |
-| [`synthetic`](view/main.js#L1337) | `#18181b` | The root block that is not a real package. |
-| [`emissive`](view/main.js#L1092) | `#ffffff` | Glow colour. The glow takes on the package colour. |
-| [`emissiveIntensity`](view/main.js#L1093) | `0.06` | Glow while the package is idle. |
-| [`depEmissive`](view/main.js#L1938) | `0.62` | Glow while the package is a dependency of the selection. |
-| [`markedEmissive`](view/main.js#L1938) | `0.22` | Glow while the changes view has marked the package. |
+| [`steps`](view/main.js#L1342) | `#27272a`, `#3f3f46`, `#52525b`, `#71717a` | Fill by depth. The first colour is the shallowest package. |
+| [`synthetic`](view/main.js#L1341) | `#18181b` | The root block that is not a real package. |
+| [`emissive`](view/main.js#L1096) | `#ffffff` | Glow colour. The glow takes on the package colour. |
+| [`emissiveIntensity`](view/main.js#L1097) | `0.06` | Glow while the package is idle. |
+| [`depEmissive`](view/main.js#L1942) | `0.62` | Glow while the package is a dependency of the selection. |
+| [`markedEmissive`](view/main.js#L1942) | `0.22` | Glow while the changes view has marked the package. |
 
 ### [`external`](view/skin.js#L14)
 
@@ -226,20 +226,20 @@ A package from outside the snapshot. This is the one block with metalness and ro
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L1110) | `#3f3f46` | Fill. |
-| [`metalness`](view/main.js#L1111) | `0.35` | How metallic the surface is, from 0 to 1. |
-| [`roughness`](view/main.js#L1112) | `0.6` | How rough the surface is, from 0 to 1. |
-| [`emissive`](view/main.js#L1113) | `#000000` | Glow colour. |
-| [`emissiveIntensity`](view/main.js#L1114) | `0.2` | Idle glow. |
-| [`depEmissive`](view/main.js#L1926) | `0.7` | Glow while it is a dependency of the selection. |
+| [`color`](view/main.js#L1114) | `#3f3f46` | Fill. |
+| [`metalness`](view/main.js#L1115) | `0.35` | How metallic the surface is, from 0 to 1. |
+| [`roughness`](view/main.js#L1116) | `0.6` | How rough the surface is, from 0 to 1. |
+| [`emissive`](view/main.js#L1117) | `#000000` | Glow colour. |
+| [`emissiveIntensity`](view/main.js#L1118) | `0.2` | Idle glow. |
+| [`depEmissive`](view/main.js#L1930) | `0.7` | Glow while it is a dependency of the selection. |
 
 ### Kind colours
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`type.color`](view/main.js#L41) | `#d4d4d8` | A type block. |
-| [`function.color`](view/main.js#L42) | `#fafafa` | A function tower. |
-| [`method.color`](view/main.js#L43) | `#a1a1aa` | A method tower. |
+| [`type.color`](view/main.js#L45) | `#d4d4d8` | A type block. |
+| [`function.color`](view/main.js#L46) | `#fafafa` | A function tower. |
+| [`method.color`](view/main.js#L47) | `#a1a1aa` | A method tower. |
 
 ### [`entity`](view/skin.js#L18)
 
@@ -247,36 +247,38 @@ The material shared by every tower. The kind colour, or the change colour, tints
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L1147) | `#ffffff` | Tint of the shared material. |
-| [`emissive`](view/main.js#L1148) | `#ffffff` | Glow on every tower. |
-| [`emissiveIntensity`](view/main.js#L1149) | `0.28` | Strength of that glow. |
+| [`color`](view/main.js#L1151) | `#ffffff` | Tint of the shared material. |
+| [`emissive`](view/main.js#L1152) | `#ffffff` | Glow on every tower. |
+| [`emissiveIntensity`](view/main.js#L1153) | `0.28` | Strength of that glow. |
 
 ### [`change`](view/skin.js#L19)
 
-These colours paint marked packages and declarations, and changed call arcs. The legend swatches use the same four colours ([added](view/skin.js#L85), [removed](view/skin.js#L86), [modified](view/skin.js#L87), [moved](view/skin.js#L88)). The words in the sidebar are the `hud` text colours below, so a light object colour and a dark word can differ.
+These colours paint marked packages and declarations, and changed call arcs. The legend swatches use the same colours ([added](view/skin.js#L90), [removed](view/skin.js#L91), [modified](view/skin.js#L92), [body](view/skin.js#L93), [both](view/skin.js#L94), [moved](view/skin.js#L95)). The words in the sidebar are the `hud` text colours below, so a light object colour and a dark word can differ. The sidebar still says "changed". On a function or a method that word takes the yellow of the tower.
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`added`](view/main.js#L34) | `#71d083` | Added. |
-| [`removed`](view/main.js#L35) | `#e5484d` | Removed. |
-| [`modified`](view/main.js#L36) | `#ffc53d` | Modified. |
-| [`moved`](view/main.js#L37) | `#7d66d9` | Moved. |
-| [`same`](view/main.js#L38) | `#f4f4f5` | The colour asked for when a change is unchanged. |
+| [`added`](view/main.js#L37) | `#71d083` | Added. |
+| [`removed`](view/main.js#L38) | `#e5484d` | Removed. |
+| [`modified`](view/main.js#L39) | `#ffc53d` | A changed package or type, and a function or method whose signature changed. |
+| [`body`](view/main.js#L40) | `#cc9200` | A function or method whose body changed. Darker yellow. |
+| [`both`](view/main.js#L41) | `#ffd97a` | A function or method whose signature and body both changed. Brighter yellow. |
+| [`moved`](view/main.js#L42) | `#7d66d9` | Moved. |
+| [`same`](view/main.js#L43) | `#f4f4f5` | The colour asked for when a change is unchanged. |
 
 ### [`call`](view/skin.js#L20)
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L39) | `#23afd0` | A call arc, and a package shown as a dependency. |
-| [`std`](view/main.js#L40) | `#d4d4d8` | An arc whose other end is the standard library. |
+| [`color`](view/main.js#L43) | `#23afd0` | A call arc, and a package shown as a dependency. |
+| [`std`](view/main.js#L44) | `#d4d4d8` | An arc whose other end is the standard library. |
 
 ### [`selection`](view/skin.js#L21)
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`color`](view/main.js#L44) | `#23afd0` | The halo on the selected declaration. |
-| [`ring`](view/main.js#L55) | `#a1a1aa` | The ring drawn on the roof of an entered package. |
-| [`ringOpacity`](view/main.js#L56) | `0.35` | How solid that ring is, from 0 to 1. |
+| [`color`](view/main.js#L48) | `#23afd0` | The halo on the selected declaration. |
+| [`ring`](view/main.js#L59) | `#a1a1aa` | The ring drawn on the roof of an entered package. |
+| [`ringOpacity`](view/main.js#L60) | `0.35` | How solid that ring is, from 0 to 1. |
 
 ### [`label`](view/skin.js#L22)
 
@@ -284,8 +286,8 @@ The name drawn on the faces of a package. The floating name that follows the poi
 
 | Field | Default | What it paints |
 | --- | --- | --- |
-| [`background`](view/main.js#L1281) | `transparent` | Plate behind the name. Leave it empty or `"transparent"` to draw the text alone. Any other colour fills the plate. |
-| [`text`](view/main.js#L1282) | `#fafafa` | The name itself. |
+| [`background`](view/main.js#L1285) | `transparent` | Plate behind the name. Leave it empty or `"transparent"` to draw the text alone. Any other colour fills the plate. |
+| [`text`](view/main.js#L1286) | `#fafafa` | The name itself. |
 
 On a light skin, keep the object colours light enough that this text still reads on top of them. The light skin does that, and keeps the sidebar words dark through the `hud` text colours.
 
@@ -295,11 +297,11 @@ Applied to whatever is outside the current focus.
 
 | Field | Default | What it multiplies |
 | --- | --- | --- |
-| [`entity`](view/main.js#L2199) | `0.04` | A tower that is not part of the selection. |
-| [`package`](view/main.js#L1941) | `0.2` | A package that is not part of the selection. |
-| [`external`](view/main.js#L1930) | `0.22` | An external package in that same state. |
-| [`emissive`](view/main.js#L1942) | `0.02` | The package glow while it is dimmed. |
-| [`plate`](view/main.js#L1943) | `0.35` | Opacity of the name plate while its package is dimmed, from 0 to 1. |
+| [`entity`](view/main.js#L2203) | `0.04` | A tower that is not part of the selection. |
+| [`package`](view/main.js#L1945) | `0.2` | A package that is not part of the selection. |
+| [`external`](view/main.js#L1934) | `0.22` | An external package in that same state. |
+| [`emissive`](view/main.js#L1946) | `0.02` | The package glow while it is dimmed. |
+| [`plate`](view/main.js#L1947) | `0.35` | Opacity of the name plate while its package is dimmed, from 0 to 1. |
 
 ## Page
 
@@ -326,23 +328,25 @@ The words for a change are separate from the 3D colours, so the legend swatch ca
 | [`code`](view/skin.js#L82) | `#fde68a` | Inline code. |
 | [`accent`](view/skin.js#L83) | `#ffc53d` | Accent: the current tour step, the progress bar. |
 | [`pre`](view/skin.js#L84) | `#e4e4e7` | Preformatted text. |
-| [`addedText`](view/skin.js#L89) | `#71d083` | The word "added". |
-| [`removedText`](view/skin.js#L90) | `#e5484d` | The word "removed". |
-| [`modifiedText`](view/skin.js#L91) | `#ffc53d` | The word "modified". |
-| [`movedText`](view/skin.js#L92) | `#7d66d9` | The word "moved". |
-| [`addedBg`](view/skin.js#L98) | `rgba(34, 197, 94, 0.14)` | Background of an added code line. |
-| [`addedFg`](view/skin.js#L99) | `#bbf7d0` | Text of an added code line. |
-| [`removedBg`](view/skin.js#L100) | `rgba(239, 68, 68, 0.14)` | Background of a removed code line. |
-| [`removedFg`](view/skin.js#L101) | `#fecaca` | Text of a removed code line. |
-| [`addedLine`](view/skin.js#L102) | `#4ade80` | Mark on an added row. |
-| [`removedLine`](view/skin.js#L103) | `#f87171` | Mark on a removed row. |
-| [`modifiedLine`](view/skin.js#L104) | `#facc15` | Mark on a modified row. |
-| [`codeBg`](view/skin.js#L105) | `rgba(12, 12, 14, 0.8)` | Code block background. |
-| [`drop`](view/skin.js#L106) | `rgba(9, 9, 11, 0.6)` | Dropped-file target. |
-| [`dropBorder`](view/skin.js#L107) | `#facc15` | Border of that target. |
-| [`scrim`](view/skin.js#L108) | `rgba(9, 9, 11, 0.78)` | Scrim behind a menu. |
-| [`on`](view/skin.js#L109) | `rgba(24, 24, 27, 0.55)` | The pressed state of a button. |
-| [`currentBg`](view/skin.js#L110) | `rgba(255, 197, 61, 0.08)` | The current tour step. |
+| [`addedText`](view/skin.js#L91) | `#71d083` | The word "added". |
+| [`removedText`](view/skin.js#L92) | `#e5484d` | The word "removed". |
+| [`modifiedText`](view/skin.js#L98) | `#ffc53d` | The word "changed" for a signature change, and for any other modified declaration. |
+| [`bodyText`](view/skin.js#L99) | `#cc9200` | The word "changed" for a body change. |
+| [`bothText`](view/skin.js#L100) | `#ffd97a` | The word "changed" when the signature and the body both changed. |
+| [`movedText`](view/skin.js#L101) | `#7d66d9` | The word "moved". |
+| [`addedBg`](view/skin.js#L102) | `rgba(34, 197, 94, 0.14)` | Background of an added code line. |
+| [`addedFg`](view/skin.js#L103) | `#bbf7d0` | Text of an added code line. |
+| [`removedBg`](view/skin.js#L104) | `rgba(239, 68, 68, 0.14)` | Background of a removed code line. |
+| [`removedFg`](view/skin.js#L105) | `#fecaca` | Text of a removed code line. |
+| [`addedLine`](view/skin.js#L106) | `#4ade80` | Mark on an added row. |
+| [`removedLine`](view/skin.js#L107) | `#f87171` | Mark on a removed row. |
+| [`modifiedLine`](view/skin.js#L108) | `#facc15` | Mark on a modified row. |
+| [`codeBg`](view/skin.js#L109) | `rgba(12, 12, 14, 0.8)` | Code block background. |
+| [`drop`](view/skin.js#L110) | `rgba(9, 9, 11, 0.6)` | Dropped-file target. |
+| [`dropBorder`](view/skin.js#L111) | `#facc15` | Border of that target. |
+| [`scrim`](view/skin.js#L112) | `rgba(9, 9, 11, 0.78)` | Scrim behind a menu. |
+| [`on`](view/skin.js#L113) | `rgba(24, 24, 27, 0.55)` | The pressed state of a button. |
+| [`currentBg`](view/skin.js#L114) | `rgba(255, 197, 61, 0.08)` | The current tour step. |
 
 ## A custom skin
 
@@ -373,6 +377,8 @@ paper/
     "addedText": "#1f7a4d",
     "removedText": "#d12b31",
     "modifiedText": "#a16207",
+    "bodyText": "#6b3f04",
+    "bothText": "#9d6716",
     "movedText": "#6e56cf"
   }
 }

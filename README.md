@@ -96,6 +96,8 @@ Two modes, toggled by the `Overview` / `Changes` buttons, `m`, or keys `1` and `
   changed ones take the change colour, and the calls the range changed are drawn between the
   towers that make them. Added and removed module dependencies stay at module level, drawn
   between the packages.
+  A changed function or method is a darker yellow when only its body changed, the usual
+  yellow when only its signature changed, and a brighter yellow when both changed.
 
 Selecting a package descends into it; selecting a tower opens its call path. The sidebar
 shows the change for whatever is selected, with the resolved calls in source order.

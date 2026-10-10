@@ -28,10 +28,14 @@
       --added: #71d083;
       --removed: #e5484d;
       --modified: #ffc53d;
+      --body: #cc9200;
+      --both: #ffd97a;
       --moved: #7d66d9;
       --added-text: #71d083;
       --removed-text: #e5484d;
       --modified-text: #ffc53d;
+      --body-text: #cc9200;
+      --both-text: #ffd97a;
       --moved-text: #7d66d9;
       --call: #23afd0;
       --function: #fafafa;
@@ -72,10 +76,14 @@
     @property --added { syntax: "<color>"; inherits: true; initial-value: #71d083; }
     @property --removed { syntax: "<color>"; inherits: true; initial-value: #e5484d; }
     @property --modified { syntax: "<color>"; inherits: true; initial-value: #ffc53d; }
+    @property --body { syntax: "<color>"; inherits: true; initial-value: #cc9200; }
+    @property --both { syntax: "<color>"; inherits: true; initial-value: #ffd97a; }
     @property --moved { syntax: "<color>"; inherits: true; initial-value: #7d66d9; }
     @property --added-text { syntax: "<color>"; inherits: true; initial-value: #71d083; }
     @property --removed-text { syntax: "<color>"; inherits: true; initial-value: #e5484d; }
     @property --modified-text { syntax: "<color>"; inherits: true; initial-value: #ffc53d; }
+    @property --body-text { syntax: "<color>"; inherits: true; initial-value: #cc9200; }
+    @property --both-text { syntax: "<color>"; inherits: true; initial-value: #ffd97a; }
     @property --moved-text { syntax: "<color>"; inherits: true; initial-value: #7d66d9; }
     @property --call { syntax: "<color>"; inherits: true; initial-value: #23afd0; }
     @property --function { syntax: "<color>"; inherits: true; initial-value: #fafafa; }
@@ -101,8 +109,8 @@
         --fg 0.45s ease, --dim 0.45s ease, --muted 0.45s ease, --faint 0.45s ease, --fainter 0.45s ease,
         --line 0.45s ease, --line-strong 0.45s ease, --edge 0.45s ease, --shadow 0.45s ease,
         --link 0.45s ease, --code 0.45s ease, --accent 0.45s ease, --pre 0.45s ease,
-        --added 0.45s ease, --removed 0.45s ease, --modified 0.45s ease, --moved 0.45s ease,
-        --added-text 0.45s ease, --removed-text 0.45s ease, --modified-text 0.45s ease, --moved-text 0.45s ease,
+        --added 0.45s ease, --removed 0.45s ease, --modified 0.45s ease, --body 0.45s ease, --both 0.45s ease, --moved 0.45s ease,
+        --added-text 0.45s ease, --removed-text 0.45s ease, --modified-text 0.45s ease, --body-text 0.45s ease, --both-text 0.45s ease, --moved-text 0.45s ease,
         --call 0.45s ease, --function 0.45s ease, --method 0.45s ease, --type 0.45s ease, --package 0.45s ease,
         --added-bg 0.45s ease, --added-fg 0.45s ease, --removed-bg 0.45s ease, --removed-fg 0.45s ease,
         --added-line 0.45s ease, --removed-line 0.45s ease, --modified-line 0.45s ease,
@@ -241,6 +249,8 @@
     .added { color: var(--added-text); }
     .removed { color: var(--removed-text); }
     .modified { color: var(--modified-text); }
+    .modified.body { color: var(--body-text); }
+    .modified.both { color: var(--both-text); }
     .moved { color: var(--moved-text); }
     .tally span { margin-left: 8px; white-space: nowrap; }
     #tag {
@@ -350,6 +360,8 @@
     .fig .add { width: 10px; height: 32px; background: var(--added); }
     .fig .del { width: 10px; height: 32px; background: var(--removed); }
     .fig .mod { width: 10px; height: 28px; background: var(--modified); }
+    .fig .mod.body { background: var(--body); }
+    .fig .mod.both { background: var(--both); }
     .fig svg { width: 72px; height: 48px; }
     #tour-side, #skin-side {
       position: absolute;
@@ -671,8 +683,8 @@
         <div><b class="removed">Deleted</b><p>Red is gone. A red block is a deleted package or function. A red arc is a call that was deleted.</p></div>
       </button>
       <button class="ex" type="button">
-        <div class="fig"><i class="mod"></i></div>
-        <div><b class="modified">Changed</b><p>Yellow is a package or function that changed. Its size stays the size of the body.</p></div>
+        <div class="fig"><i class="mod body"></i><i class="mod"></i><i class="mod both"></i></div>
+        <div><b class="modified">Changed</b><p>Yellow is a package or a declaration that changed. On a function or a method, a darker yellow is a body change, this yellow is a signature change, and a brighter yellow is both. Its size stays the size of the body.</p></div>
       </button>
       <button class="ex" type="button">
         <div class="fig">
