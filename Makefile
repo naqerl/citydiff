@@ -3,7 +3,7 @@ vet: fmt
 
 test: vet
 	go test ./...
-	node --test view/
+	node --test view/*.test.mjs
 
 fmt:
 	go fmt ./...

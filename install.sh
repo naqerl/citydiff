@@ -215,6 +215,7 @@ say "  bin dir:    $BIN_DIR"
 say "  skills dir: $SKILLS_DIR"
 
 if [ -n "$SKILLS_ONLY" ]; then
+  write_skill "$TAG"
   install_tour_skill "$TAG"
   say "skills installed."
   exit 0
@@ -240,7 +241,7 @@ build_from_source() {
 if [ -n "$FROM_SOURCE" ]; then
   build_from_source
   version="${TAG:-main}"
-  if [ -z "$NO_SKILLS" ]; then install_tour_skill "$TAG"; fi
+  if [ -z "$NO_SKILLS" ]; then write_skill "$TAG"; install_tour_skill "$TAG"; fi
   say ""
   say "$BIN_NAME $version installed."
   exit 0
@@ -321,182 +322,54 @@ fi
 
 # ---------------------------------------------------------------- skills -----
 
+# The base skill ships with the release: the copy in the repository at the
+# installed tag, so what lands beside the binary is the text that release
+# carried. A checkout wins when there is one, and a tag older than the file
+# falls back to main with a warning, which is the best it can do.
+base_skill_source() {
+  here=$(dirname "$0" 2>/dev/null || printf .)
+  if [ -f "$here/skills/$SKILL_NAME/SKILL.md" ]; then
+    cat "$here/skills/$SKILL_NAME/SKILL.md"
+    return 0
+  fi
+  ref="${1:-main}"
+  if fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$SKILL_NAME/SKILL.md" 2>/dev/null; then
+    return 0
+  fi
+  warn "  no skills/$SKILL_NAME/SKILL.md at $ref; taking the skill from main"
+  fetch "https://raw.githubusercontent.com/$REPO/main/skills/$SKILL_NAME/SKILL.md"
+}
+
 write_skill() {
   skill_dir="$SKILLS_DIR/$SKILL_NAME"
-  mkdir -p "$skill_dir"
-  cat > "$skill_dir/SKILL.md" <<EOF
----
-name: $SKILL_NAME
-description: 3D structural diff of Go code ("citydiff") — cross-module dependency changes, declaration/entity edges and call-path changes across a commit range. Use when asked what a commit or range changed structurally, who calls what, or how a call path changed.
----
-
-# $SKILL_NAME — citydiff, a 3D code diff
-
-A diff viewed from the outside inward, at three levels:
-
-1. **Cross-module dependencies** — which modules gained/lost a dependency on which.
-2. **Entity relationships** — which declarations depend on which, and how those edges changed.
-3. **Call paths** — inside a function/method, which functions it calls, in order, and how that changed.
-
-The three levels are views of one diff.
-
-To walk someone through a range in the viewer, write a tour: see the
-\`citydiff-tour\` skill installed next to this one (\`citydiff nodes\`,
-\`citydiff tour validate\`, \`citydiff tour serve\`).
-
-## Source of truth
-
-| | |
-| --- | --- |
-| Repository | https://github.com/$REPO |
-| Release | https://github.com/$REPO/releases (tags \`v*\`) |
-| Installer | https://raw.githubusercontent.com/$REPO/main/install.sh |
-| Module | \`citydiff\`, Go 1.27, **requires CGO** (tree-sitter C bindings) |
-| Installed as | \`$BIN_DIR/$BIN_NAME\` (release installed here on $(date -u +%Y-%m-%d)) |
-| Release used | $version |
-
-For any question about behaviour, internals or bugs: **the answer lives in the repository
-above, not in this file.** Read \`AGENTS.md\` in the repo for the design intent, \`lib/parser\`
-for how declarations and calls are recorded, \`lib/diff\` for how two parses are compared,
-\`cmd/cli/main.go\` for flags, and \`view/\` for the browser UI. When this file and the code
-disagree, the code wins — and this file should be updated.
-
-## Install / update
-
-\`\`\`sh
-curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh          # latest release
-curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh -s -- --tag=v0.0.1
-TAG=v0.0.2 curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh
-UNINSTALL=1 curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh   # remove
-\`\`\`
-
-Re-running the installer upgrades in place: it resolves the newest release, verifies the
-published sha256, replaces the binary, and rewrites this skill file.
-
-## Flags
-
-\`\`\`
-$BIN_NAME -path FILE|DIR              parse a file or directory tree
-           -range A..B | A...B         diff two refs; works with git repos (reads the tree at a ref)
-           -json                       machine-readable entries (pipe into jq)
-           -scene                      print the 3D scene as JSON (input for the viewer)
-           -view                       serve the 3D viewer over HTTP
-           -addr 127.0.0.1:8787        listen address for -view (default)
-           -p, -r                      short forms of -path, -range
-\`\`\`
-
-Note: \`-view\` is **long-running** — always launch it in the background (see below).
-Note: for a commit range the path must be a **git repository**, not a plain directory;
-go-git reads the trees at the two refs, so the working tree does not need to be checked out.
-
-## Recipes
-
-Parse a single file or a project tree (one-shot, prints JSON):
-
-\`\`\`sh
-$BIN_NAME -path /home/user/src/barse -json | jq '.[] | {path, decls: (.entries | length)}'
-\`\`\`
-
-Diff a commit range — the main use:
-
-\`\`\`sh
-cd /home/user/src/barse
-$BIN_NAME -path . -range 6ca8b06..3aff57d -json > /tmp/diff.json
-jq '[.[] | select(.action=="modified") | {path, changes: [.changes[] | {action, name: (.left.entry.name // .right.entry.name)}]}]' /tmp/diff.json
-\`\`\`
-
-Diff the last N commits of the current branch:
-
-\`\`\`sh
-cd "\$REPO_DIR"
-base=\$(git rev-parse HEAD~20)
-$BIN_NAME -path . -range "\$base..HEAD" -json > /tmp/range.json
-\`\`\`
-
-### Launch the 3D viewer in the background
-
-It serves on 127.0.0.1:8787 by default and never exits, so never call it in the foreground.
-
-\`\`\`sh
-# long-lived viewer over a whole project
-nohup $BIN_NAME -path /home/user/src/barse -view -addr 127.0.0.1:8787 \\
-  > /tmp/citydiff-view.log 2>&1 &
-echo \$! > /tmp/citydiff-view.pid
-
-# viewer over a commit range (the diff scene)
-nohup $BIN_NAME -path /home/user/src/barse -range A..B -view -addr 127.0.0.1:8788 \\
-  > /tmp/citydiff-range.log 2>&1 &
-echo \$! > /tmp/citydiff-range.pid
-
-# check / stop
-curl -fsS http://127.0.0.1:8787/scene.json > /dev/null && echo up
-kill "\$(cat /tmp/citydiff-view.pid)"
-\`\`\`
-
-The viewer exposes \`GET /scene.json\` (the scene graph) and \`/\` (static assets, embedded in
-the binary). Bind to \`127.0.0.1\` unless remote access is intended — it has no auth.
-
-## Building from source (no release available)
-
-\`\`\`sh
-git clone git@github.com:$REPO && cd citydiff
-make vet
-go build -o $BIN_NAME ./cmd/cli
-\`\`\`
-
-CGO is mandatory: \`CGO_ENABLED=0\` fails with *"build constraints exclude all Go files"* in
-\`tree-sitter-go/bindings/go\`. Release CI therefore builds natively per runner
-(linux/amd64 on ubuntu, darwin/arm64 on macos) instead of cross-compiling.
-
-## Reading the output
-
-**Plain parse (\`-json\` without \`-range\`)** — one object per file:
-
-\`\`\`json
-[{"path": "pkg/x.go", "entries": [{"name": "...", "kind": "...", "calls": [...]}]}]
-\`\`\`
-
-**Diff (\`-range\`)** — one object per file, \`action\` = \`added\` / \`modified\` / \`deleted\`, and
-\`changes[]\` holds one entry per declaration change, each with its own \`action\` and a \`left\`
-and/or \`right\` side:
-
-\`\`\`json
-[{"path": "db/flashcard.sql.go", "action": "modified",
-  "changes": [{"action": "added",
-               "right": {"kind": "method",
-                         "entry": {"name": "ClearGenerationFinal",
-                                   "parameters": [{"name": "ctx", "type": "context.Context"}],
-                                   "returnArgs": [{"type": "error"}],
-                                   "calls": [{"expr": "q.db.ExecContext"}]},
-                         "bodyHash": "67a9fdd5…"}}]}]
-\`\`\`
-
-- \`entry.kind\` — the declaration kind (func, method, type, …).
-- \`entry.calls\` — direct calls recorded on that declaration, in source order, including
-  calls inside nested function literals. \`expr\` is the call expression; a \`ref\` is filled in
-  when the callee is declared inside the same snapshot. A call whose target lies outside the
-  snapshot stays **unresolved** and is kept.
-- \`bodyHash\` — the signal that a body changed beyond its call list.
-- Unresolved calls are not errors: the snapshot is the closed world for that parse, and the
-  diff decides which calls matter.
-
-The viewer consumes the scene graph \`{module, root, diff, packages}\`; \`GET /scene.json\`
-returns exactly that for whatever the process was launched with.
-
-## Repo map (for questions)
-
-| Path | What |
-| --- | --- |
-| \`AGENTS.md\` | design intent and invariants of the tool |
-| \`cmd/cli/main.go\` | flags, JSON shapes, the \`-view\` HTTP server |
-| \`lib/parser.go\`, \`lib/parser/\` | Go source → Entry values (tree-sitter) |
-| \`lib/diff/\` | comparing two parses at all three levels |
-| \`lib/git/\` | git source: reads trees at refs via go-git |
-| \`lib/files/\` | filesystem source |
-| \`view/\` | embedded browser viewer (main.js, layout.js, fly.js, search.js) |
-| \`.github/workflows/release.yml\` | CI: vet+build+smoke, release on \`v*\` tags |
-EOF
-  say "  wrote skill $skill_dir/SKILL.md"
+  src="$(mktemp)"
+  if ! base_skill_source "${1:-}" > "$src"; then
+    rm -f "$src"
+    warn "  could not fetch the $SKILL_NAME skill; skipped"
+    return 0
+  fi
+  # The file carries placeholders, so fill them in before checking that what we
+  # fetched is the skill we think it is.
+  filled="$src.filled.$$"
+  if ! sed -e "s|__REPO_DIR__|${REPO##*/}|g" \
+           -e "s|__REPO__|$REPO|g" \
+           -e "s|__BIN_DIR__|$BIN_DIR|g" \
+           -e "s|__BIN_NAME__|$BIN_NAME|g" \
+           -e "s|__SKILL_NAME__|$SKILL_NAME|g" \
+           -e "s|__VERSION__|${version:-${TAG:-main}}|g" \
+           -e "s|__DATE__|$(date -u +%Y-%m-%d)|g" \
+           "$src" > "$filled" || ! grep -q "^name: $SKILL_NAME$" "$filled"; then
+    rm -f "$src" "$filled"
+    warn "  the $SKILL_NAME skill we fetched is not ours; skipped"
+    return 0
+  fi
+  if mkdir -p "$skill_dir" && mv "$filled" "$skill_dir/SKILL.md"; then
+    rm -f "$src"
+    say "  wrote skill $skill_dir/SKILL.md"
+    return 0
+  fi
+  rm -f "$src" "$filled"
+  warn "  cannot write $skill_dir/SKILL.md; skipped"
 }
 
 agents_md_target() {
@@ -527,7 +400,7 @@ add_pointer() {
 if [ -n "$NO_SKILLS" ]; then
   say "  skills skipped (--no-skills)"
 else
-  write_skill
+  write_skill "$version"
   install_tour_skill "$version"
   add_pointer "$(agents_md_target)"
 fi
