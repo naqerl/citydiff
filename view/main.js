@@ -2390,7 +2390,10 @@ function selectExternal(id, inbound = true) {
 function selectEntity(id) {
   const found = byEntity.get(id);
   if (!found || !found.box) return;
-  if (selected && selected.kind === "entity" && selected.id === id && (found.entity.kind === "function" || found.entity.kind === "method")) {
+  // A function is here for its calls: selecting one opens the call diff
+  // straight away, on the calls side, instead of asking for a second click.
+  // Escape leaves the diff and stays on the node.
+  if (found.entity.kind === "function" || found.entity.kind === "method") {
     enterFocus(found);
     return;
   }
@@ -3280,9 +3283,6 @@ function entityDetail(entity) {
     size.textContent = sizeText(entity);
     wrap.append(size);
     appendRefs(wrap);
-    const again = document.createElement("p");
-    again.textContent = "Click again or press enter to open the call diff.";
-    wrap.append(again);
   } else if (entity.kind === "type") {
     appendRefs(wrap);
   }
