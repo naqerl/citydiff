@@ -1,4 +1,6 @@
-# citydiff
+# CityDiff
+
+![thumb](https://s3.naqerl.com/public/demo/citydiff.png)
 
 **A 3D diff for Go, Rust and Swift.** Read one change from the outside inward, at three levels:
 
