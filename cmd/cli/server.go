@@ -148,6 +148,7 @@ func (v *viewer) handler() http.Handler {
 	})
 	mountSkins(mux, skinsDir())
 	mux.HandleFunc("GET /api/edit", v.serveEditor)
+	mux.HandleFunc("GET /api/diff", v.serveDiff)
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	return mux
 }

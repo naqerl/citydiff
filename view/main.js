@@ -6,8 +6,9 @@ import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
-import { KEYBINDS, editAction } from "./keys.js";
+import { KEYBINDS, editAction, diffAction } from "./keys.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
+import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
 import { applyPage, loadSkin } from "./skin.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
@@ -4066,6 +4067,9 @@ window.addEventListener("keydown", (event) => {
     }
     return;
   }
+  // The diff overlay is a reading surface: it scrolls, it takes Escape, and
+  // nothing else the viewer listens for should fire while it is up.
+  if (diffActive()) return;
   requestFrame();
   if (editAction(event) && event.target !== hud.search) {
     const target = editTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
@@ -4073,6 +4077,15 @@ window.addEventListener("keydown", (event) => {
       event.preventDefault();
       held.clear();
       openEditor(target, () => { renderer.domElement.focus?.(); requestFrame(); });
+    }
+    return;
+  }
+  if (diffAction(event) && event.target !== hud.search) {
+    const target = diffTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
+    if (target) {
+      event.preventDefault();
+      held.clear();
+      openDiff(target, () => { renderer.domElement.focus?.(); requestFrame(); }).catch(() => {});
     }
     return;
   }

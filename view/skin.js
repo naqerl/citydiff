@@ -68,6 +68,11 @@ export function mergeSkin(base, overlay) {
 export function pageVars(skin) {
   const hud = skin.hud || {};
   const steps = (skin.package && skin.package.steps) || [];
+  const change = skin.change || {};
+  // The diff's syntax colours are the skin's own: a skin that names none gets
+  // a palette taken from the colours it already has, so a light skin stays
+  // legible and an extra skin still looks like itself.
+  const syn = skin.syntax || {};
   return {
     "--scheme": hud.scheme,
     "--bg": hud.bg,
@@ -117,6 +122,12 @@ export function pageVars(skin) {
     "--scrim": hud.scrim,
     "--on": hud.on,
     "--current-bg": hud.currentBg,
+    "--syn-keyword": syn.keyword || hud.movedText || change.moved || hud.accent,
+    "--syn-string": syn.string || hud.code,
+    "--syn-comment": syn.comment || hud.faint,
+    "--syn-number": syn.number || (skin.call && skin.call.color),
+    "--syn-type": syn.type || hud.dim,
+    "--syn-func": syn.func || hud.link,
   };
 }
 
