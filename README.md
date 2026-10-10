@@ -11,37 +11,10 @@ the top of what it calls.
 
 ## Install
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | sh
+Just ask your agent to install and paste a link to this repo
+
 ```
-
-The installer resolves the latest [release](https://github.com/naqerl/citydiff/releases),
-verifies its published `sha256`, installs the binary to `~/.local/bin`, and writes two agent
-skills: `citydiff` to `~/.agents/skills/citydiff`, and `citydiff-tour` (writing [tours](#tours))
-to `~/.agents/skills/citydiff-tour`, plus `~/.claude/skills` and `~/.cursor/skills` when those
-agents are installed. Re-running it is safe: it only rewrites files it owns and leaves a
-`SKILL.md` it did not write alone. It also supports env vars and flags:
-
-```sh
-# a specific tag
-curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | sh -s -- --tag=v0.0.2
-
-# choose where things go
-BIN_DIR=~/.local/bin SKILLS_DIR=~/.agents/skills AGENTS_MD=~/AGENTS.md \
-  sh install.sh
-
-# skip the agent skills / don't touch PATH
-sh install.sh --no-skills --no-path
-
-# only the tour skill, into chosen skill dirs
-curl -fsSL https://raw.githubusercontent.com/naqerl/citydiff/main/install.sh | \
-  SKILL_TARGETS="$HOME/.claude/skills $HOME/.agents/skills" sh -s -- --skills-only
-
-# build the binary from source (git, go and a C compiler) instead of a release
-sh install.sh --from-source
-
-# remove binary, skill and AGENTS.md pointer
-sh install.sh --uninstall
+Install citydiff, read added skills and create a demo tour on whatever project I'm currently working on. https://raw.githubusercontent.com/naqerl/citydiff/refs/heads/main/install.sh
 ```
 
 ## Quick start
