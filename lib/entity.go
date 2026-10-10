@@ -56,6 +56,7 @@ type TypeEntry struct {
 	Fields []Field `json:"fields,omitempty"`
 	// MethodsHash is the hex SHA-256 of this type's method body hashes, in source order.
 	MethodsHash string `json:"-"`
+	Pos
 }
 
 func (e TypeEntry) Kind() Kind {
@@ -64,6 +65,7 @@ func (e TypeEntry) Kind() Kind {
 
 type VariableEntry struct {
 	Name string `json:"name"`
+	Pos
 }
 
 func (e VariableEntry) Kind() Kind {
@@ -100,6 +102,7 @@ type FunctionEntry struct {
 	// A declaration with no body has length 0. The hash says whether the
 	// body changed. The length says whether it grew or shrank.
 	BodyBytes int `json:"-"`
+	Pos
 }
 
 func (e FunctionEntry) Kind() Kind {
@@ -121,4 +124,46 @@ func (e MethodEntry) String() string {
 		receiver = e.Type.Name
 	}
 	return fmt.Sprintf("{Name:%s Parameters:%+v ReturnArgs:%+v Type:{Name:%s}}", e.Name, e.Parameters, e.ReturnArgs, receiver)
+}
+
+// Pos is where a declaration is written: the 1-based line and column of its
+// name. Zero means unknown.
+type Pos struct {
+	Line   int `json:"-"`
+	Column int `json:"-"`
+}
+
+// At returns entry with its position set. Imports have none.
+func At(entry Entity, line, column int) Entity {
+	p := Pos{Line: line, Column: column}
+	switch e := entry.(type) {
+	case TypeEntry:
+		e.Pos = p
+		return e
+	case VariableEntry:
+		e.Pos = p
+		return e
+	case FunctionEntry:
+		e.Pos = p
+		return e
+	case MethodEntry:
+		e.Pos = p
+		return e
+	}
+	return entry
+}
+
+// PosOf is the position of an entity, zero when it has none.
+func PosOf(entry Entity) Pos {
+	switch e := entry.(type) {
+	case TypeEntry:
+		return e.Pos
+	case VariableEntry:
+		return e.Pos
+	case FunctionEntry:
+		return e.Pos
+	case MethodEntry:
+		return e.Pos
+	}
+	return Pos{}
 }

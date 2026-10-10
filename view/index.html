@@ -344,6 +344,24 @@
     .keys { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
     .keys li { color: var(--muted); min-width: 0; }
     .keys kbd { color: var(--fg); }
+    #editor {
+      position: fixed;
+      inset: 3vh 3vw;
+      z-index: 50;
+      background: #0d1017;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+    }
+    #editor .editor-term { flex: 1; min-height: 0; }
+    #editor .editor-msg {
+      margin: 0;
+      padding: 16px;
+      color: #ffb4a8;
+      font: 14px ui-monospace, monospace;
+    }
     #legend {
       position: fixed;
       inset: 0;

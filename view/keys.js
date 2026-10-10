@@ -18,6 +18,7 @@ export const KEYBINDS = [
   { keys: ["scroll"], does: "zoom" },
   { keys: ["click"], does: "enters" },
   { keys: ["enter"], does: "opens a function" },
+  { keys: ["E"], does: "open in nvim" },
   { keys: ["o", "i"], does: "jump back / forward" },
   { keys: ["esc"], does: "back" },
   { keys: ["space"], does: "tour play / pause" },
@@ -35,4 +36,14 @@ export function tourAction(event) {
   const target = event.target;
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return null;
   return TOUR[event.key] || null;
+}
+
+// editAction is true for the key that opens the selection in nvim: a capital
+// E, so the e of orbit keeps its meaning. Typing, modifiers and repeats are
+// not it.
+export function editAction(event) {
+  if (!event || event.metaKey || event.ctrlKey || event.altKey || event.repeat) return false;
+  const target = event.target;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return false;
+  return event.key === "E";
 }

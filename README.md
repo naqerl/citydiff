@@ -129,6 +129,7 @@ entry.
 | `click` | enter a package, open a tower |
 | `c` | show calls or callers |
 | `enter` | open a function |
+| `E` | open the selected node in nvim |
 | `esc` | go back |
 | `o` `i` | jump back / forward through the selection history |
 | `b` | show / hide the left sidebar |
@@ -138,6 +139,18 @@ entry.
 | `space` | tour: play / pause |
 | `,` `.` | tour: previous / next step |
 | `?` | legend |
+
+## Open in nvim
+
+With a node selected, `E` (shift-e) opens a terminal over the city running
+`nvim` on the machine that serves the viewer. A function, method, type or
+variable opens its file at the line and column of its name; a package opens
+its directory (or its first file). Quitting nvim closes the terminal. In a
+range scene the working-tree file is opened; a file that is not in the working
+tree, as one deleted in the range, shows a message instead (`esc` closes it).
+Paths outside the served directory are refused. The terminal is
+[ghostty-web](https://github.com/coder/ghostty-web), vendored under
+`view/vendor/ghostty` and loaded on first use, over a WebSocket to a PTY.
 
 ## Skins
 

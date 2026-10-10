@@ -72,6 +72,8 @@ type Entity struct {
 	Name            string     `json:"name"`
 	Recv            string     `json:"recv,omitempty"`
 	File            string     `json:"file"`
+	Line            int        `json:"line,omitempty"`
+	Col             int        `json:"col,omitempty"`
 	Parent          string     `json:"parent,omitempty"`
 	Change          string     `json:"change"`
 	Part            string     `json:"part,omitempty"`
@@ -532,6 +534,9 @@ func sceneEntity(pair paired) (Entity, bool) {
 		File:   pair.file,
 		Change: pair.change,
 		Fields: entityFields(entry),
+	}
+	if pos := lib.PosOf(entry); pos.Line > 0 {
+		out.Line, out.Col = pos.Line, pos.Column
 	}
 	if n, ok := bodyBytes(pair.right); ok && pair.change != removed {
 		out.BodyBytes = n

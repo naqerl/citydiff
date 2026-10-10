@@ -6,7 +6,8 @@ import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
-import { KEYBINDS } from "./keys.js";
+import { KEYBINDS, editAction } from "./keys.js";
+import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { applyPage, loadSkin } from "./skin.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
@@ -3999,7 +4000,24 @@ window.addEventListener("pointerdown", (event) => {
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
 window.addEventListener("keydown", (event) => {
+  // The terminal owns the keyboard while it is up; esc closes an error.
+  if (editorActive()) {
+    if (event.key === "Escape" && document.querySelector("#editor .editor-msg:not([hidden])")) {
+      event.preventDefault();
+      closeEditor();
+    }
+    return;
+  }
   requestFrame();
+  if (editAction(event) && event.target !== hud.search) {
+    const target = editTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
+    if (target) {
+      event.preventDefault();
+      held.clear();
+      openEditor(target, () => { renderer.domElement.focus?.(); requestFrame(); });
+    }
+    return;
+  }
   const typing = event.target === hud.search;
   const sidebarKey = !typing && event.key === "b" && !event.metaKey && !event.ctrlKey && !event.altKey;
   const helpKey = !typing && event.key === "?";

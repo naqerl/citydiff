@@ -126,6 +126,8 @@ var _ lib.Parser = Parser{}
 type walker struct {
 	src []byte
 	d   *draft
+	// cur is the declaration being read, for the position of what it adds.
+	cur *tree_sitter.Node
 }
 
 func (w *walker) text(n *tree_sitter.Node) string {
@@ -159,6 +161,7 @@ func (w *walker) items(list *tree_sitter.Node, mod []string, recv, trait string,
 	cursor := list.Walk()
 	defer cursor.Close()
 	for _, n := range list.NamedChildren(cursor) {
+		w.cur = &n
 		switch n.Kind() {
 		case "use_declaration":
 			for _, u := range useTree(w.src, n.ChildByFieldName("argument"), nil) {
@@ -206,6 +209,13 @@ func (w *walker) items(list *tree_sitter.Node, mod []string, recv, trait string,
 }
 
 func (w *walker) add(entry lib.Entity, m meta) {
+	if n := w.cur; n != nil {
+		if name := n.ChildByFieldName("name"); name != nil {
+			n = name
+		}
+		p := n.StartPosition()
+		entry = lib.At(entry, int(p.Row)+1, int(p.Column)+1)
+	}
 	w.d.entities = append(w.d.entities, entry)
 	w.d.metas = append(w.d.metas, m)
 }
