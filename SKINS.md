@@ -260,8 +260,8 @@ These colours paint marked packages and declarations, and changed call arcs. The
 | [`added`](view/main.js#L37) | `#71d083` | Added. |
 | [`removed`](view/main.js#L38) | `#e5484d` | Removed. |
 | [`modified`](view/main.js#L39) | `#ffc53d` | A changed package or type, and a function or method whose signature changed. |
-| [`body`](view/main.js#L40) | `#cc9200` | A function or method whose body changed. Darker yellow. |
-| [`both`](view/main.js#L41) | `#ffd97a` | A function or method whose signature and body both changed. Brighter yellow. |
+| [`body`](view/main.js#L40) | `#b36b00` | A function or method whose body changed. Darker yellow. |
+| [`both`](view/main.js#L41) | `#fff1a0` | A function or method whose signature and body both changed. Brighter yellow. |
 | [`moved`](view/main.js#L42) | `#7d66d9` | Moved. |
 | [`same`](view/main.js#L43) | `#f4f4f5` | The colour asked for when a change is unchanged. |
 
@@ -331,8 +331,8 @@ The words for a change are separate from the 3D colours, so the legend swatch ca
 | [`addedText`](view/skin.js#L91) | `#71d083` | The word "added". |
 | [`removedText`](view/skin.js#L92) | `#e5484d` | The word "removed". |
 | [`modifiedText`](view/skin.js#L98) | `#ffc53d` | The word "changed" for a signature change, and for any other modified declaration. |
-| [`bodyText`](view/skin.js#L99) | `#cc9200` | The word "changed" for a body change. |
-| [`bothText`](view/skin.js#L100) | `#ffd97a` | The word "changed" when the signature and the body both changed. |
+| [`bodyText`](view/skin.js#L99) | `#b36b00` | The word "changed" for a body change. |
+| [`bothText`](view/skin.js#L100) | `#fff1a0` | The word "changed" when the signature and the body both changed. |
 | [`movedText`](view/skin.js#L101) | `#7d66d9` | The word "moved". |
 | [`addedBg`](view/skin.js#L102) | `rgba(34, 197, 94, 0.14)` | Background of an added code line. |
 | [`addedFg`](view/skin.js#L103) | `#bbf7d0` | Text of an added code line. |
@@ -377,8 +377,8 @@ paper/
     "addedText": "#1f7a4d",
     "removedText": "#d12b31",
     "modifiedText": "#a16207",
-    "bodyText": "#6b3f04",
-    "bothText": "#9d6716",
+    "bodyText": "#6a3000",
+    "bothText": "#8f6a00",
     "movedText": "#6e56cf"
   }
 }

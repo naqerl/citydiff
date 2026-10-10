@@ -30,8 +30,8 @@ test("dark keeps the colours the city already used", () => {
   assert.equal(dark.change.added, "#71d083");
   assert.equal(dark.change.removed, "#e5484d");
   assert.equal(dark.change.modified, "#ffc53d");
-  assert.equal(dark.change.body, "#cc9200");
-  assert.equal(dark.change.both, "#ffd97a");
+  assert.equal(dark.change.body, "#b36b00");
+  assert.equal(dark.change.both, "#fff1a0");
   assert.equal(dark.change.moved, "#7d66d9");
   assert.equal(dark.change.same, "#f4f4f5");
   assert.equal(dark.call.color, "#23afd0");
@@ -163,16 +163,16 @@ test("light objects stay light enough for the dark label text", () => {
   ];
   for (const hex of fills) assert.ok(contrast(hex, text) >= 4.5, hex);
   assert.equal(light.hud.addedText, "#1f7a4d");
-  assert.equal(light.hud.bodyText, "#6b3f04");
-  assert.equal(light.hud.bothText, "#9d6716");
+  assert.equal(light.hud.bodyText, "#6a3000");
+  assert.equal(light.hud.bothText, "#8f6a00");
   assert.equal(pageVars(light)["--added-text"], "#1f7a4d");
-  assert.equal(pageVars(light)["--body-text"], "#6b3f04");
-  assert.equal(pageVars(light)["--both-text"], "#9d6716");
+  assert.equal(pageVars(light)["--body-text"], "#6a3000");
+  assert.equal(pageVars(light)["--both-text"], "#8f6a00");
   assert.equal(pageVars(dark)["--added-text"], "#71d083");
-  assert.equal(pageVars(dark)["--body"], "#cc9200");
-  assert.equal(pageVars(dark)["--both"], "#ffd97a");
-  assert.equal(pageVars(dark)["--body-text"], "#cc9200");
-  assert.equal(pageVars(dark)["--both-text"], "#ffd97a");
+  assert.equal(pageVars(dark)["--body"], "#b36b00");
+  assert.equal(pageVars(dark)["--both"], "#fff1a0");
+  assert.equal(pageVars(dark)["--body-text"], "#b36b00");
+  assert.equal(pageVars(dark)["--both-text"], "#fff1a0");
 });
 
 test("the page takes its colours from the skin", () => {
