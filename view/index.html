@@ -231,7 +231,11 @@
        sizes to its content, so it never collapses. */
     /* The stack fills the body, so an open section has free space to grow into. */
     .sections { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-    .section { display: flex; flex-direction: column; min-height: 34px; flex: 0 1 auto; transition: flex-grow 180ms ease; }
+    /* The section is its header plus whatever the body is given. A min-height
+       here would be handed to the body — whose flex-grow is 1 — and a few
+       pixels of clipped rows would show under a folded header. The header
+       itself never shrinks, so a crowded panel scrolls instead of hiding it. */
+    .section { display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; transition: flex-grow 180ms ease; }
     .section.open { flex-grow: 1; }
     .section-head {
       display: flex;
