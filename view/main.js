@@ -3042,9 +3042,15 @@ function setSectionOpen(wrap, head, key, open) {
 }
 
 // added, changed, deleted, untouched — the untouched count is the quiet one.
+//
+// Outside Changes mode there is no diff on screen to count, and the rows carry
+// no marks either, so the header says how many children there are and nothing
+// more: the same thing the node's own tally line above it does.
 function sectionCounts(section) {
+  const items = [...section.hot, ...section.same];
+  if (mode !== "overlay") return [["total", String(items.length)]];
   const tally = { added: 0, modified: 0, removed: 0, same: 0 };
-  for (const item of [...section.hot, ...section.same]) {
+  for (const item of items) {
     const change = item.change;
     tally[change in tally ? change : "same"] += 1;
   }
