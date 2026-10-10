@@ -520,6 +520,7 @@
     .fig .fn { width: 10px; height: 34px; background: var(--function); }
     .fig .fn.short { height: 18px; }
     .fig .method { width: 10px; height: 24px; background: var(--method); }
+    .fig .var { width: 12px; height: 8px; background: var(--method); }
     .fig .type { width: 30px; height: 16px; background: var(--type); align-self: flex-end; }
     .fig .add { width: 10px; height: 32px; background: var(--added); }
     .fig .del { width: 10px; height: 32px; background: var(--removed); }
@@ -848,6 +849,10 @@
       <button class="ex" type="button">
         <div class="fig"><i class="type"></i></div>
         <div><b>Type</b><p>A wide pale block. It holds the methods declared on that type.</p></div>
+      </button>
+      <button class="ex" type="button">
+        <div class="fig"><i class="var"></i></div>
+        <div><b>Variable</b><p>A const or a static: a short block, the same gray as a method. It has no body, so it stays low.</p></div>
       </button>
       <button class="ex" type="button">
         <div class="fig"><i class="fn"></i></div>

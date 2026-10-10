@@ -64,7 +64,10 @@ function checkEdges(packages, mode) {
 }
 
 test("aggregation on zeroshot: one curve per distinct pair, counts sum to the edges", () => {
-  assert.deepEqual(checkEdges(zeroshot, "overview"), { edges: 2009, curves: 212, self: 1303 });
+  // The district cut follows the layout weights, and variables are weighed
+  // as declarations now, so the cut (and with it the self-edge count) moved
+  // when const and static entries stopped being dropped.
+  assert.deepEqual(checkEdges(zeroshot, "overview"), { edges: 2009, curves: 215, self: 1300 });
 });
 
 test("aggregation on barse, both modes", { skip: !haveBarse && "no barse checkout" }, () => {

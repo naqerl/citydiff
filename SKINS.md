@@ -144,7 +144,7 @@ Shaders and textures are optional. Leave them out and the element keeps the mate
 | `segments` | `plane` | How finely the floor grid is divided when it has a vertex shader. The default is 64. |
 | `opacity` | `plane`, `ground`, `horizon` | How solid the surface is. The built-in skins set the floor's to `0`, so the city floats on its disc instead of standing on a field; a skin is merged over `dark`, so it inherits that `0` unless it says `"opacity": 1` itself. A skin change fades the value, because the fade lerps opacity. |
 
-On buildings, [`aHouse.x`](view/main.js#L1179) is `0` for a type, `1` for a function, and `2` for a method. `aHouse.y` is a variation from 0 to 1, steady for each declaration. Copy them to `vHouse` to use them in the fragment shader. `vLocalUp` is yours to set from `normal.y` when a fragment needs to know the top face. These names are read while the shader is compiled ([shade.js](view/shade.js)).
+On buildings, [`aHouse.x`](view/main.js#L1179) is `0` for a type, `1` for a function, `2` for a method, and `3` for a variable. `aHouse.y` is a variation from 0 to 1, steady for each declaration. Copy them to `vHouse` to use them in the fragment shader. `vLocalUp` is yours to set from `normal.y` when a fragment needs to know the top face. These names are read while the shader is compiled ([shade.js](view/shade.js)).
 
 A shader that names `uTime` keeps the picture moving. The floor around the disc can be a displaced grid. The disc itself stays the ground under the city.
 

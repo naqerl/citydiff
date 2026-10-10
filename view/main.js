@@ -1222,7 +1222,7 @@ function indexScene() {
       const list = byDecl.get(key) || [];
       list.push(entity.id);
       byDecl.set(key, list);
-      if (entity.kind === "type" || entity.kind === "function" || entity.kind === "method") {
+      if (entity.kind === "type" || entity.kind === "variable" || entity.kind === "function" || entity.kind === "method") {
         catalog.push({
           kind: entity.kind,
           id: entity.id,
@@ -1456,7 +1456,9 @@ function houseAttribute(slots) {
   const data = new Float32Array(slots.length * 2);
   for (let i = 0; i < slots.length; i++) {
     const kind = slots[i].kind;
-    data[i * 2] = kind === "type" ? 0 : kind === "method" ? 2 : 1;
+    // 0 type, 1 function, 2 method, 3 variable. A skin that only knows the
+    // first three reads a variable as "not a type and not a method".
+    data[i * 2] = kind === "type" ? 0 : kind === "method" ? 2 : kind === "variable" ? 3 : 1;
     data[i * 2 + 1] = varyUnit(slots[i].id);
   }
   return new THREE.InstancedBufferAttribute(data, 2);
@@ -1628,7 +1630,12 @@ function entityColor(entity) {
   if (mode === "overlay" && entity.change && entity.change !== "same") {
     return changeColor(entity.change, entity.part);
   }
-  const base = entity.kind === "type" ? paint.type : entity.kind === "method" ? paint.method : paint.function;
+  // A variable reuses the method grey: it is a declaration without a body,
+  // and a new skin key would have to be added to every skin to give it its
+  // own colour. The grey already reads as the quieter kind of block.
+  const base = entity.kind === "type" ? paint.type
+    : entity.kind === "method" || entity.kind === "variable" ? paint.method
+    : paint.function;
   return vary(entity.id, base);
 }
 
@@ -3220,7 +3227,7 @@ function packageDetail(pkg) {
 }
 
 function declaredEntities(pkg) {
-  return (pkg.entities || []).filter((entity) => entity.kind === "type" || entity.kind === "function" || entity.kind === "method");
+  return (pkg.entities || []).filter((entity) => entity.kind === "type" || entity.kind === "variable" || entity.kind === "function" || entity.kind === "method");
 }
 
 function changeTally(entities) {
@@ -3378,6 +3385,7 @@ function rosterSections(pkg) {
   }];
   const groups = [
     ["types", "Types", "type"],
+    ["variables", "Variables", "variable"],
     ["functions", "Functions", "function"],
     ["methods", "Methods", "method"],
   ];
@@ -3727,13 +3735,15 @@ function focusDetail(entity) {
   return wrap;
 }
 
+// Only a function or method has a body: a type or a variable would read
+// "body 0 bytes" and the number would mean nothing.
 function sizeText(entity) {
+  if (entity.kind !== "function" && entity.kind !== "method") return "";
   const after = entity.change === "removed" ? 0 : (entity.bodyBytes || 0);
   if (mode === "overlay" && entity.bodyBytesBefore != null && entity.bodyBytesBefore !== after) {
     return "body  " + entity.bodyBytesBefore + " → " + after + " bytes";
   }
-  if (entity.kind === "function" || entity.kind === "method") return "body  " + (entity.bodyBytes || 0) + " bytes";
-  return "";
+  return "body  " + (entity.bodyBytes || 0) + " bytes";
 }
 
 // changePart is the word for what changed in a function or method: the mark
@@ -5191,7 +5201,7 @@ function buildBird() {
     const d = cut.districtOf.get(pkg.id);
     if (!d) continue;
     if (!members.has(d)) members.set(d, []);
-    members.get(d).push(...(pkg.entities || []).filter((e) => e.kind === "type" || e.kind === "function" || e.kind === "method"));
+    members.get(d).push(...(pkg.entities || []).filter((e) => e.kind === "type" || e.kind === "variable" || e.kind === "function" || e.kind === "method"));
   }
   const tops = new Map();
   const labels = [];
