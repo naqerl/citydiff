@@ -2793,6 +2793,30 @@ function renderDetail() {
   const id = (selected && selected.id) || (sceneDoc && sceneDoc.root);
   const pkg = id ? byPackage.get(id) : null;
   if (pkg) hud.detail.append(packageDetail(pkg));
+  else hud.detail.append(noRootDetail());
+}
+
+// A range whose two sides name different modules — a rename — has no single
+// module, so the scene carries no root and there is no package to describe.
+// Without this the sidebar came up empty and said nothing about why.
+function noRootDetail() {
+  const wrap = document.createElement("div");
+  const title = document.createElement("h2");
+  title.textContent = "no root package";
+  wrap.append(title);
+  const before = (sceneDoc && sceneDoc.moduleBefore) || "";
+  const after = (sceneDoc && sceneDoc.moduleAfter) || "";
+  const line = document.createElement("p");
+  if (before && after && before !== after) {
+    line.textContent = "This range changes the module path: " + before + " \u2192 " + after + ". There is no single module, so there is no root package to show.";
+  } else {
+    line.textContent = "This range has no single module, so there is no root package to show.";
+  }
+  wrap.append(line);
+  const hint = document.createElement("p");
+  hint.textContent = "Press / and search for a package or a function.";
+  wrap.append(hint);
+  return wrap;
 }
 
 function packageDetail(pkg) {
