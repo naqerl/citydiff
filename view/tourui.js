@@ -8,7 +8,7 @@ import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
 import { tourAction } from "./keys.js";
 import { renderMarkdown, lineDiff, escapeHTML } from "./markdown.js";
 
-export function mountTour({ apply, clear, layout }) {
+export function mountTour({ apply, clear, layout, open = true }) {
   const root = document.getElementById("tour-side");
   const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
@@ -122,9 +122,13 @@ export function mountTour({ apply, clear, layout }) {
 
   // show$ puts the sidebar up or takes it away, and tells the scene its
   // width changed so the camera re-centres in the free area.
+  // The first tour opens the way the address bar left it (tourside=closed);
+  // every later one opens.
+  let startOpen = open;
   function show$(on) {
     root.hidden = !on;
-    if (on) root.classList.remove("is-collapsed");
+    if (on) root.classList.toggle("is-collapsed", !startOpen);
+    if (on) startOpen = true;
     layout();
   }
 

@@ -7,6 +7,7 @@ import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
 import { KEYBINDS, editAction } from "./keys.js";
+import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { applyPage, loadSkin } from "./skin.js";
 import { dress, loadShade } from "./shade.js";
@@ -506,6 +507,7 @@ function attachMarquee(host, clip) {
 function setSide(open) {
   hud.side.classList.toggle("is-collapsed", !open);
   requestAnimationFrame(resizeView);
+  syncURL();
 }
 let arcSubject = null;
 let entitySubject = null;
@@ -809,7 +811,16 @@ async function main() {
   applyMode();
   applyQuery();
   requestFrame();
-  tourUI = mountTour({ apply: applyTourStep, clear: clearTour, layout: () => requestAnimationFrame(resizeView) });
+  tourUI = mountTour({
+    apply: applyTourStep,
+    clear: clearTour,
+    layout: () => {
+      requestAnimationFrame(resizeView);
+      if (!document.querySelector("#tour-side").hidden) tourSideWanted = true;
+      syncURL();
+    },
+    open: tourSideWanted,
+  });
   const wanted = new URLSearchParams(location.search).get("tour");
   tourUI.loadURL(wanted || "./tour.json");
 }
@@ -957,23 +968,56 @@ function tourCallLinks(path, highlight) {
   return links.length ? links : null;
 }
 
+// The view the address bar names (see state.js), put back once the city is
+// built. Until then the address is left alone, so the first applyMode does
+// not write the defaults over it. enter= and fn= are the older debug forms.
 function applyQuery() {
+  const state = readState(location.search);
   const params = new URLSearchParams(location.search);
-  if (params.get("mode") === "changes") mode = "overlay";
+  if (state.mode === "changes") mode = "overlay";
+  callInbound = state.refs === "callers";
+  if (!state.side) setSide(false);
+  tourSideWanted = state.tourSide;
+  urlReady = true;
+  const node = readNode(state.select, declNames);
+  if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
+  else if (node && node.kind === "external" && laid.externals.some((item) => item.id === node.id)) selectExternal(node.id, callInbound);
+  else if (node && node.kind === "entity") selectEntity(node.id);
   const enter = params.get("enter");
-  if (enter && byPackage.has(enter)) selectPackage(enter, true);
+  if (!selected && enter && byPackage.has(enter)) selectPackage(enter, true);
   const want = params.get("fn");
-  if (!want) {
-    if (mode === "overlay") applyMode();
-    return;
+  if (!selected && want) {
+    const picks = [...byEntity.values()].filter((item) => item.box && (item.entity.kind === "function" || item.entity.kind === "method"));
+    const named = want === "1" ? null : picks.find((item) => item.entity.id === want);
+    const changed = picks.find((item) => (item.entity.calls || []).some((step) => step.change !== "same"));
+    const busy = picks.find((item) => (item.entity.calls || []).length > 3 && (item.entity.calls || []).length < 40);
+    const pick = named || (want === "1" ? changed || busy || picks[0] : null);
+    if (pick) enterFocus(pick);
   }
-  const picks = [...byEntity.values()].filter((item) => item.box && (item.entity.kind === "function" || item.entity.kind === "method"));
-  const named = want === "1" ? null : picks.find((item) => item.entity.id === want);
-  const changed = picks.find((item) => (item.entity.calls || []).some((step) => step.change !== "same"));
-  const busy = picks.find((item) => (item.entity.calls || []).length > 3 && (item.entity.calls || []).length < 40);
-  const pick = named || (want === "1" ? changed || busy || picks[0] : null);
-  if (pick) enterFocus(pick);
-  else if (mode === "overlay") applyMode();
+  if (!selected) applyMode();
+}
+
+// The address bar follows the view: written in place, so a reload keeps it
+// and the browser history is not one entry per click.
+let urlReady = false;
+let declNames = new Map();
+// tourside= waits for the tour: until one is on screen the address keeps
+// what it said, and once one is, the sidebar itself is the answer.
+let tourSideWanted = true;
+
+function syncURL() {
+  if (!urlReady) return;
+  const node = selected && selected.kind === "entity" ? byEntity.get(selected.id) : null;
+  const tourSide = document.querySelector("#tour-side");
+  const query = writeState(location.search, {
+    select: writeNode(selected, node && node.entity, declNames),
+    mode: mode === "overlay" ? "changes" : "overview",
+    refs: callInbound ? "callers" : "calls",
+    side: !hud.side.classList.contains("is-collapsed"),
+    tourSide: !tourSide || tourSide.hidden ? tourSideWanted : !tourSide.classList.contains("is-collapsed"),
+  });
+  if (query === location.search) return;
+  history.replaceState(history.state, "", location.pathname + query + location.hash);
 }
 
 function indexScene() {
@@ -1012,6 +1056,7 @@ function indexScene() {
       if (found) found.box = block;
     }
   }
+  declNames = nameIndex([...byEntity.values()].filter((item) => item.box).map((item) => item.entity));
   indexCallers();
 }
 
@@ -2053,6 +2098,7 @@ function applyMode() {
   }
   paintPlinths();
   updateHUD();
+  syncURL();
   viewDirty = true;
   requestFrame();
 }

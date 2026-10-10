@@ -119,6 +119,19 @@ and `<C-i>`. Selecting a new node after going back truncates the forward tail, e
 vim does. The sidebar note shows your position (`jump 2/5`) once the list has more than one
 entry.
 
+The address bar follows the view, so a reload — or a link you send — opens on the same
+place. It is written to be read and edited by hand:
+
+```
+?select=function:TestCoolStuff&mode=changes&refs=callers&side=closed&tourside=closed
+```
+
+`select` is `kind:name` — `package:<id>`, `external:<id>`, `type:Name`, `function:Name`, or
+`method:Recv.Name`. A name two declarations share gets the file: `function:New@lib/parser/go/parser.go`.
+`mode=changes`, `refs=callers`, `side=closed` and `tourside=closed` are only there when they
+differ from the default (overview, calls, both sidebars open). The camera is not stored; a
+restored selection is flown to the way a click would.
+
 | Key | Action |
 | --- | --- |
 | `/` | search for a package or function |

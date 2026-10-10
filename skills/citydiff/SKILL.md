@@ -114,7 +114,8 @@ the right sidebar, where a skin is previewed on click and kept with Save. Closin
 with a preview that was never saved asks first — Change keeps it, Ignore drops it. The choice lives in
 the browser (localStorage); the process has no say in it, and `CITYDIFF_SKINS_DIR` is what
 points at extra skins. Selecting a node shows its calls or its callers, drawn between the
-towers that make them.
+towers that make them. The address bar follows the view — `?select=function:Name&mode=changes&refs=callers`,
+plus `side=closed` / `tourside=closed` — so a link to the viewer can open on a given node.
 
 ## Building from source (no release available)
 
