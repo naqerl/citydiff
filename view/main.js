@@ -456,6 +456,9 @@ let jumps = [];
 let jumpIndex = -1;
 let jumping = false;
 let jumpDetached = false;
+// The scroll offsets of the jump being restored, applied after its render.
+let pendingSidebarScroll = null;
+let sidebarScrollFrame = 0;
 let entered = null;
 let focus = null;
 let cityPose = null;
@@ -3403,6 +3406,8 @@ function subjectKey() {
 function sectionBlock(section, open) {
   const wrap = document.createElement("section");
   wrap.className = open ? "section open" : "section";
+  // The key names the section for the jump list, which restores its scroll.
+  wrap.dataset.section = section.key;
   const head = document.createElement("button");
   head.type = "button";
   head.className = "section-head";
@@ -3444,6 +3449,28 @@ function setSectionOpen(wrap, head, key, open) {
   sectionsTouched = true;
   if (open) openSections.add(key);
   else openSections.delete(key);
+  syncJumpSidebar();
+}
+
+// A jump restores the sidebar, not only the node: which sections were open and
+// how far their lists were scrolled are part of where the user was. The folds
+// come from the state above, the offsets from the DOM, so what is stored is
+// what is on screen.
+function sidebarState() {
+  const state = { open: [...openSections], touched: sectionsTouched, scroll: hud.detailBody.scrollTop, bodies: {} };
+  for (const wrap of hud.detailBody.querySelectorAll(".section.open")) {
+    const body = wrap.querySelector(".section-body");
+    if (body && wrap.dataset.section) state.bodies[wrap.dataset.section] = body.scrollTop;
+  }
+  return state;
+}
+
+// The folds and scrolls of the node on screen belong to its jump entry, so a
+// toggle or a scroll writes them back right away: the entry stays what the
+// user last left there, ready for the next `o`.
+function syncJumpSidebar() {
+  if (jumping || jumpIndex < 0 || jumpIndex >= jumps.length) return;
+  jumps[jumpIndex].sidebar = sidebarState();
 }
 
 // added, changed, deleted, untouched — the untouched count is the quiet one.
@@ -3812,6 +3839,49 @@ function goBackInner() {
   flyTo(cityPose.pos, cityPose.target);
 }
 
+// The subject key an entry will have once it is restored, so the panel's own
+// subject key can be put in step before the render that follows.
+function entrySubjectKey(entry) {
+  if (entry.focus) return "focus:" + entry.focus;
+  if (entry.selected) return entry.selected.kind + ":" + entry.selected.id;
+  return "root";
+}
+
+// Put a saved sidebar setup in place before the render that follows, and keep
+// detailSubject in step so renderDetail does not clear the restored folds. The
+// scroll offsets wait for the DOM that render builds.
+function stageJumpSidebar(entry) {
+  const state = entry.sidebar || null;
+  sectionsTouched = !!(state && state.touched);
+  openSections.clear();
+  if (state) for (const key of state.open || []) openSections.add(key);
+  detailSubject = entrySubjectKey(entry);
+  pendingSidebarScroll = state;
+}
+
+// The sidebar body and each open section body scroll on their own, so both
+// offsets go back once the render has rebuilt the panel.
+function applySidebarScroll(state) {
+  if (!state) return;
+  hud.detailBody.scrollTop = state.scroll || 0;
+  for (const wrap of hud.detailBody.querySelectorAll(".section.open")) {
+    const top = wrap.dataset.section ? state.bodies[wrap.dataset.section] : null;
+    const body = wrap.querySelector(".section-body");
+    if (body && top != null) body.scrollTop = top;
+  }
+}
+
+// Apply once now and once on the next frame: the flex sizes that decide how far
+// a body can scroll settle a frame after the render, so the first pass can clamp
+// to a smaller range than the second. A later jump cancels the pending frame.
+function restoreSidebarScroll() {
+  const state = pendingSidebarScroll;
+  if (!state) return;
+  applySidebarScroll(state);
+  cancelAnimationFrame(sidebarScrollFrame);
+  sidebarScrollFrame = requestAnimationFrame(() => applySidebarScroll(state));
+}
+
 // What a jump restores: the whole navigation state, not just the camera.
 function subjectNow() {
   return {
@@ -3845,19 +3915,26 @@ function noteJump() {
   const wasDetached = jumpDetached;
   jumpDetached = false;
   if (current && sameSubject(current, now)) {
-    if (wasDetached) updateHUD();
+    if (wasDetached) {
+      updateHUD();
+      // The bare city reset the folds, so the entry follows what is on screen.
+      current.sidebar = sidebarState();
+    }
     return;
   }
   jumps = jumps.slice(0, jumpIndex + 1);
   jumps.push(now);
   jumpIndex = jumps.length - 1;
   updateHUD();
+  // The node is on screen now, so its folds and scrolls are the entry's own.
+  jumps[jumpIndex].sidebar = sidebarState();
 }
 
 // Put the state back and fly the camera to it, the same way the original
 // selection did.
 function restoreSubject(entry) {
   if (!entry) return;
+  stageJumpSidebar(entry);
   if (focus) dropFocus();
   selected = entry.selected ? { kind: entry.selected.kind, id: entry.selected.id } : null;
   entered = entry.entered;
@@ -3909,6 +3986,7 @@ function jumpStep(step) {
     jumping = false;
   }
   updateHUD();
+  restoreSidebarScroll();
 }
 
 function typingSearch() {
@@ -4506,6 +4584,10 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 }
 
 window.addEventListener("resize", resizeView);
+
+// Scroll events do not bubble, so this listens in the capture phase to catch
+// the sidebar body and every section body: a scroll is part of the entry.
+hud.detailBody.addEventListener("scroll", () => syncJumpSidebar(), true);
 
 // Themes: what the /skin command opens. Arrows preview in place. Letters find
 // a theme by the start of its name. Enter, and Change on the question, apply
