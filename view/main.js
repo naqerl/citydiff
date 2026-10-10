@@ -6,7 +6,8 @@ import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
-import { KEYBINDS, editAction, diffAction } from "./keys.js";
+import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
+import { KEYBINDS, birdAction, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
@@ -2296,6 +2297,11 @@ function applyMode() {
   paintPlinths();
   updateHUD();
   syncURL();
+  if (bird.on) {
+    birdKey = "";
+    buildBird();
+    birdHide();
+  }
   viewDirty = true;
   requestFrame();
 }
@@ -2813,7 +2819,11 @@ function tickTween(now) {
   const s = k * k * (3 - 2 * k);
   camera.position.lerpVectors(tween.fromPos, tween.toPos, s);
   controls.target.lerpVectors(tween.fromTarget, tween.toTarget, s);
-  if (k === 1) tween = null;
+  if (k === 1) {
+    const done = tween.done;
+    tween = null;
+    if (done) done();
+  }
   return true;
 }
 
@@ -3940,7 +3950,7 @@ function flyCamera(dt, now) {
   // Any focus counts: overview, a selected package, a call focus, or the search
   // box. Fifteen seconds after the last real input, the city turns again.
   const idleReady = !introSpin && lastActivity && now - lastActivity >= IDLE_SPIN_MS;
-  idleSpin = !userMove && !tween && ((introSpin && !!cityPose) || idleReady);
+  idleSpin = !bird.on && !userMove && !tween && ((introSpin && !!cityPose) || idleReady);
   const yawRate = idleSpin ? IDLE_YAW : yaw * 1.4;
   if (!forward && !strafe && !yawRate && !zoom) return false;
   if (userMove) tween = null;
@@ -3995,7 +4005,7 @@ function animate(now) {
     hovered = pointerDirty;
     if (pointerDirty) onHover(null);
     pointerDirty = false;
-  } else if (pointerDirty && !pointerDown) {
+  } else if (pointerDirty && !pointerDown && !bird.on) {
     onHover(hitTest());
     hovered = pointerDirty;
     pointerDirty = false;
@@ -4093,6 +4103,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   pointerDown = null;
   if (skinPicking) return;
   if (moved > 5 || start.button !== 0) return;
+  if (bird.on) return;
   activate(describeHit(hitTest()));
 });
 
@@ -4413,6 +4424,15 @@ window.addEventListener("keydown", (event) => {
     }
     return;
   }
+  if (birdAction(event)) {
+    event.preventDefault();
+    if (bird.on) leaveBird();
+    else enterBird();
+    return;
+  }
+  // In the bird view the city underneath is hidden: only the keys that do
+  // not select or move through it stay live.
+  if (bird.on && !["m", "1", "2"].includes(event.key)) return;
   if (event.key === "0" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
     resetView();
@@ -5001,3 +5021,217 @@ if (new URLSearchParams(location.search).has("check")) {
   setTimeout(() => window.citydiffCheck(), 3000);
 }
 
+// Bird view (y): the city from straight above, merged into districts, one
+// flat-topped slab each, tinted by change in the changes mode, with one
+// curve per pair of districts that depend on each other. Built once per
+// scene and mode; the normal city is hidden, not touched, and comes back
+// as it was.
+const bird = new BirdToggle();
+const birdGroup = new THREE.Group();
+birdGroup.visible = false;
+scene.add(birdGroup);
+let birdKey = "";
+let birdHidden = null;
+let birdStats = null;
+const BIRD_KEEP = () => new Set([planeMesh, groundMesh, horizonMesh]);
+
+function birdLabelTexture(text, color) {
+  const px = 64;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.font = `600 ${px}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  const w = Math.ceil(ctx.measureText(text).width) + 16;
+  canvas.width = w;
+  canvas.height = px + 16;
+  ctx.font = `600 ${px}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.strokeText(text, 8, canvas.height / 2);
+  ctx.fillStyle = color;
+  ctx.fillText(text, 8, canvas.height / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return { tex, aspect: canvas.width / canvas.height };
+}
+
+function birdEdgeList() {
+  const edges = depEdges(sceneDoc.packages || [], mode);
+  if (mode === "overlay") {
+    for (const link of changedCallLinks()) edges.push({ from: link.from.pkg.id, to: link.target.pkg.id, change: link.change });
+  }
+  return edges;
+}
+
+function mergeTubes(parts) {
+  let verts = 0;
+  let idx = 0;
+  for (const p of parts) {
+    verts += p.geo.attributes.position.count;
+    idx += p.geo.index.count;
+  }
+  const pos = new Float32Array(verts * 3);
+  const nor = new Float32Array(verts * 3);
+  const col = new Float32Array(verts * 3);
+  const index = new Uint32Array(idx);
+  let v = 0;
+  let i = 0;
+  for (const p of parts) {
+    const g = p.geo;
+    pos.set(g.attributes.position.array, v * 3);
+    nor.set(g.attributes.normal.array, v * 3);
+    for (let k = 0; k < g.attributes.position.count; k++) col.set([p.color.r, p.color.g, p.color.b], (v + k) * 3);
+    const src = g.index.array;
+    for (let k = 0; k < src.length; k++) index[i + k] = src[k] + v;
+    v += g.attributes.position.count;
+    i += src.length;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  out.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  out.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  out.setIndex(new THREE.BufferAttribute(index, 1));
+  return out;
+}
+
+function buildBird() {
+  const key = mode;
+  if (birdKey === key && birdGroup.children.length) return;
+  clearGroup(birdGroup);
+  birdKey = key;
+  const overlay = mode === "overlay" && sceneDoc.diff;
+  const cut = chooseDistricts(laid, sceneDoc.packages || []);
+  const span = citySpan();
+  const members = new Map();
+  for (const pkg of sceneDoc.packages || []) {
+    const d = cut.districtOf.get(pkg.id);
+    if (!d) continue;
+    if (!members.has(d)) members.set(d, []);
+    members.get(d).push(...(pkg.entities || []).filter((e) => e.kind === "type" || e.kind === "function" || e.kind === "method"));
+  }
+  const tops = new Map();
+  const labels = [];
+  const slabGeo = new THREE.BoxGeometry(1, 1, 1);
+  for (const d of cut.districts) {
+    const top = d.y + d.h;
+    tops.set(d.id, top);
+    const st = districtStatus(members.get(d.id) || []);
+    const color = overlay ? changeColor(st.status).clone() : plinthColor(d.depth, d.synthetic);
+    if (d.base) color.multiplyScalar(0.7);
+    const slab = new THREE.Mesh(slabGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
+    slab.scale.set(Math.max(0.01, d.w - 0.3), top, Math.max(0.01, d.d - 0.3));
+    slab.position.set(d.x + d.w / 2, top / 2, d.z + d.d / 2);
+    birdGroup.add(slab);
+    // The stacked bar: added, modified and removed shares along the near edge.
+    if (overlay && st.status !== "same") {
+      let x = d.x + 0.15;
+      const len = d.w - 0.3;
+      const depthBar = Math.min(d.d * 0.08, span * 0.01);
+      for (const c of ["added", "modified", "removed"]) {
+        const share = st.share[c];
+        if (!share) continue;
+        const bar = new THREE.Mesh(slabGeo, new THREE.MeshBasicMaterial({ color: changeColor(c) }));
+        bar.scale.set(len * share, 0.08, depthBar);
+        bar.position.set(x + (len * share) / 2, top + 0.05, d.z + d.d - 0.15 - depthBar / 2);
+        birdGroup.add(bar);
+        x += len * share;
+      }
+    }
+    const text = d.name || d.id;
+    const box = labelBox(text, d.w, d.d, span * 0.05);
+    const avoid = d.base
+      ? cut.districts.filter((o) => o !== d && o.x >= d.x && o.z >= d.z && o.x + o.w <= d.x + d.w && o.z + o.d <= d.z + d.d)
+        .map((o) => ({ x0: o.x, x1: o.x + o.w, z0: o.z, z1: o.z + o.d }))
+      : [];
+    labels.push({ id: "d:" + d.id, text, x: d.x + d.w / 2, z: d.z + d.d / 2, y: top, priority: d.base ? d.w * d.d * 0.01 : d.w * d.d, avoid, ...box });
+  }
+  const pairs = aggregateEdges(birdEdgeList(), cut.districtOf);
+  const byId = new Map(cut.districts.map((d) => [d.id, d]));
+  const parts = [];
+  for (const p of pairs) {
+    const a = byId.get(p.from);
+    const b = byId.get(p.to);
+    const s = new THREE.Vector3(a.x + a.w / 2, tops.get(a.id) + 0.2, a.z + a.d / 2);
+    const e = new THREE.Vector3(b.x + b.w / 2, tops.get(b.id) + 0.2, b.z + b.d / 2);
+    const mid = s.clone().add(e).multiplyScalar(0.5);
+    mid.y += s.distanceTo(e) * 0.22 + span * 0.01;
+    const curve = new THREE.QuadraticBezierCurve3(s, mid, e);
+    // Thickness grows with the square root of the count, so a pair standing
+    // for 25 imports is about three times as thick as a single one.
+    const radius = Math.min(span * 0.006, span * 0.0006 * (1 + Math.sqrt(p.count)));
+    parts.push({ geo: new THREE.TubeGeometry(curve, 20, radius, 5, false), color: overlay ? changeColor(p.change) : paint.selection });
+    if (p.count > 1) {
+      const text = String(p.count);
+      const size = span * 0.012;
+      const apex = curve.getPoint(0.5);
+      labels.push({ id: "e:" + p.from + "\0" + p.to, text, x: apex.x, z: apex.z, y: apex.y, priority: -1 / p.count, size, w: size * text.length * 0.6, h: size });
+    }
+  }
+  if (parts.length) {
+    const mesh = new THREE.Mesh(mergeTubes(parts), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: overlay ? 0.85 : 0.45, depthWrite: false }));
+    birdGroup.add(mesh);
+  }
+  const placed = placeLabels(labels, span * 0.006);
+  for (const l of labels) {
+    const at = placed.get(l.id);
+    if (!at || at.hidden) continue;
+    const { tex, aspect } = birdLabelTexture(l.text, l.id.startsWith("e:") ? "#f4f4f5" : "#ffffff");
+    const h = at.size * 1.25;
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set(l.x, l.y + 0.3, l.z);
+    plane.renderOrder = 5;
+    birdGroup.add(plane);
+  }
+  birdStats = { districts: cut.districts.length, depth: cut.depth, curves: pairs.length, edges: pairs.reduce((n, p) => n + p.count, 0), labels: [...placed.values()].filter((x) => !x.hidden).length };
+  window.citydiffBird = birdStats;
+}
+
+// birdHide hides what the bird view replaces and remembers each flag.
+function birdHide() {
+  const keep = BIRD_KEEP();
+  if (!birdHidden) {
+    birdHidden = new Map();
+    for (const o of [...city.children, arcGroup, selectArcs, focusGroup, halo, ring]) birdHidden.set(o, o.visible);
+  }
+  for (const o of birdHidden.keys()) if (!keep.has(o)) o.visible = false;
+  birdGroup.visible = true;
+}
+
+function enterBird() {
+  if (!laid || !sceneDoc) return;
+  if (!bird.enter({ pos: camera.position.toArray(), target: controls.target.toArray(), up: camera.up.toArray(), zoom: camera.zoom,
+    extra: { maxDistance: controls.maxDistance, enableRotate: controls.enableRotate, mode } })) return;
+  tween = null;
+  endIntro();
+  held.clear();
+  buildBird();
+  birdHide();
+  const b = laid.bounds;
+  const box = { min: [b.minX, 0, b.minZ], max: [b.maxX, b.maxY * 0.3, b.maxZ] };
+  const pose = fitPose(box, [0, 1, 0.0005], { fov: camera.fov, width: viewInsets.width, height: viewInsets.height, left: viewInsets.left, right: viewInsets.right, fill: 0.94 });
+  controls.maxDistance = Math.max(controls.maxDistance, pose.dist * 1.6);
+  controls.enableRotate = false;
+  flyTo(new THREE.Vector3(...pose.pos), new THREE.Vector3(...pose.target));
+  viewDirty = true;
+  requestFrame();
+}
+
+function leaveBird() {
+  const saved = bird.leave();
+  if (!saved) return;
+  birdGroup.visible = false;
+  for (const [o, v] of birdHidden || []) o.visible = v;
+  birdHidden = null;
+  camera.up.fromArray(saved.up);
+  camera.zoom = saved.zoom;
+  camera.updateProjectionMatrix();
+  controls.enableRotate = saved.extra.enableRotate;
+  flyTo(new THREE.Vector3(...saved.pos), new THREE.Vector3(...saved.target));
+  tween.done = () => { controls.maxDistance = saved.extra.maxDistance; };
+  if (saved.extra.mode !== mode) applyMode();
+  viewDirty = true;
+  requestFrame();
+}

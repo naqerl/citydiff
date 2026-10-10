@@ -10,6 +10,7 @@ export const KEYBINDS = [
   { keys: ["b"], does: "left sidebar" },
   { keys: ["t"], does: "tour sidebar" },
   { keys: ["0"], does: "reset view" },
+  { keys: ["y"], does: "bird view" },
   { keys: ["m"], does: "overview / changes" },
   { keys: ["1"], does: "overview" },
   { keys: ["2"], does: "changes" },
@@ -59,4 +60,13 @@ function capital(event, letter) {
   const target = event.target;
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return false;
   return event.key === letter;
+}
+
+// birdAction is true for the bird-view toggle. Typing, modifiers and
+// repeats are not it.
+export function birdAction(event) {
+  if (!event || event.metaKey || event.ctrlKey || event.altKey || event.repeat) return false;
+  const target = event.target;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return false;
+  return event.key === "y" || event.key === "Y";
 }

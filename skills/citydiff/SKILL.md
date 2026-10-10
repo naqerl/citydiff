@@ -137,6 +137,7 @@ source (`view/keys.js`), and the tests check that this table and that list agree
 | `b` | left sidebar |
 | `t` | tour sidebar |
 | `0` | reset view |
+| `y` | bird view |
 | `m` | overview / changes |
 | `1` | overview |
 | `2` | changes |
