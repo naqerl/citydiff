@@ -174,6 +174,58 @@ install_tour_skill() {
   rm -f "$body_file"
 }
 
+# ------------------------------------------------------------- base skill -----
+
+# The base skill ships with the release: the copy in the repository at the
+# installed tag, so what lands beside the binary is the text that release
+# carried. A checkout wins when there is one, and a tag older than the file
+# falls back to main with a warning, which is the best it can do.
+base_skill_source() {
+  here=$(dirname "$0" 2>/dev/null || printf .)
+  if [ -f "$here/skills/$SKILL_NAME/SKILL.md" ]; then
+    cat "$here/skills/$SKILL_NAME/SKILL.md"
+    return 0
+  fi
+  ref="${1:-main}"
+  if fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$SKILL_NAME/SKILL.md" 2>/dev/null; then
+    return 0
+  fi
+  warn "  no skills/$SKILL_NAME/SKILL.md at $ref; taking the skill from main"
+  fetch "https://raw.githubusercontent.com/$REPO/main/skills/$SKILL_NAME/SKILL.md"
+}
+
+write_skill() {
+  skill_dir="$SKILLS_DIR/$SKILL_NAME"
+  src="$(mktemp)"
+  if ! base_skill_source "${1:-}" > "$src"; then
+    rm -f "$src"
+    warn "  could not fetch the $SKILL_NAME skill; skipped"
+    return 0
+  fi
+  # The file carries placeholders, so fill them in before checking that what we
+  # fetched is the skill we think it is.
+  filled="$src.filled.$$"
+  if ! sed -e "s|__REPO_DIR__|${REPO##*/}|g" \
+           -e "s|__REPO__|$REPO|g" \
+           -e "s|__BIN_DIR__|$BIN_DIR|g" \
+           -e "s|__BIN_NAME__|$BIN_NAME|g" \
+           -e "s|__SKILL_NAME__|$SKILL_NAME|g" \
+           -e "s|__VERSION__|${version:-${TAG:-main}}|g" \
+           -e "s|__DATE__|$(date -u +%Y-%m-%d)|g" \
+           "$src" > "$filled" || ! grep -q "^name: $SKILL_NAME$" "$filled"; then
+    rm -f "$src" "$filled"
+    warn "  the $SKILL_NAME skill we fetched is not ours; skipped"
+    return 0
+  fi
+  if mkdir -p "$skill_dir" && mv "$filled" "$skill_dir/SKILL.md"; then
+    rm -f "$src"
+    say "  wrote skill $skill_dir/SKILL.md"
+    return 0
+  fi
+  rm -f "$src" "$filled"
+  warn "  cannot write $skill_dir/SKILL.md; skipped"
+}
+
 # --------------------------------------------------------------- uninstall ---
 
 uninstall() {
@@ -319,58 +371,6 @@ elif [ -n "$NO_PATH" ]; then
 else
   say "  $BIN_DIR already on PATH"
 fi
-
-# ---------------------------------------------------------------- skills -----
-
-# The base skill ships with the release: the copy in the repository at the
-# installed tag, so what lands beside the binary is the text that release
-# carried. A checkout wins when there is one, and a tag older than the file
-# falls back to main with a warning, which is the best it can do.
-base_skill_source() {
-  here=$(dirname "$0" 2>/dev/null || printf .)
-  if [ -f "$here/skills/$SKILL_NAME/SKILL.md" ]; then
-    cat "$here/skills/$SKILL_NAME/SKILL.md"
-    return 0
-  fi
-  ref="${1:-main}"
-  if fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$SKILL_NAME/SKILL.md" 2>/dev/null; then
-    return 0
-  fi
-  warn "  no skills/$SKILL_NAME/SKILL.md at $ref; taking the skill from main"
-  fetch "https://raw.githubusercontent.com/$REPO/main/skills/$SKILL_NAME/SKILL.md"
-}
-
-write_skill() {
-  skill_dir="$SKILLS_DIR/$SKILL_NAME"
-  src="$(mktemp)"
-  if ! base_skill_source "${1:-}" > "$src"; then
-    rm -f "$src"
-    warn "  could not fetch the $SKILL_NAME skill; skipped"
-    return 0
-  fi
-  # The file carries placeholders, so fill them in before checking that what we
-  # fetched is the skill we think it is.
-  filled="$src.filled.$$"
-  if ! sed -e "s|__REPO_DIR__|${REPO##*/}|g" \
-           -e "s|__REPO__|$REPO|g" \
-           -e "s|__BIN_DIR__|$BIN_DIR|g" \
-           -e "s|__BIN_NAME__|$BIN_NAME|g" \
-           -e "s|__SKILL_NAME__|$SKILL_NAME|g" \
-           -e "s|__VERSION__|${version:-${TAG:-main}}|g" \
-           -e "s|__DATE__|$(date -u +%Y-%m-%d)|g" \
-           "$src" > "$filled" || ! grep -q "^name: $SKILL_NAME$" "$filled"; then
-    rm -f "$src" "$filled"
-    warn "  the $SKILL_NAME skill we fetched is not ours; skipped"
-    return 0
-  fi
-  if mkdir -p "$skill_dir" && mv "$filled" "$skill_dir/SKILL.md"; then
-    rm -f "$src"
-    say "  wrote skill $skill_dir/SKILL.md"
-    return 0
-  fi
-  rm -f "$src" "$filled"
-  warn "  cannot write $skill_dir/SKILL.md; skipped"
-}
 
 agents_md_target() {
   if [ -n "$AGENTS_MD" ]; then printf '%s' "$AGENTS_MD"; return 0; fi
