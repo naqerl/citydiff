@@ -123,6 +123,36 @@ callers, drawn between the towers that make them. The address bar follows the vi
 a method is `…:Type:Name`), plus `side=closed` / `tourside=closed` — so a link to the viewer
 can open on a given node.
 
+## Keys
+
+The viewer answers to these. `?` opens the same list inside the page, written from the one
+source (`view/keys.js`), and the tests check that this table and that list agree.
+
+| keys | does |
+| --- | --- |
+| `/` | search / commands |
+| `wasd` `arrows` | move |
+| `q` `e` | orbit |
+| `-` `+` | zoom |
+| `b` | left sidebar |
+| `t` | tour sidebar |
+| `0` | reset view |
+| `m` | overview / changes |
+| `1` | overview |
+| `2` | changes |
+| `c` | calls / callers |
+| `drag` | orbit |
+| `scroll` | zoom |
+| `click` | enters |
+| `enter` | opens a function |
+| `E` | open in nvim |
+| `D` | diff of the change |
+| `o` `i` | jump back / forward |
+| `esc` | deselect, back to the city |
+| `space` | tour play / pause |
+| `,` `.` | tour previous / next |
+| `?` | legend |
+
 ## Building from source (no release available)
 
 ```sh
