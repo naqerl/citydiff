@@ -879,7 +879,9 @@ const slotById = new Map();
 
 const viewEl = document.querySelector("#view");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// A phone's screen packs 3 pixels per point, and its GPU pays for every one
+// on every frame of a fly. 1.5 keeps the city sharp and costs about half of 2.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, touchUI.matches ? 1.5 : 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -3314,7 +3316,10 @@ function clearGroup(group) {
         for (const mat of list) {
           if (mat === flowMaterial || mat === haloMaterial) continue;
           if (mat.map) mat.map.dispose();
-          mat.dispose();
+          // The material itself is left to the garbage collector, not
+          // disposed: disposing the last user of a shader program deletes
+          // the program, and the next selection compiles it again. On a
+          // phone that compile is a visible stall on every select.
         }
       }
     });
@@ -4614,7 +4619,8 @@ renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefa
 const touching = new Set();
 renderer.domElement.addEventListener("pointerdown", (event) => {
   touching.add(event.pointerId);
-  if (skinPicking) return;
+  if (touching.size > 1) cancelPendingTap();
+  if (skinPicking || quickZoom) return;
   pointerDown = touching.size > 1 ? null : { x: event.clientX, y: event.clientY, button: event.button, touch: event.pointerType !== "mouse" };
   if (tourUI) tourUI.userTookOver();
   tween = null;
@@ -4646,40 +4652,104 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   if (moved > (start.touch ? 10 : 5) || start.button !== 0) return;
   if (bird.on) return;
   if (start.touch) {
-    countTap(event.clientX, event.clientY);
+    holdTap(event.clientX, event.clientY);
     return;
   }
   activate(describeHit(hitTest()));
 });
 
-// A touch tap acts at once: it does what a click does, and on the ground or
-// the sky it is Escape. Taps that follow it quickly in the same spot are a
-// burst: the second zooms in toward the spot, the third zooms out. The first
-// tap has already acted, so a double tap on a tower selects it and moves in.
-const TAP_GAP_MS = 300;
+// Touch taps work the way they do on a map. A tap waits a moment before it
+// acts, because it may be the first half of a double tap: on its own it does
+// what a click does (and on the ground or the sky it is Escape). A second
+// finger-down in that moment, near the first, is a double tap and never
+// selects. Lifted at once it zooms in toward the spot. Held and dragged it is
+// the one-finger zoom: down zooms in, up zooms out, for as long as the finger
+// moves, and the orbit stays out of it.
+const DOUBLE_TAP_MS = 250;
 const TAP_SLOP_PX = 40;
-let taps = null;
+const QUICK_ZOOM_PX = 160;
+let pendingTap = null;
+let quickZoom = null;
 
-function countTap(x, y) {
-  const now = performance.now();
-  const near = taps && now - taps.at <= TAP_GAP_MS && Math.hypot(x - taps.x, y - taps.y) <= TAP_SLOP_PX;
-  taps = near ? { x, y, at: now, count: taps.count + 1 } : { x, y, at: now, count: 1 };
-  runTap(x, y, taps.count);
+function holdTap(x, y) {
+  cancelPendingTap();
+  pendingTap = { x, y, at: performance.now(), timer: 0 };
+  const tap = pendingTap;
+  tap.timer = setTimeout(() => {
+    if (pendingTap !== tap) return;
+    pendingTap = null;
+    runTap(x, y);
+  }, DOUBLE_TAP_MS);
 }
 
-function runTap(x, y, count) {
+function cancelPendingTap() {
+  if (pendingTap) clearTimeout(pendingTap.timer);
+  pendingTap = null;
+}
+
+function runTap(x, y) {
   if (skinPicking || !laid || bird.on) return;
   aimPointer(x, y);
   noteActivity();
   endIntro();
-  if (count === 1) {
-    const found = describeHit(hitTest());
-    if (found) activate(found);
-    else goBack();
-  } else if (count === 2) zoomToward(0.5, true);
-  else zoomToward(2, false);
+  const found = describeHit(hitTest());
+  if (found) activate(found);
+  else goBack();
   requestFrame();
 }
+
+// Capture on the canvas's parent runs before the orbit control's own
+// pointerdown, so a double tap can switch the orbit off before it starts.
+viewEl.addEventListener("pointerdown", (event) => {
+  if (event.target !== renderer.domElement || event.pointerType === "mouse" || skinPicking) return;
+  const first = pendingTap;
+  if (!first || touching.size > 0) return;
+  if (performance.now() - first.at > DOUBLE_TAP_MS || Math.hypot(event.clientX - first.x, event.clientY - first.y) > TAP_SLOP_PX) return;
+  cancelPendingTap();
+  controls.enabled = false;
+  tween = null;
+  // The finger may leave the canvas mid-zoom; its moves still come here.
+  try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* no capture: moves off the canvas are lost */ }
+  const target = controls.target.clone();
+  quickZoom = {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    moved: false,
+    target,
+    away: camera.position.clone().sub(target),
+  };
+  noteActivity();
+  endIntro();
+}, true);
+
+viewEl.addEventListener("pointermove", (event) => {
+  const zoom = quickZoom;
+  if (!zoom || zoom.id !== event.pointerId) return;
+  const dy = event.clientY - zoom.y;
+  if (!zoom.moved && Math.abs(dy) < 8) return;
+  zoom.moved = true;
+  const dist = Math.min(controls.maxDistance, Math.max(controls.minDistance, zoom.away.length() * Math.exp(-dy / QUICK_ZOOM_PX)));
+  camera.position.copy(zoom.target).add(zoom.away.clone().setLength(dist));
+  controls.target.copy(zoom.target);
+  viewDirty = true;
+  requestFrame();
+}, true);
+
+function endQuickZoom(event) {
+  const zoom = quickZoom;
+  if (!zoom || zoom.id !== event.pointerId) return;
+  quickZoom = null;
+  touching.delete(event.pointerId);
+  controls.enabled = !skinPicking;
+  if (!zoom.moved && event.type === "pointerup") {
+    aimPointer(event.clientX, event.clientY);
+    zoomToward(0.5, true);
+  }
+  requestFrame();
+}
+viewEl.addEventListener("pointerup", endQuickZoom, true);
+viewEl.addEventListener("pointercancel", endQuickZoom, true);
 
 const tapGround = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const tapSpot = new THREE.Vector3();
@@ -5703,6 +5773,32 @@ confirmIgnore.addEventListener("click", confirmIgnoreSkin);
 confirmEl.addEventListener("click", (event) => { if (event.target === confirmEl) confirmIgnoreSkin(); });
 
 main();
+
+// ?perf shows how the page keeps up on this device: frames drawn in the last
+// second, the slowest of them, draw calls and the pixel ratio. A pause in
+// drawing (nothing moving) is not counted as a slow frame.
+if (new URLSearchParams(location.search).has("perf")) {
+  const box = document.createElement("div");
+  box.id = "perf";
+  document.body.append(box);
+  let drawn = 0;
+  let worst = 0;
+  let last = 0;
+  const render = renderer.render.bind(renderer);
+  renderer.render = (target, eye) => {
+    const now = performance.now();
+    const gap = now - last;
+    if (last && gap < 500) worst = Math.max(worst, gap);
+    last = now;
+    drawn++;
+    render(target, eye);
+  };
+  setInterval(() => {
+    box.textContent = drawn + " fps · worst " + Math.round(worst) + " ms · " + renderer.info.render.calls + " calls · " + renderer.getPixelRatio() + "x";
+    drawn = 0;
+    worst = 0;
+  }, 1000);
+}
 
 // ?check=1 reports arcs that pass through buildings.
 if (new URLSearchParams(location.search).has("check")) {
