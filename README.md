@@ -123,12 +123,13 @@ The address bar follows the view, so a reload — or a link you send — opens o
 place. It is written to be read and edited by hand:
 
 ```
-?select=function:citydiff/lib/diff.TestCoolStuff&mode=changes&refs=callers&side=closed&tourside=closed
+?select=citydiff:lib:diff:TestCoolStuff&mode=changes&refs=callers&side=closed&tourside=closed
 ```
 
-`select` is `kind:name` — `package:<id>`, `external:<id>`, and a declaration always with its
-package: `type:<pkg>.Name`, `function:<pkg>.Name`, `method:<pkg>.Type.Name`. A name two
-declarations in one package share also gets the file: `function:citydiff/cmd.init@cmd/a.go`.
+`select` is the node's path from the top of the tree down, one `:` per step: a package is
+`citydiff:lib:diff`, a function in it `citydiff:lib:diff:TestCoolStuff`, a type
+`citydiff:lib:Parser` and its method `citydiff:lib:Parser:Parse`. When two declarations share
+a path (two `init` functions in one package), the file follows: `citydiff:cmd:init@cmd/a.go`.
 `mode=changes`, `refs=callers`, `side=closed` and `tourside=closed` are only there when they
 differ from the default (overview, calls, both sidebars open). The camera is not stored; a
 restored selection is flown to the way a click would.

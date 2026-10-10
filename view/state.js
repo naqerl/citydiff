@@ -3,7 +3,7 @@
 // and a link to it opens on the same node. It is written for a person to read
 // and edit:
 //
-//   ?select=function:citydiff/lib/diff.TestCoolStuff&mode=changes&refs=callers&side=closed
+//   ?select=citydiff:lib:diff:TestCoolStuff&mode=changes&refs=callers&side=closed
 //
 // A default is left out, so the bare city has a bare address. The camera is
 // not here: restoring the selection flies to it the way a click does.
@@ -11,62 +11,62 @@
 // The parameters this file owns. Any other parameter (tour, check) is kept.
 export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside"];
 
-// declLabel is a declaration's name as the search lists it: a method carries
-// its receiver.
-export function declLabel(entity) {
-  return entity.kind === "method" && entity.recv ? entity.recv + "." + entity.name : entity.name;
+// pathOf turns an id into its steps: citydiff/lib/diff is citydiff:lib:diff.
+export function pathOf(id) {
+  return String(id).split("/").filter(Boolean).join(":");
 }
 
-// declName spells a declaration with its package, so two functions of the
-// same name in different packages stay apart: <package>.Name for a function or
-// a type, <package>.Type.Name for a method.
-export function declName(pkgId, entity) {
-  return entity.kind + ":" + pkgId + "." + declLabel(entity);
+// nodePath is a node spelled from the top of the tree down: the package's
+// path, then for a declaration its type (a method's receiver) and its name.
+//
+//   citydiff:lib:diff                  package
+//   citydiff:lib:diff:TestCoolStuff    function
+//   citydiff:lib:Parser                type
+//   citydiff:lib:Parser:Parse          method
+//
+// A node is { kind: "package" | "external", id } or { kind: "entity", entity, pkg }
+// with pkg the package id.
+export function nodePath(node) {
+  if (node.kind !== "entity") return pathOf(node.id);
+  const { entity } = node;
+  const own = entity.kind === "method" && entity.recv ? entity.recv + ":" + entity.name : entity.name;
+  return pathOf(node.pkg) + ":" + own;
 }
 
-// nameIndex groups declarations by their spelling. Each item is
-// { entity, pkg } with pkg the package id. A spelling that still has more than
-// one declaration behind it is told apart by its file.
-export function nameIndex(items) {
+// nameIndex groups nodes by path. When two nodes share one, the first added
+// wins a bare path, so packages go in before declarations.
+export function nameIndex(nodes) {
   const index = new Map();
-  for (const { entity, pkg } of items) {
-    const key = declName(pkg, entity);
+  for (const node of nodes) {
+    const key = nodePath(node);
     const list = index.get(key);
-    if (list) list.push(entity);
-    else index.set(key, [entity]);
+    if (list) list.push(node);
+    else index.set(key, [node]);
   }
   return index;
 }
 
-// writeNode spells a selection as kind:name. A package or an external is its
-// id. A declaration is its package-qualified name, with @file only when
-// another declaration in that package has the same kind and name.
-export function writeNode(selected, entity, pkgId, index) {
-  if (!selected) return "";
-  if (selected.kind === "package" || selected.kind === "external") return selected.kind + ":" + selected.id;
-  if (!entity) return "";
-  const key = declName(pkgId, entity);
+// writeNode is a node's path, with @file when another declaration has the
+// same path (two init functions in one package).
+export function writeNode(node, index) {
+  if (!node) return "";
+  const key = nodePath(node);
   const same = index.get(key) || [];
-  return same.length > 1 && entity.file ? key + "@" + entity.file : key;
+  const file = node.kind === "entity" ? node.entity.file : "";
+  return same.length > 1 && file ? key + "@" + file : key;
 }
 
-// readNode is writeNode backwards. A package or an external comes back as its
-// id for the caller to check; a declaration comes back as its entity id, or
-// null when nothing by that name is in the scene. A name without @file that
-// several declarations share picks the first.
+// readNode is writeNode backwards: { kind, id }, with id the package id or the
+// entity id, or null when nothing in the scene has that path.
 export function readNode(text, index) {
-  const colon = (text || "").indexOf(":");
-  if (colon <= 0) return null;
-  const kind = text.slice(0, colon);
-  const rest = text.slice(colon + 1);
-  if (!rest) return null;
-  if (kind === "package" || kind === "external") return { kind, id: rest };
-  const at = rest.indexOf("@");
-  const name = at < 0 ? rest : rest.slice(0, at);
-  const file = at < 0 ? "" : rest.slice(at + 1);
-  const list = index.get(kind + ":" + name) || [];
-  const hit = (file && list.find((entity) => entity.file === file)) || list[0];
-  return hit ? { kind: "entity", id: hit.id } : null;
+  if (!text) return null;
+  const at = text.indexOf("@");
+  const key = at < 0 ? text : text.slice(0, at);
+  const file = at < 0 ? "" : text.slice(at + 1);
+  const list = index.get(key) || [];
+  const hit = (file && list.find((node) => node.kind === "entity" && node.entity.file === file)) || list[0];
+  if (!hit) return null;
+  return hit.kind === "entity" ? { kind: "entity", id: hit.entity.id } : { kind: hit.kind, id: hit.id };
 }
 
 // readState reads the view out of a query string. Anything unknown reads as

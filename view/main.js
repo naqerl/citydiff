@@ -979,7 +979,7 @@ function applyQuery() {
   if (!state.side) setSide(false);
   tourSideWanted = state.tourSide;
   urlReady = true;
-  const node = readNode(state.select, declNames);
+  const node = readNode(state.select, nodeNames);
   if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
   else if (node && node.kind === "external" && laid.externals.some((item) => item.id === node.id)) selectExternal(node.id, callInbound);
   else if (node && node.kind === "entity") selectEntity(node.id);
@@ -1000,17 +1000,18 @@ function applyQuery() {
 // The address bar follows the view: written in place, so a reload keeps it
 // and the browser history is not one entry per click.
 let urlReady = false;
-let declNames = new Map();
+let nodeNames = new Map();
 // tourside= waits for the tour: until one is on screen the address keeps
 // what it said, and once one is, the sidebar itself is the answer.
 let tourSideWanted = true;
 
 function syncURL() {
   if (!urlReady) return;
-  const node = selected && selected.kind === "entity" ? byEntity.get(selected.id) : null;
+  const found = selected && selected.kind === "entity" ? byEntity.get(selected.id) : null;
+  const node = found ? { kind: "entity", entity: found.entity, pkg: found.pkg.id } : selected && selected.kind !== "entity" ? selected : null;
   const tourSide = document.querySelector("#tour-side");
   const query = writeState(location.search, {
-    select: writeNode(selected, node && node.entity, node && node.pkg.id, declNames),
+    select: writeNode(node, nodeNames),
     mode: mode === "overlay" ? "changes" : "overview",
     refs: callInbound ? "callers" : "calls",
     side: !hud.side.classList.contains("is-collapsed"),
@@ -1056,7 +1057,12 @@ function indexScene() {
       if (found) found.box = block;
     }
   }
-  declNames = nameIndex([...byEntity.values()].filter((item) => item.box).map((item) => ({ entity: item.entity, pkg: item.pkg.id })));
+  // Packages go in first, so a package keeps its bare path if a declaration
+  // ever spells the same one.
+  nodeNames = nameIndex([
+    ...(sceneDoc.packages || []).map((pkg) => ({ kind: pkg.external ? "external" : "package", id: pkg.id })),
+    ...[...byEntity.values()].filter((item) => item.box).map((item) => ({ kind: "entity", entity: item.entity, pkg: item.pkg.id })),
+  ]);
   indexCallers();
 }
 
