@@ -40,8 +40,10 @@ then the skins directory.
   the panel is open the arrows belong to it, not to the camera.
 - **Save** remembers it for this browser and closes the panel. Until you press Save, nothing
   is remembered.
-- **Close** the panel (the ×, or `esc`) and an unsaved preview is dropped: the saved theme
-  comes back. That way the theme you see is always the theme that is stored.
+- **Closing asks when there is something to lose.** With a preview that was never saved, `esc`,
+  the × and a click on the backdrop open a question: **Change** keeps the previewed theme (what
+  Save does) and **Ignore** drops it and puts the saved theme back. `esc` on the question is
+  Ignore. With nothing previewed — or with the saved theme previewed again — `esc` just closes.
 
 `/skin` also works while the viewer serves a tour (`citydiff tour serve`): the panel and the
 tour sidebar share the right edge, and the theme outlives the tour.

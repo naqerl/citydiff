@@ -110,7 +110,8 @@ The viewer exposes `GET /scene.json` (the scene graph) and `/` (static assets, e
 the binary). Bind to `127.0.0.1` unless remote access is intended — it has no auth.
 
 Inside the page, `/` in the search box lists its commands: `/skin` opens the theme panel in
-the right sidebar, where a skin is previewed on click and kept with Save. The choice lives in
+the right sidebar, where a skin is previewed on click and kept with Save. Closing the panel
+with a preview that was never saved asks first — Change keeps it, Ignore drops it. The choice lives in
 the browser (localStorage); the process has no say in it, and `CITYDIFF_SKINS_DIR` is what
 points at extra skins. Selecting a node shows its calls or its callers, drawn between the
 towers that make them.
