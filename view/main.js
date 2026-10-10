@@ -1279,6 +1279,15 @@ function writeSlot(mesh, index, slot, open) {
   return true;
 }
 
+// A sign is painted at this size and then stretched over its plate: a bigger
+// canvas is what keeps the text sharp now that a plate grows with its building.
+const SIGN_FONT = 96;
+const SIGN_PAD = 28;
+
+function signFont() {
+  return "600 " + SIGN_FONT + "px ui-monospace, monospace";
+}
+
 function drawSign(canvas, text, textColor, background) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1286,10 +1295,10 @@ function drawSign(canvas, text, textColor, background) {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
-  ctx.font = "600 48px ui-monospace, monospace";
+  ctx.font = signFont();
   ctx.fillStyle = textColor;
   ctx.textBaseline = "middle";
-  ctx.fillText(text, 14, 36);
+  ctx.fillText(text, SIGN_PAD / 2, canvas.height / 2);
 }
 
 function redrawPlates(textColor, background) {
@@ -1303,14 +1312,13 @@ function redrawPlates(textColor, background) {
 }
 
 function signTexture(label) {
-  const font = "600 48px ui-monospace, monospace";
   const probe = document.createElement("canvas").getContext("2d");
-  probe.font = font;
+  probe.font = signFont();
   const text = label.length > 22 ? label.slice(0, 21) + "…" : label;
   const textW = Math.ceil(probe.measureText(text).width);
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(64, textW + 28);
-  canvas.height = 72;
+  canvas.width = Math.max(SIGN_FONT * 1.34, textW + SIGN_PAD);
+  canvas.height = Math.round(SIGN_FONT * 1.5);
   const background = theme.label.background;
   drawSign(canvas, text, theme.label.text, background);
   const tex = new THREE.CanvasTexture(canvas);
@@ -1334,32 +1342,35 @@ function setPlateOpacity(plate, opacity) {
 // The name sits on all four faces, just under the roof, facing outward.
 // PlaneGeometry faces local +z. rotation.y turns that normal to each side:
 // 0 → +z, π → −z, +π/2 → +x, −π/2 → −x.
+// A sign is as big as its wall allows: as wide as the face it sits on, and no
+// taller than the building can carry. A tall package gets a big sign, a flat
+// one a small one, and the two pairs of faces get a geometry each because the
+// front of a building is usually wider than its side.
+function plateGeometry(span, boxHeight, aspect) {
+  const width = Math.max(0.6, span * 0.94);
+  const maxHeight = Math.max(0.5, Math.min(boxHeight * 0.62, 4));
+  const height = Math.min(width / aspect, maxHeight);
+  return new THREE.PlaneGeometry(height * aspect, height);
+}
+
 function namePlate(box) {
   if (Math.max(box.w, box.d) < 5 || Math.min(box.w, box.d) < 2.2) return null;
   const { tex, aspect, text } = signTexture(box.name || box.id);
-  const limit = Math.min(box.w, box.d) * 0.86;
-  let height = Math.min(1.35, Math.max(0.42, limit * 0.2));
-  let width = height * aspect;
-  if (width > limit) {
-    width = limit;
-    height = width / aspect;
-  }
   const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
-  const geo = new THREE.PlaneGeometry(width, height);
   const group = new THREE.Group();
   group.userData.sign = tex;
   group.userData.signText = text;
-  const y = box.h / 2 - height / 2 - 0.06;
   const gap = 0.045;
   const faces = [
-    [0, y, box.d / 2 + gap, 0],
-    [0, y, -box.d / 2 - gap, Math.PI],
-    [box.w / 2 + gap, y, 0, Math.PI / 2],
-    [-box.w / 2 - gap, y, 0, -Math.PI / 2],
+    [0, box.d / 2 + gap, 0, box.w],
+    [0, -box.d / 2 - gap, Math.PI, box.w],
+    [box.w / 2 + gap, 0, Math.PI / 2, box.d],
+    [-box.w / 2 - gap, 0, -Math.PI / 2, box.d],
   ];
-  for (const [x, py, z, rot] of faces) {
+  for (const [x, z, rot, span] of faces) {
+    const geo = plateGeometry(span, box.h, aspect);
     const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(x, py, z);
+    mesh.position.set(x, box.h / 2 - geo.parameters.height / 2 - 0.06, z);
     mesh.rotation.y = rot;
     group.add(mesh);
   }
@@ -2770,8 +2781,6 @@ function updateHUD() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
     if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
-  } else if (mode === "overlay") {
-    note = "Added is green (+), deleted is red (\u2212), changed is yellow (~).";
   }
   if (jumps.length > 1 && !jumpDetached) {
     const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
