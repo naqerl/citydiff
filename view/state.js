@@ -3,7 +3,7 @@
 // and a link to it opens on the same node. It is written for a person to read
 // and edit:
 //
-//   ?select=function:TestCoolStuff&mode=changes&refs=callers&side=closed
+//   ?select=function:citydiff/lib/diff.TestCoolStuff&mode=changes&refs=callers&side=closed
 //
 // A default is left out, so the bare city has a bare address. The camera is
 // not here: restoring the selection flies to it the way a click does.
@@ -17,12 +17,20 @@ export function declLabel(entity) {
   return entity.kind === "method" && entity.recv ? entity.recv + "." + entity.name : entity.name;
 }
 
-// nameIndex groups declarations by kind:label, the spelling a node gets in
-// the address bar, so a shared name can be told apart by its file.
-export function nameIndex(entities) {
+// declName spells a declaration with its package, so two functions of the
+// same name in different packages stay apart: <package>.Name for a function or
+// a type, <package>.Type.Name for a method.
+export function declName(pkgId, entity) {
+  return entity.kind + ":" + pkgId + "." + declLabel(entity);
+}
+
+// nameIndex groups declarations by their spelling. Each item is
+// { entity, pkg } with pkg the package id. A spelling that still has more than
+// one declaration behind it is told apart by its file.
+export function nameIndex(items) {
   const index = new Map();
-  for (const entity of entities) {
-    const key = entity.kind + ":" + declLabel(entity);
+  for (const { entity, pkg } of items) {
+    const key = declName(pkg, entity);
     const list = index.get(key);
     if (list) list.push(entity);
     else index.set(key, [entity]);
@@ -31,13 +39,13 @@ export function nameIndex(entities) {
 }
 
 // writeNode spells a selection as kind:name. A package or an external is its
-// id. A declaration is its name, with @file only when another declaration of
-// the same kind shares the name.
-export function writeNode(selected, entity, index) {
+// id. A declaration is its package-qualified name, with @file only when
+// another declaration in that package has the same kind and name.
+export function writeNode(selected, entity, pkgId, index) {
   if (!selected) return "";
   if (selected.kind === "package" || selected.kind === "external") return selected.kind + ":" + selected.id;
   if (!entity) return "";
-  const key = entity.kind + ":" + declLabel(entity);
+  const key = declName(pkgId, entity);
   const same = index.get(key) || [];
   return same.length > 1 && entity.file ? key + "@" + entity.file : key;
 }
@@ -54,9 +62,9 @@ export function readNode(text, index) {
   if (!rest) return null;
   if (kind === "package" || kind === "external") return { kind, id: rest };
   const at = rest.indexOf("@");
-  const label = at < 0 ? rest : rest.slice(0, at);
+  const name = at < 0 ? rest : rest.slice(0, at);
   const file = at < 0 ? "" : rest.slice(at + 1);
-  const list = index.get(kind + ":" + label) || [];
+  const list = index.get(kind + ":" + name) || [];
   const hit = (file && list.find((entity) => entity.file === file)) || list[0];
   return hit ? { kind: "entity", id: hit.id } : null;
 }
