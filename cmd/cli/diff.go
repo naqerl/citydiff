@@ -20,7 +20,6 @@ type diffFile struct {
 	Path    string     `json:"path"`
 	Lang    string     `json:"lang,omitempty"`
 	Binary  bool       `json:"binary,omitempty"`
-	Note    string     `json:"note,omitempty"`
 	Hunks   []git.Hunk `json:"hunks"`
 	Omitted int        `json:"omitted,omitempty"`
 }
@@ -59,10 +58,13 @@ func (v *viewer) serveDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 // nodeDiff is the file's hunks whose own changed lines are inside the node,
-// and a count of the ones that are not. A node whose lines are untouched but
-// whose file changed — a declaration that only moved, or one whose neighbour
-// changed — gets the file's hunks with a note, because a marked node with
-// nothing to show would read as a bug.
+// and a count of the ones that are not. Only the node's own hunks: a diff of
+// the whole file would answer a question nobody asked, and the hunks around
+// the node are the ones that belong to it.
+//
+// A node whose own lines are untouched gets no hunks and an omitted count, and
+// the page says so rather than showing the file's change under the node's
+// name.
 //
 // side says which side of the diff the node's lines are numbered on: a
 // removed declaration only has lines on the old side.
@@ -82,11 +84,6 @@ func nodeDiff(patch []git.FileDiff, file string, line, end int, side string) []d
 				continue
 			}
 			out.Omitted++
-		}
-		if len(out.Hunks) == 0 && len(fd.Hunks) > 0 {
-			out.Hunks = fd.Hunks
-			out.Omitted = 0
-			out.Note = "the node's own lines are unchanged; this is the file's change"
 		}
 		return []diffFile{out}
 	}

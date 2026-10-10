@@ -122,7 +122,6 @@ export async function openDiff(target, onClose) {
 
   const body = root.querySelector("#diff-body");
   const note = root.querySelector(".diff-note");
-  let extraNote = "";
   let reply;
   try {
     const res = await fetch("/api/diff?" + query(target));
@@ -136,15 +135,23 @@ export async function openDiff(target, onClose) {
     fail(body, reply.problems[0].message);
     return;
   }
-  const files = (reply.files || []).filter((file) => (file.hunks || []).length || file.binary);
+  const all = reply.files || [];
+  const files = all.filter((file) => (file.hunks || []).length || file.binary);
   if (!files.length) {
-    fail(body, (reply.files || []).length ? "no lines of this change are inside the node" : "this node has no change in " + (reply.range || "the range"));
+    // Nothing of the node's own changed. Say that, and say how much of the
+    // file's change is being left out — do not show it under the node's name.
+    const omitted = all.reduce((n, file) => n + (file.omitted || 0), 0);
+    const range = reply.range || "this range";
+    if (!all.length) {
+      fail(body, "this node has no change in " + range);
+    } else {
+      fail(body, "the node's own lines did not change in " + range + (omitted ? "; " + omitted + " hunk" + (omitted === 1 ? "" : "s") + " elsewhere in " + all[0].path + " " + (omitted === 1 ? "is" : "are") + " not shown" : ""));
+    }
     return;
   }
   const shown = files.reduce((n, file) => n + (file.hunks || []).length, 0);
   const omitted = files.reduce((n, file) => n + (file.omitted || 0), 0) + (reply.more || 0);
-  extraNote = files.map((file) => file.note).filter(Boolean)[0] || "";
-  note.textContent = [shown + (shown === 1 ? " hunk" : " hunks"), reply.range, omitted ? omitted + " not shown" : "", extraNote].filter(Boolean).join(" · ");
+  note.textContent = [shown + (shown === 1 ? " hunk" : " hunks"), reply.range, omitted ? omitted + " not shown" : ""].filter(Boolean).join(" · ");
   note.hidden = false;
   for (const file of files) body.append(fileBlock(file));
   body.scrollTop = 0;
