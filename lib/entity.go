@@ -1,6 +1,9 @@
 package lib
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // Entity is one language-agnostic declaration extracted from source.
 type Entity interface {
@@ -124,6 +127,15 @@ func (e MethodEntry) String() string {
 		receiver = e.Type.Name
 	}
 	return fmt.Sprintf("{Name:%s Parameters:%+v ReturnArgs:%+v Type:{Name:%s}}", e.Name, e.Parameters, e.ReturnArgs, receiver)
+}
+
+// SameDeclaration is true when two parsed declarations are the same one:
+// the same name, fields, parameters, returns, body hash and calls, wherever
+// they sit. A range that inserts lines above a function moves it without
+// changing it, and a move must not read as a change — which is what comparing
+// the entries whole does, because a position is part of an entry.
+func SameDeclaration(a, b Entity) bool {
+	return reflect.DeepEqual(At(a, 0, 0), At(b, 0, 0))
 }
 
 // Pos is where a declaration is written: the 1-based line and column of its
