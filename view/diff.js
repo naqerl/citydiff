@@ -145,7 +145,12 @@ export async function openDiff(target, onClose) {
     if (!all.length) {
       fail(body, "this node has no change in " + range);
     } else {
-      fail(body, "the node's own lines did not change in " + range + (omitted ? "; " + omitted + " hunk" + (omitted === 1 ? "" : "s") + " elsewhere in " + all[0].path + " " + (omitted === 1 ? "is" : "are") + " not shown" : ""));
+      // Lead with the verdict on the node itself: an empty diff for a node the
+      // city marked as changed reads as a bug, and this says which it is.
+      const verdict = target.change === "same"
+        ? "this node is unchanged in " + range
+        : "the node's own lines did not change in " + range;
+      fail(body, verdict + "; " + omitted + " hunk" + (omitted === 1 ? "" : "s") + " elsewhere in " + all[0].path + " " + (omitted === 1 ? "is" : "are") + " not shown");
     }
     return;
   }
