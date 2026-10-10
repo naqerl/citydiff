@@ -405,7 +405,8 @@ const hud = {
   title: document.querySelector("#title"),
   crumb: document.querySelector("#crumb"),
   note: document.querySelector("#note"),
-  detail: document.querySelector("#detail"),
+  detailHead: document.querySelector("#detail-head"),
+  detailBody: document.querySelector("#detail-body"),
   tag: document.querySelector("#tag"),
   overview: document.querySelector("#mode-overview"),
   changes: document.querySelector("#mode-changes"),
@@ -443,7 +444,6 @@ const catalog = [];
 let searchHits = [];
 let commandHits = [];
 let searchCursor = 0;
-let showUnchanged = false;
 const marchStops = new Set();
 
 function stopMarches() {
@@ -2776,24 +2776,29 @@ function renderCrumb() {
 
 function renderDetail() {
   stopMarches();
-  hud.detail.replaceChildren();
+  hud.detailHead.replaceChildren();
+  hud.detailBody.replaceChildren();
   if (focus) {
-    hud.detail.append(focusDetail(focus.entity));
-    hud.detail.append(roster(focus.pkg));
+    hud.detailHead.append(focusDetail(focus.entity));
+    hud.detailBody.append(roster(focus.pkg));
     return;
   }
   if (selected && selected.kind === "entity") {
     const found = byEntity.get(selected.id);
     if (found) {
-      hud.detail.append(entityDetail(found.entity));
-      hud.detail.append(roster(found.pkg));
+      hud.detailHead.append(entityDetail(found.entity));
+      hud.detailBody.append(roster(found.pkg));
     }
     return;
   }
   const id = (selected && selected.id) || (sceneDoc && sceneDoc.root);
   const pkg = id ? byPackage.get(id) : null;
-  if (pkg) hud.detail.append(packageDetail(pkg));
-  else hud.detail.append(noRootDetail());
+  if (pkg) {
+    hud.detailHead.append(packageDetail(pkg));
+    hud.detailBody.append(roster(pkg));
+    return;
+  }
+  hud.detailHead.append(noRootDetail());
 }
 
 // A range whose two sides name different modules — a rename — has no single
@@ -2855,7 +2860,6 @@ function packageDetail(pkg) {
     wrap.append(line);
   }
   appendRefs(wrap);
-  wrap.append(roster(pkg));
   return wrap;
 }
 
@@ -2914,9 +2918,21 @@ function changedInSubtree(pkg) {
   return out;
 }
 
+// The children of a node, grouped by kind. Each group is one collapsible
+// section with git's four numbers on its header: what the range added,
+// changed, deleted and left alone.
 function roster(pkg) {
   const wrap = document.createElement("div");
+  wrap.className = "sections";
   if (!pkg) return wrap;
+  for (const section of rosterSections(pkg)) {
+    if (!section.hot.length && !section.same.length) continue;
+    wrap.append(sectionBlock(section));
+  }
+  return wrap;
+}
+
+function rosterSections(pkg) {
   const children = childPackages(pkg.id);
   children.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
   const direct = splitChanges(children, (item) => item.change);
@@ -2924,51 +2940,80 @@ function roster(pkg) {
   const packageList = [...direct.hot, ...nested];
   packageList.sort((a, b) => rowLabel(a, pkg.id).localeCompare(rowLabel(b, pkg.id)));
   const sections = [{
+    key: "packages",
     label: "Packages",
     hot: mode === "overlay" ? deletedFirst(packageList) : children,
     same: mode === "overlay" ? direct.same : [],
     row: (item) => packageRow(item, pkg.id),
   }];
   const groups = [
-    ["Types", "type"],
-    ["Functions", "function"],
-    ["Methods", "method"],
+    ["types", "Types", "type"],
+    ["functions", "Functions", "function"],
+    ["methods", "Methods", "method"],
   ];
-  for (const [label, kind] of groups) {
+  for (const [key, label, kind] of groups) {
     const list = declaredEntities(pkg).filter((entity) => entity.kind === kind);
     list.sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
     const split = splitChanges(list, (item) => item.change);
-    sections.push({ label, hot: deletedFirst(split.hot), same: split.same, row: entityRow });
+    sections.push({ key, label, hot: deletedFirst(split.hot), same: split.same, row: entityRow });
   }
-  const parts = sections;
-  const paint = (pick) => {
-    for (const section of parts) {
-      const rows = section[pick];
-      if (!rows.length) continue;
-      const heading = document.createElement("h3");
-      heading.textContent = section.label;
-      wrap.append(heading);
-      for (const item of rows) wrap.append(section.row(item));
-    }
-  };
-  paint("hot");
-  const hidden = parts.reduce((count, section) => count + section.same.length, 0);
-  if (mode === "overlay" && hidden) {
-    const fold = document.createElement("button");
-    fold.type = "button";
-    fold.className = "fold";
-    fold.textContent = showUnchanged ? "hide unchanged" : "expand unchanged";
-    const count = document.createElement("span");
-    count.textContent = String(hidden);
-    fold.append(" ", count);
-    fold.addEventListener("click", () => {
-      showUnchanged = !showUnchanged;
-      renderDetail();
-    });
-    wrap.append(fold);
-    if (showUnchanged) paint("same");
+  return sections;
+}
+
+// Which sections are open follows the user from node to node, the way a
+// sidebar does in an editor. They start open: the rows were the whole view
+// before this, and collapsing is the new thing.
+const openSections = new Set(["packages", "types", "functions", "methods"]);
+
+function sectionBlock(section) {
+  const wrap = document.createElement("section");
+  wrap.className = openSections.has(section.key) ? "section open" : "section";
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "section-head";
+  head.setAttribute("aria-expanded", wrap.classList.contains("open") ? "true" : "false");
+  const caret = document.createElement("span");
+  caret.className = "section-caret";
+  caret.innerHTML = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+  const label = document.createElement("span");
+  label.className = "section-label";
+  label.textContent = section.label;
+  const counts = document.createElement("span");
+  counts.className = "section-counts";
+  for (const [kind, text] of sectionCounts(section)) {
+    const span = document.createElement("span");
+    span.className = kind;
+    span.textContent = text;
+    counts.append(span);
   }
+  head.append(caret, label, counts);
+  head.addEventListener("click", () => {
+    const open = !wrap.classList.contains("open");
+    wrap.classList.toggle("open", open);
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) openSections.add(section.key);
+    else openSections.delete(section.key);
+  });
+  const body = document.createElement("div");
+  body.className = "section-body";
+  for (const item of [...section.hot, ...section.same]) body.append(section.row(item));
+  wrap.append(head, body);
   return wrap;
+}
+
+// added, changed, deleted, untouched — the untouched count is the quiet one.
+function sectionCounts(section) {
+  const tally = { added: 0, modified: 0, removed: 0, same: 0 };
+  for (const item of [...section.hot, ...section.same]) {
+    const change = item.change;
+    tally[change in tally ? change : "same"] += 1;
+  }
+  const out = [];
+  if (tally.added) out.push(["added", "+" + tally.added]);
+  if (tally.modified) out.push(["modified", "~" + tally.modified]);
+  if (tally.removed) out.push(["removed", "\u2212" + tally.removed]);
+  if (tally.same) out.push(["same", String(tally.same)]);
+  return out;
 }
 
 function packageLabel(pkg) {

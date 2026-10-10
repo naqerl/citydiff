@@ -206,20 +206,59 @@
     #stage { position: absolute; inset: 0; background: var(--bg); }
     #view { position: absolute; inset: 0; }
     #view canvas { display: block; width: 100%; height: 100%; }
-    #detail { flex: 1; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 18px; }
+    /* The node's own header never scrolls away: the panel is a fixed head and a
+       body of sections, and each section's rows scroll inside the section. */
+    #detail { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+    #detail-head { flex: none; padding: 12px 14px 8px; border-bottom: 1px solid var(--line); min-width: 0; }
+    #detail-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding: 0 0 18px; }
     #detail h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; }
-    #detail h3 {
-      margin: 14px 0 4px;
+    #detail p { margin: 0 0 8px; color: var(--muted); overflow: hidden; }
+
+    /* Sections. An open one takes a share of the body and scrolls its own rows,
+       so the other sections keep their headers on screen. */
+    /* A collapsed section is its header: the body's flex basis is 0, so it
+       contributes nothing until the section grows. Opening animates flex-grow,
+       and an open body scrolls its own rows. `grid-template-rows: 0fr` would be
+       the shorter spelling, but a 0fr track in an auto-height grid container
+       sizes to its content, so it never collapses. */
+    /* The stack fills the body, so an open section has free space to grow into. */
+    .sections { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .section { display: flex; flex-direction: column; min-height: 34px; flex: 0 1 auto; transition: flex-grow 180ms ease; }
+    .section.open { flex-grow: 1; }
+    .section-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+      flex: none;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 7px 14px;
+      color: var(--faint);
       font-size: 11px;
       font-weight: 600;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: var(--faint);
+      text-align: left;
     }
-    #detail p { margin: 0 0 8px; color: var(--muted); overflow: hidden; }
+    .section-head:hover { background: var(--elev); color: var(--fg); }
+    .section-head:focus-visible { outline: 1px solid var(--fg); outline-offset: -1px; color: var(--fg); }
+    .section-caret { flex: none; display: grid; place-items: center; width: 10px; transition: transform 160ms ease; }
+    .section.open .section-caret { transform: rotate(90deg); }
+    .section-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .section-counts { flex: none; display: flex; gap: 8px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+    .section-counts .same { color: var(--fainter); }
+    .section-body { flex: 1 1 0; min-height: 0; overflow: hidden; }
+    .section.open .section-body { overflow-y: auto; }
+    /* Rows line up under the section's title, past the caret and its gap. The
+       `#detail` prefix is needed: `#detail button.row` above carries the id. */
+    #detail .section-body button.row { padding: 4px 14px 4px 32px; }
+    @media (prefers-reduced-motion: reduce) { .section, .section-caret { transition: none; } }
     #detail ul { list-style: none; margin: 8px 0 0; padding: 0; }
     #detail li { padding: 3px 0; border-top: 1px solid var(--line); overflow: hidden; }
-    #detail button.row, #detail button.fold {
+    #detail button.row {
       display: flex;
       width: 100%;
       min-width: 0;
@@ -231,9 +270,6 @@
       border-bottom: 1px solid var(--elev);
       padding: 4px 2px;
     }
-    #detail button.fold { color: var(--muted); padding: 6px 2px; }
-    #detail button.fold span { margin-left: auto; color: var(--faint); }
-    #detail button.fold:hover { color: var(--fg); background: var(--elev); }
     .clip { display: block; min-width: 0; flex: 1; overflow: hidden; }
     .marquee { display: inline-block; white-space: nowrap; }
     #detail button.row .mark { margin-left: auto; flex: none; }
@@ -578,7 +614,10 @@
           <div id="crumb"></div>
           <div id="note"></div>
         </div>
-        <div id="detail"></div>
+        <div id="detail">
+          <div id="detail-head"></div>
+          <div id="detail-body"></div>
+        </div>
       </aside>
       <aside id="skin-side" tabindex="-1" hidden>
         <div id="skin-head">
