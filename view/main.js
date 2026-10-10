@@ -2973,6 +2973,7 @@ function rosterSections(pkg) {
     hot: mode === "overlay" ? deletedFirst(packageList) : children,
     same: mode === "overlay" ? direct.same : [],
     row: (item) => packageRow(item, pkg.id),
+    totals: () => statsBelow(pkg),
   }];
   const groups = [
     ["types", "Types", "type"],
@@ -3056,9 +3057,19 @@ function sectionCounts(section) {
   const items = [...section.hot, ...section.same];
   if (mode !== "overlay") return [["total", String(items.length)]];
   const tally = { added: 0, modified: 0, removed: 0, same: 0 };
-  for (const item of items) {
-    const change = item.change;
-    tally[change in tally ? change : "same"] += 1;
+  if (section.totals) {
+    // The Packages expander holds packages, and a package holds more than its
+    // own mark: its header counts every declaration and call inside it, so the
+    // number on the fold is the size of what unfolds.
+    const totals = section.totals();
+    tally.added = totals.added;
+    tally.modified = totals.modified;
+    tally.removed = totals.removed;
+  } else {
+    for (const item of items) {
+      const change = item.change;
+      tally[change in tally ? change : "same"] += 1;
+    }
   }
   const out = [];
   if (tally.added) out.push(["added", "+" + tally.added]);
@@ -3086,6 +3097,40 @@ function rowLabel(pkg, ownerId) {
 // Counted per call step, not per target: a function that lost a call to a
 // target and gained another has both, and folding them by target (which is what
 // the arcs do) hid the loss behind the gain.
+// A package row is the way into that package, so it counts what you find when
+// you get there: its own declarations and calls, plus everything in the
+// packages below it. Counting leaves rather than packages is what makes an
+// expander's totals add up to what is inside it, however deep the tree goes.
+const subtreeCache = new Map();
+
+function subtreeStats(pkg) {
+  const hit = subtreeCache.get(pkg.id);
+  if (hit) return hit;
+  const tally = packageStats(pkg);
+  for (const child of childPackages(pkg.id)) {
+    const below = subtreeStats(child);
+    tally.added += below.added;
+    tally.modified += below.modified;
+    tally.removed += below.removed;
+  }
+  subtreeCache.set(pkg.id, tally);
+  return tally;
+}
+
+// What is below this package and not inside it: the Types, Functions and
+// Methods sections count the package's own declarations already, and the
+// Packages expander would count them a second time.
+function statsBelow(pkg) {
+  const tally = { added: 0, modified: 0, removed: 0 };
+  for (const child of childPackages(pkg.id)) {
+    const below = subtreeStats(child);
+    tally.added += below.added;
+    tally.modified += below.modified;
+    tally.removed += below.removed;
+  }
+  return tally;
+}
+
 function packageStats(pkg) {
   const tally = { added: 0, modified: 0, removed: 0 };
   const bump = (change) => {
@@ -3109,13 +3154,15 @@ function packageRow(pkg, ownerId) {
   const name = clipText(rowLabel(pkg, ownerId));
   button.append(name);
   attachMarquee(button, name);
-  const tally = packageStats(pkg);
+  const tally = subtreeStats(pkg);
   const parts = [
     ["added", "+", tally.added, "added"],
     ["modified", "~", tally.modified, "changed"],
     ["removed", "\u2212", tally.removed, "deleted"],
   ].filter(([, , count]) => count > 0);
-  if (parts.length) {
+  // Overview shows the city, not the diff: no counts, no marks, nothing that
+  // only means something next to a change.
+  if (parts.length && mode === "overlay") {
     const mark = document.createElement("span");
     mark.className = "mark stats";
     mark.title = parts.map(([, , count, word]) => count + " " + word).join(", ");
