@@ -42,12 +42,15 @@ and the last theme has no right band.
   same. The city recolours in place, in a 450 ms fade, and the bands and the name follow.
   The menu holds the camera: it frames the city while it is open, and puts the camera back
   when it closes. The selection, the focus, the mode and an open tour stay where they are.
-- **Enter** remembers the theme for this browser and closes the menu. Until then, nothing
-  is remembered.
+- **Enter** applies the previewed theme. The menu closes, and a circle grows from the
+  centre of the screen: inside the circle is the new theme, outside it is the old one,
+  and the new theme covers the view as the circle reaches the corners. Then the sidebar
+  and the camera come back. Until then, nothing is remembered.
 - **Closing asks when there is something to lose.** With a preview that was never saved,
-  `esc` opens a question: **Change** keeps the previewed theme and **Ignore** drops it and
-  puts the saved theme back. `esc` on the question is Ignore. With nothing new previewed,
-  `esc` just closes.
+  `esc` opens a question: **Change** applies the previewed theme with that same circle,
+  and **Ignore** drops it and puts the saved theme back, with no circle. `esc` on the
+  question is Ignore. With nothing new previewed, `esc` just closes. A browser that asks
+  for reduced motion applies the theme with no circle.
 
 `/skin` also works while the viewer serves a tour (`citydiff tour serve`). The tour sidebar
 hides for the menu and comes back when the menu closes. The theme outlives the tour.
@@ -405,7 +408,7 @@ paper/
 ```
 
 Put that directory at `~/.config/citydiff/skins/paper` (the default skins directory) and open
-the viewer: `/skin` in the page walks to `paper` with `←` / `→`. Enter keeps it.
+the viewer: `/skin` in the page walks to `paper` with `←` / `→`. Enter applies it.
 
 A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 

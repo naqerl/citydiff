@@ -17,6 +17,7 @@ let themeReady = false;
 let themeFade = null;
 let skinWarning = "";
 const THEME_FADE_MS = 450;
+const THEME_REVEAL_MS = 800;
 const paint = {
   added: new THREE.Color(),
   removed: new THREE.Color(),
@@ -595,6 +596,9 @@ let updatePointScale = () => {};
 let viewInsets = { left: 0, right: 0, free: 1, width: 1, height: 1 };
 // The theme menu frames the city in the middle 70% and takes the keys.
 let skinPicking = false;
+// Applying a preview plays the circle. The camera and the sidebars stay put
+// until it finishes, so the still of the new theme lines up with the old one.
+let skinRevealing = false;
 
 function coverOf(selector) {
   const el = document.querySelector(selector);
@@ -617,6 +621,8 @@ function fitTo(points, dir = FIT_DIR) {
 const FIT_DIR = [0.32, 0.48, 0.78];
 
 function resizeView() {
+  // A resize mid-circle would move the live city off the still.
+  if (skinRevealing) return;
   const w = viewEl.clientWidth;
   const h = viewEl.clientHeight;
   if (w < 2 || h < 2) return;
@@ -4030,8 +4036,13 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   const typing = event.target === hud.search;
+  // The circle owns the keyboard until the new theme covers the view.
+  if (!typing && skinRevealing) {
+    event.preventDefault();
+    return;
+  }
   // The theme menu owns the keyboard: left and right walk themes, enter
-  // keeps the one on screen, and nothing in the diff can be selected.
+  // applies the one on screen, and nothing in the diff can be selected.
   if (!typing && skinPicking) {
     noteActivity();
     endIntro();
@@ -4206,8 +4217,10 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 
 window.addEventListener("resize", resizeView);
 
-// Themes: what the /skin command opens. Arrows preview in place. Enter
-// remembers the theme. Closing without that drops the preview.
+// Themes: what the /skin command opens. Arrows preview in place. Enter, and
+// Change on the question, apply the preview: the menu closes and a circle
+// grows from the centre, the new theme inside and the old one outside.
+// Closing any other way drops the preview.
 
 const SKIN_KEY = "citydiff.skin";
 
@@ -4332,6 +4345,7 @@ async function showTheme(id) {
 }
 
 async function previewSkin(id) {
+  if (skinRevealing) return;
   const gen = ++skinGen;
   skinError = "";
   try {
@@ -4347,24 +4361,151 @@ async function previewSkin(id) {
   paintSkinMenu();
 }
 
-function saveSkin() {
+// Drop the 450 ms page fade so the circle is the only transition. The class
+// comes back after the new values are committed, or the background would ease
+// under the still.
+function snapPage(next) {
+  const root = document.documentElement;
+  const ready = root.classList.contains("theme-ready");
+  if (ready) root.classList.remove("theme-ready");
+  applyPage(next, true);
+  if (ready) {
+    void root.offsetWidth;
+    root.classList.add("theme-ready");
+  }
+}
+
+// Paint a theme in one frame. The fade leaves colours mid-lerp, and the circle
+// needs a finished picture of each side.
+function showThemeNow(next) {
+  if (!next) return;
+  themeFade = null;
+  if (theme && theme.uTime) next.uTime = theme.uTime;
+  adoptShaders(next);
+  theme = next;
+  syncPaint(next);
+  repaintScene();
+  redrawPlates(next.label.text, next.label.background);
+  applySky(scene, next);
+  snapPage(next);
+  skinWarning = next.shadeWarning || "";
+  updateHUD();
+  renderer.render(scene, camera);
+  viewDirty = false;
+}
+
+// The WebGL canvas is one theme at a time. A still of the new theme, clipped
+// to a growing circle, sits over the live city painted with the old one.
+function snapshotView() {
+  const src = renderer.domElement;
+  if (!src.width || !src.height) return null;
+  try {
+    const snap = document.createElement("canvas");
+    snap.id = "skin-reveal";
+    snap.width = src.width;
+    snap.height = src.height;
+    snap.setAttribute("aria-hidden", "true");
+    const ctx = snap.getContext("2d", { alpha: false });
+    if (!ctx) return null;
+    ctx.drawImage(src, 0, 0);
+    const rect = src.getBoundingClientRect();
+    const cx = window.innerWidth * 0.5 - rect.left;
+    const cy = window.innerHeight * 0.5 - rect.top;
+    snap.dataset.cx = String(cx);
+    snap.dataset.cy = String(cy);
+    snap.dataset.radius = String(Math.hypot(Math.max(cx, rect.width - cx), Math.max(cy, rect.height - cy)) + 2);
+    snap.style.left = rect.left + "px";
+    snap.style.top = rect.top + "px";
+    snap.style.width = rect.width + "px";
+    snap.style.height = rect.height + "px";
+    snap.style.clipPath = "circle(0px at " + cx + "px " + cy + "px)";
+    return snap;
+  } catch {
+    return null;
+  }
+}
+
+function growCircle(snap) {
+  const cx = snap.dataset.cx;
+  const cy = snap.dataset.cy;
+  const radius = Number(snap.dataset.radius) || 0;
+  const t0 = performance.now();
+  return new Promise((resolve) => {
+    const step = (now) => {
+      if (!snap.isConnected) {
+        resolve();
+        return;
+      }
+      const k = Math.min(1, (now - t0) / THEME_REVEAL_MS);
+      const eased = 1 - (1 - k) * (1 - k) * (1 - k);
+      snap.style.clipPath = "circle(" + (radius * eased).toFixed(1) + "px at " + cx + "px " + cy + "px)";
+      if (k < 1) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+// Enter and Change both come through here. Arrows never do: a preview is the
+// fade, and the circle is the moment the preview becomes the saved theme.
+async function saveSkin() {
+  if (skinRevealing) return;
   if (!skinPreview || skinPreview === storedSkin()) {
     closeSkinPanel();
     return;
   }
   const id = skinPreview;
-  storeSkin(id);
-  skinPreview = null;
-  closeSkinPanel(); // saved: there is nothing to put back
-  skinWarning = "Theme " + id + " saved.";
-  updateHUD();
+  const previousId = storedSkin();
+  const next = theme;
+  skinRevealing = true;
+  const gen = ++skinGen;
+  let snap = null;
+  let applied = false;
+  try {
+    const prev = await cachedSkin(previousId);
+    await loadShade(prev);
+    if (gen !== skinGen || !skinPicking) return;
+    storeSkin(id);
+    skinPreview = null;
+    applied = true;
+    tween = null;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduce) {
+      showThemeNow(next);
+      snap = snapshotView();
+      if (snap) showThemeNow(prev);
+    }
+    skinMenu.hidden = true;
+    if (snap) {
+      document.body.appendChild(snap);
+      await growCircle(snap);
+      showThemeNow(next);
+      snap.remove();
+      snap = null;
+    } else {
+      showThemeNow(next);
+    }
+    skinWarning = "Theme " + id + " saved.";
+    updateHUD();
+  } catch {
+    storeSkin(id);
+    skinPreview = null;
+    applied = true;
+    try { showThemeNow(next); } catch { /* the city stays as it is */ }
+    skinWarning = "Theme " + id + " saved.";
+    updateHUD();
+  } finally {
+    if (snap && snap.parentNode) snap.remove();
+    skinRevealing = false;
+    if (applied) closeSkinPanel();
+  }
 }
 
 // Left and right walk the themes from the preview, which starts at the
 // saved one. The ends stop, so an empty side band means there is no theme
 // that way. Each step previews what it lands on.
 function moveSkinCursor(step) {
-  if (!skinChoices.length) return;
+  if (skinRevealing || !skinChoices.length) return;
   const at = skinChoices.indexOf(skinPreview || storedSkin());
   const next = (at < 0 ? 0 : at) + step;
   if (next < 0 || next >= skinChoices.length) return;
@@ -4372,6 +4513,7 @@ function moveSkinCursor(step) {
 }
 
 async function openSkinPanel() {
+  if (skinRevealing) return;
   closeSearch();
   hud.search.blur();
   setLegend(false);
@@ -4400,7 +4542,7 @@ async function openSkinPanel() {
 }
 
 async function closeSkinPanel() {
-  if (!skinPicking) return;
+  if (!skinPicking || skinRevealing) return;
   const preview = skinPreview;
   skinPreview = null;
   skinPicking = false;

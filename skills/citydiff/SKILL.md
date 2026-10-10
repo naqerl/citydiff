@@ -111,8 +111,9 @@ the binary). Bind to `127.0.0.1` unless remote access is intended — it has no 
 
 Inside the page, `/` in the search box lists its commands: `/skin` opens the theme menu over
 the city. The left sidebar hides, the city is framed between two diagonal lines, and `←` / `→`
-preview the previous and next theme in place. Enter keeps the theme. Closing with a preview
-that was never saved asks first — Change keeps it, Ignore drops it. The choice lives in
+preview the previous and next theme in place. Enter applies the preview: the menu closes and
+a circle grows from the centre, the new theme inside and the old theme outside. Change after
+esc does the same. Ignore drops the preview with no circle. The choice lives in
 the browser (localStorage); the process has no say in it, and `CITYDIFF_SKINS_DIR` is what
 points at extra skins. Selecting a node shows its calls or its callers, drawn between the
 towers that make them.
