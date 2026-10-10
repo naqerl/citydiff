@@ -1010,7 +1010,7 @@ function syncURL() {
   const node = selected && selected.kind === "entity" ? byEntity.get(selected.id) : null;
   const tourSide = document.querySelector("#tour-side");
   const query = writeState(location.search, {
-    select: writeNode(selected, node && node.entity, declNames),
+    select: writeNode(selected, node && node.entity, node && node.pkg.id, declNames),
     mode: mode === "overlay" ? "changes" : "overview",
     refs: callInbound ? "callers" : "calls",
     side: !hud.side.classList.contains("is-collapsed"),
@@ -1056,7 +1056,7 @@ function indexScene() {
       if (found) found.box = block;
     }
   }
-  declNames = nameIndex([...byEntity.values()].filter((item) => item.box).map((item) => item.entity));
+  declNames = nameIndex([...byEntity.values()].filter((item) => item.box).map((item) => ({ entity: item.entity, pkg: item.pkg.id })));
   indexCallers();
 }
 
@@ -2786,7 +2786,10 @@ function activate(found) {
     applyMode();
     return;
   }
-  if (focus) return;
+  // A click on another node leaves the call diff for it, the same as picking
+  // it in the sidebar: no Escape first.
+  if (focus && !(found.kind === "entity" && found.id === focus.entity.id)) dropFocus();
+  else if (focus) return;
   if (found.kind === "external") {
     selectExternal(found.id);
     return;
