@@ -306,7 +306,25 @@
     #detail .section-body button.row { padding: 4px 14px 4px 32px; }
     @media (prefers-reduced-motion: reduce) { .section, .section-caret { transition: none; } }
     #detail ul { list-style: none; margin: 8px 0 0; padding: 0; }
-    #detail li { padding: 3px 0; border-top: 1px solid var(--line); overflow: hidden; }
+    #detail li { border-top: 1px solid var(--line); overflow: hidden; }
+    /* A line of the calls or callers list: the same geometry whether it opens a
+       node or not. The padding lives on the content so a clickable line can
+       carry its own hover, the way a .row does. */
+    #detail li > .clip { padding: 3px 0; }
+    #detail ul button.call-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      gap: 8px;
+      text-align: left;
+      background: transparent;
+      color: inherit;
+      border: 0;
+      padding: 3px 0;
+      font: inherit;
+    }
+    #detail ul button.call-row:hover { background: var(--elev); }
+    #detail ul button.call-row:focus-visible { outline: 1px solid var(--fg); outline-offset: -1px; }
     #detail button.row {
       display: flex;
       width: 100%;
