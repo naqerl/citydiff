@@ -154,7 +154,7 @@ Paths outside the served directory are refused. The terminal is
 
 ## Skins
 
-A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) is the built-in light skin. Skins that are not in the binary live in a directory of your own.
+A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) and the Omarchy themes are built in beside it. Skins that are not in the binary live in a directory of your own.
 
 Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme panel in the right sidebar. It lists the themes, previews one the moment you click it (or walk them with the arrows), and **Save** remembers it and closes the panel. The choice lives in the browser (localStorage), so a reload comes back to the theme you saved, and closing the panel without saving drops the preview. Nothing about it reaches the command line or the address bar.
 
@@ -345,7 +345,7 @@ On a `v*` tag it also publishes a GitHub Release with
 | `lib/git/` | git source: reads trees at refs via go-git |
 | `lib/files/` | filesystem source |
 | `view/` | embedded browser viewer (three.js) |
-| `skins/` | built-in viewer skins, `dark` and `light` |
+| `skins/` | built-in viewer skins: `dark`, `light`, and the Omarchy themes |
 | `SKINS.md` | how to write a viewer skin |
 | `lib/tour/` | tour scripts: schema, name resolution, validation, call paths, code snippets |
 | `cmd/cli/tour.go` | the `nodes` and `tour` subcommands and the tour HTTP endpoints |

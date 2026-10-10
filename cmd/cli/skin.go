@@ -110,8 +110,8 @@ func hasSkinFile(dir string) bool {
 }
 
 // skinInDir finds one skin in the extra skins directory: a folder of that
-// name holding a skin file, else a skin.json, else a skin.js. dark and light
-// are never found here; the embedded skins keep those names.
+// name holding a skin file, else a skin.json, else a skin.js. A built-in
+// name is never found here; the embedded skins keep those names.
 func skinInDir(root, name string) (string, bool) {
 	if !skinNameOK(name) || builtinSkin(name) {
 		return "", false

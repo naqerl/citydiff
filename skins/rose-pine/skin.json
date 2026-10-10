@@ -1,0 +1,134 @@
+{
+  "name": "rose-pine",
+  "background": {
+    "color": "#faf4ed",
+    "skybox": {
+      "top": "#e1dbd5",
+      "horizon": "#f2e9e1",
+      "bottom": "#faf4ed"
+    }
+  },
+  "fog": {
+    "color": "#faf4ed",
+    "falloff": 0.07
+  },
+  "plane": {
+    "opacity": 0,
+    "color": "#f2e9e1"
+  },
+  "ground": {
+    "color": "#dfdad9"
+  },
+  "horizon": {
+    "color": "#cecacd",
+    "opacity": 0.85
+  },
+  "light": {
+    "exposure": 1,
+    "hemiSky": "#faf4ed",
+    "hemiGround": "#e1dbd5",
+    "hemiIntensity": 0.75,
+    "key": "#faf4ed",
+    "keyIntensity": 0.45,
+    "rim": "#cdd7d9",
+    "rimIntensity": 0.2
+  },
+  "package": {
+    "steps": ["#f2e9e1", "#ede7e1", "#e1dbd5", "#dfdad9"],
+    "synthetic": "#faf4ed",
+    "emissive": "#ffffff",
+    "emissiveIntensity": 0.04,
+    "depEmissive": 0.28,
+    "markedEmissive": 0.12
+  },
+  "external": {
+    "color": "#dfdad9",
+    "metalness": 0.08,
+    "roughness": 0.55,
+    "emissive": "#000000",
+    "emissiveIntensity": 0.08,
+    "depEmissive": 0.35
+  },
+  "type": {
+    "color": "#e1dbd5"
+  },
+  "function": {
+    "color": "#dfdad9"
+  },
+  "method": {
+    "color": "#f2e9e1"
+  },
+  "entity": {
+    "color": "#ffffff",
+    "emissive": "#ffffff",
+    "emissiveIntensity": 0.12
+  },
+  "change": {
+    "added": "#a7d3e4",
+    "removed": "#e2c4cc",
+    "modified": "#f2c484",
+    "body": "#e9c4b2",
+    "both": "#edcb9b",
+    "moved": "#d1c8dc",
+    "same": "#dfdad9"
+  },
+  "call": {
+    "color": "#ebc2c0",
+    "std": "#dfdad9"
+  },
+  "selection": {
+    "color": "#56949f",
+    "ring": "#cecacd",
+    "ringOpacity": 0.45
+  },
+  "label": {
+    "background": "transparent",
+    "text": "#575279"
+  },
+  "dim": {
+    "entity": 0.82,
+    "package": 0.88,
+    "external": 0.88,
+    "plate": 0.8,
+    "emissive": 0.02
+  },
+  "hud": {
+    "scheme": "light",
+    "bg": "#faf4ed",
+    "elev": "#dfdad9",
+    "panel": "rgba(250, 244, 237, 0.78)",
+    "search": "rgba(250, 244, 237, 0.72)",
+    "fg": "#575279",
+    "dim": "#cecacd",
+    "muted": "#9893a5",
+    "faint": "#6e6a86",
+    "fainter": "#575279",
+    "line": "#f2e9e1",
+    "lineStrong": "#ede7e1",
+    "edge": "rgba(0, 0, 0, 0.08)",
+    "shadow": "#ffffff",
+    "link": "#467881",
+    "code": "#9f6310",
+    "accent": "#467881",
+    "pre": "#575279",
+    "addedBg": "rgba(40, 105, 131, 0.12)",
+    "addedFg": "#1e5064",
+    "removedBg": "rgba(180, 99, 122, 0.1)",
+    "removedFg": "#a14d65",
+    "addedLine": "#286983",
+    "removedLine": "#ad546e",
+    "modifiedLine": "#9f6310",
+    "addedText": "#286983",
+    "removedText": "#ad546e",
+    "modifiedText": "#9f6310",
+    "bodyText": "#ab5b31",
+    "bothText": "#8a6c0e",
+    "movedText": "#7f659c",
+    "codeBg": "rgba(237, 231, 225, 0.95)",
+    "drop": "rgba(250, 244, 237, 0.78)",
+    "dropBorder": "#467881",
+    "scrim": "rgba(250, 244, 237, 0.82)",
+    "on": "rgba(223, 218, 217, 0.95)",
+    "currentBg": "rgba(86, 148, 159, 0.12)"
+  }
+}

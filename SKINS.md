@@ -2,7 +2,7 @@
 
 A skin recolours the citydiff viewer. It is one JSON file. Each top-level key is one drawn element: the sky, the floor, a kind of block, a call arc, the name on a building, or the page around the city.
 
-A file may set any subset of those keys. A key you leave out keeps the value from [dark](skins/dark/skin.json). [light](skins/light/skin.json) is the other built-in skin, the same city on a light ground. Both are always available. Custom skins stay outside this repository: put them in the skins directory and the viewer finds them.
+A file may set any subset of those keys. A key you leave out keeps the value from [dark](skins/dark/skin.json). [light](skins/light/skin.json) and the Omarchy themes are built in the same way, and they are always available. Custom skins stay outside this repository: put them in the skins directory and the viewer finds them.
 
 The default column in the tables below is the dark skin. The link on each field opens the line that reads it.
 
@@ -58,9 +58,19 @@ override what the browser saved, and opening the same viewer in another browser 
 
 ### Built-in skins
 
-`dark` and `light` ship inside the program. `dark` is what a browser opens with until
-something else is saved. A folder of the same name in the skins directory does not replace a
-built-in.
+`dark`, `light`, and the Omarchy themes ship inside the program. `dark` is what a browser
+opens with until something else is saved. A folder of the same name in the skins directory
+does not replace a built-in.
+
+The Omarchy skins take their colours from the themes
+[Omarchy ships](https://github.com/omacom/omarchy/tree/quattro/themes). Each one uses the same
+keys as [dark](skins/dark/skin.json). `catppuccin-latte`, `flexoki-light`, `lupine`,
+`rose-pine`, and `white` are light. The others are dark.
+
+`catppuccin`, `catppuccin-latte`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`,
+`hackerman`, `kanagawa`, `last-horizon`, `lumon`, `lupine`, `matte-black`, `miasma`, `nord`,
+`osaka-jade`, `retro-82`, `ristretto`, `rose-pine`, `solitude`, `starship`, `tokyo-night`,
+`vantablack`, `white`.
 
 ### The skins directory
 
@@ -78,8 +88,8 @@ Each entry in the directory is one skin:
 | `ink.json` | `ink`. The file is the whole skin. |
 
 A name is letters, digits, `_`, and `-`. Other files in the directory are ignored. When both
-`paper/skin.json` and `paper.json` exist, the directory is the skin. A name that is built in
-(`dark`, `light`) is never taken from this directory.
+`paper/skin.json` and `paper.json` exist, the directory is the skin. A built-in name is never
+taken from this directory.
 
 ### What the page asks the server for
 
@@ -388,7 +398,7 @@ paper/
 ```
 
 Put that directory at `~/.config/citydiff/skins/paper` (the default skins directory) and open
-the viewer: `/skin` in the page lists `paper` beside `dark` and `light`. Click it to preview
+the viewer: `/skin` in the page lists `paper` beside the built-in skins. Click it to preview
 it and Save to keep it.
 
 A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:

@@ -1,0 +1,134 @@
+{
+  "name": "tokyo-night",
+  "background": {
+    "color": "#1a1b26",
+    "skybox": {
+      "top": "#0e0e14",
+      "horizon": "#24283b",
+      "bottom": "#0e0e14"
+    }
+  },
+  "fog": {
+    "color": "#1a1b26",
+    "falloff": 0.07
+  },
+  "plane": {
+    "opacity": 0,
+    "color": "#24283b"
+  },
+  "ground": {
+    "color": "#292e42"
+  },
+  "horizon": {
+    "color": "#414868",
+    "opacity": 0.7
+  },
+  "light": {
+    "exposure": 1.08,
+    "hemiSky": "#c0caf5",
+    "hemiGround": "#13141c",
+    "hemiIntensity": 0.55,
+    "key": "#c0caf5",
+    "keyIntensity": 0.8,
+    "rim": "#7aa2f7",
+    "rimIntensity": 0.18
+  },
+  "package": {
+    "steps": ["#0e0e14", "#13141c", "#292e42", "#414868"],
+    "synthetic": "#0e0e14",
+    "emissive": "#ffffff",
+    "emissiveIntensity": 0.06,
+    "depEmissive": 0.62,
+    "markedEmissive": 0.22
+  },
+  "external": {
+    "color": "#414868",
+    "metalness": 0.35,
+    "roughness": 0.6,
+    "emissive": "#000000",
+    "emissiveIntensity": 0.2,
+    "depEmissive": 0.7
+  },
+  "type": {
+    "color": "#a9b1d6"
+  },
+  "function": {
+    "color": "#c0caf5"
+  },
+  "method": {
+    "color": "#565f89"
+  },
+  "entity": {
+    "color": "#ffffff",
+    "emissive": "#ffffff",
+    "emissiveIntensity": 0.28
+  },
+  "change": {
+    "added": "#9ece6a",
+    "removed": "#f7768e",
+    "modified": "#e0af68",
+    "body": "#eb927b",
+    "both": "#ff9e64",
+    "moved": "#ad8ee6",
+    "same": "#c0caf5"
+  },
+  "call": {
+    "color": "#449dab",
+    "std": "#b4bee6"
+  },
+  "selection": {
+    "color": "#7aa2f7",
+    "ring": "#414868",
+    "ringOpacity": 0.35
+  },
+  "label": {
+    "background": "transparent",
+    "text": "#c0caf5"
+  },
+  "dim": {
+    "entity": 0.04,
+    "package": 0.2,
+    "external": 0.22,
+    "plate": 0.35,
+    "emissive": 0.02
+  },
+  "hud": {
+    "scheme": "dark",
+    "bg": "#1a1b26",
+    "elev": "#292e42",
+    "panel": "rgba(26, 27, 38, 0.4)",
+    "search": "rgba(26, 27, 38, 0.35)",
+    "fg": "#c0caf5",
+    "dim": "#565f89",
+    "muted": "#a9b1d6",
+    "faint": "#b4bee6",
+    "fainter": "#c0caf5",
+    "line": "#24283b",
+    "lineStrong": "#292e42",
+    "edge": "rgba(255, 255, 255, 0.08)",
+    "shadow": "#000000",
+    "link": "#7aa2f7",
+    "code": "#e0af68",
+    "accent": "#7aa2f7",
+    "pre": "#c0caf5",
+    "addedBg": "rgba(158, 206, 106, 0.14)",
+    "addedFg": "#cbdeb6",
+    "removedBg": "rgba(247, 118, 142, 0.14)",
+    "removedFg": "#f6d3d9",
+    "addedLine": "#b9f27c",
+    "removedLine": "#ff7a93",
+    "modifiedLine": "#e0af68",
+    "addedText": "#9ece6a",
+    "removedText": "#f7768e",
+    "modifiedText": "#e0af68",
+    "bodyText": "#eb927b",
+    "bothText": "#ff9e64",
+    "movedText": "#ad8ee6",
+    "codeBg": "rgba(14, 14, 20, 0.8)",
+    "drop": "rgba(26, 27, 38, 0.6)",
+    "dropBorder": "#7aa2f7",
+    "scrim": "rgba(26, 27, 38, 0.78)",
+    "on": "rgba(41, 46, 66, 0.55)",
+    "currentBg": "rgba(122, 162, 247, 0.08)"
+  }
+}
