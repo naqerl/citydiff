@@ -904,7 +904,9 @@
         justify-content: center;
         cursor: grab;
       }
-      .sheet-grip::before { content: ""; width: 40px; height: 4px; background: var(--line-strong); }
+      /* The theme's muted text colour is made to read on its own background, so
+         the grabber shows in every theme without shouting. */
+      .sheet-grip::before { content: ""; width: 40px; height: 4px; background: var(--muted); opacity: 0.6; }
       #side-head, #tour-head { padding-top: 12px; }
 
       /* The fold arrows point the way the sheet will go. */

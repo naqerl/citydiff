@@ -879,9 +879,7 @@ const slotById = new Map();
 
 const viewEl = document.querySelector("#view");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-// A phone's screen packs 3 pixels per point, and its GPU pays for every one
-// on every frame of a fly. 1.5 keeps the city sharp and costs about half of 2.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, touchUI.matches ? 1.5 : 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1035,6 +1033,11 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.minDistance = 2;
+// The loop parks when nothing on screen moves. A drag, a pinch, or the glide
+// after one moves the camera through the controls, so every change asks for
+// the next frame; without this a touch drag on the bare city (no halo, no
+// particles keeping the loop awake) drew only now and then.
+controls.addEventListener("change", () => requestFrame());
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(-2, -2);
@@ -4633,8 +4636,7 @@ function aimPointer(x, y) {
 // Hover names follow a mouse. A finger has no hover: it only aims taps.
 renderer.domElement.addEventListener("pointermove", (event) => {
   aimPointer(event.clientX, event.clientY);
-  if (event.pointerType !== "mouse") return;
-  pointerDirty = true;
+  if (event.pointerType === "mouse") pointerDirty = true;
   requestFrame();
 });
 renderer.domElement.addEventListener("pointercancel", (event) => {
