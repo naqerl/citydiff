@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 
 	"citydiff/lib/git"
@@ -95,6 +96,9 @@ func (v *viewer) handler() http.Handler {
 		payload := v.payload
 		v.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		// The size lets the viewer measure the download instead of guessing:
+		// the page reads the body in chunks and moves its loading bar by bytes.
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 		_, _ = w.Write(payload)
 	})
 	mux.HandleFunc("GET /tour.json", func(w http.ResponseWriter, r *http.Request) {
