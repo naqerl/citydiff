@@ -4138,7 +4138,9 @@ function setLegend(open) {
   hud.legend.hidden = !open;
 }
 
-hud.collapse.addEventListener("mouseenter", () => setSide(false));
+// The arrow hides the panel on click, not on the way past it: pointing at it
+// used to collapse the sidebar out from under the pointer.
+hud.collapse.addEventListener("click", () => setSide(false));
 hud.help.addEventListener("click", () => setLegend(hud.legend.hidden));
 hud.logo.addEventListener("click", () => setSide(true));
 document.querySelector("#legend-close").addEventListener("click", () => setLegend(false));
