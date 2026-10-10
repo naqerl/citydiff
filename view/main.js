@@ -593,6 +593,8 @@ const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 let updatePointScale = () => {};
 
 let viewInsets = { left: 0, right: 0, free: 1, width: 1, height: 1 };
+// The theme menu frames the city in the middle 70% and takes the keys.
+let skinPicking = false;
 
 function coverOf(selector) {
   const el = document.querySelector(selector);
@@ -621,9 +623,11 @@ function resizeView() {
   camera.aspect = w / h;
   // The city is drawn between the two sidebars: the look-at point sits in
   // the middle of the free area, and fits use only its width.
-  // The theme panel and the tour sidebar share the right edge.
-  const right = Math.max(coverOf("#tour-side"), coverOf("#skin-side"));
-  viewInsets = insets(w, coverOf("#side"), right);
+  // The theme menu uses the middle 70%. Otherwise the tour takes the right edge.
+  const band = skinPicking ? w * 0.15 : 0;
+  const right = skinPicking ? band : coverOf("#tour-side");
+  const left = skinPicking ? band : coverOf("#side");
+  viewInsets = insets(w, left, right);
   viewInsets.width = w;
   viewInsets.height = h;
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
@@ -633,6 +637,7 @@ function resizeView() {
   renderer.setSize(w, h, false);
   updatePointScale();
   placeResults();
+  layoutSkinFrame();
   viewDirty = true;
   requestFrame();
 }
@@ -1042,7 +1047,7 @@ function citySpan() {
   return Math.max(b.maxX - b.minX, b.maxZ - b.minZ, 20);
 }
 
-function frameCity() {
+function frameCity(margin = 0.92) {
   const b = laid.bounds;
   const cx = (b.minX + b.maxX) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
@@ -1071,7 +1076,7 @@ function frameCity() {
     points.push({ x: ext.x, y: ext.y + ext.h, z: ext.z });
   }
   const aspect = (camera.aspect > 0.05 ? camera.aspect : 1) * (viewInsets.free / Math.max(1, viewInsets.width));
-  const dist = fitDistance(points, look, dir, camera.fov, aspect, 0.92);
+  const dist = fitDistance(points, look, dir, camera.fov, aspect, margin);
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   return {
     pos: new THREE.Vector3(look.x + (dir.x / len) * dist, look.y + (dir.y / len) * dist, look.z + (dir.z / len) * dist),
@@ -2676,7 +2681,7 @@ function describeHit(hit) {
 }
 
 function onHover(hit) {
-  if (idleSpin) {
+  if (skinPicking || idleSpin) {
     hud.tag.style.display = "none";
     renderer.domElement.style.cursor = "";
     return;
@@ -3677,6 +3682,10 @@ function axis(positive, negative, keys = held) {
 }
 
 function flyCamera(dt, now) {
+  if (skinPicking) {
+    idleSpin = false;
+    return false;
+  }
   // A focused search box must not steer the camera, but it must not stop the
   // city either: the idle orbit is global, so only the keys are dropped.
   const keys = typingSearch() ? NO_KEYS : held;
@@ -3816,6 +3825,7 @@ function setCallDirection(inbound, node) {
 // direction. The canvas still swallows the browser's context menu.
 renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
 renderer.domElement.addEventListener("pointerdown", (event) => {
+  if (skinPicking) return;
   pointerDown = { x: event.clientX, y: event.clientY, button: event.button };
   if (tourUI) tourUI.userTookOver();
   tween = null;
@@ -3832,6 +3842,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   const start = pointerDown;
   const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   pointerDown = null;
+  if (skinPicking) return;
   if (moved > 5 || start.button !== 0) return;
   activate(describeHit(hitTest()));
 });
@@ -4019,6 +4030,37 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   const typing = event.target === hud.search;
+  // The theme menu owns the keyboard: left and right walk themes, enter
+  // keeps the one on screen, and nothing in the diff can be selected.
+  if (!typing && skinPicking) {
+    noteActivity();
+    endIntro();
+    if (!confirmEl.hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        confirmIgnoreSkin();
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      requestCloseSkinPanel();
+      return;
+    }
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      moveSkinCursor(event.key === "ArrowRight" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter" && !event.repeat) {
+      event.preventDefault();
+      if (unsavedPreview()) saveSkin();
+      else closeSkinPanel();
+      return;
+    }
+    event.preventDefault();
+    return;
+  }
   const sidebarKey = !typing && event.key === "b" && !event.metaKey && !event.ctrlKey && !event.altKey;
   const helpKey = !typing && event.key === "?";
   if (!sidebarKey && !helpKey) {
@@ -4050,18 +4092,6 @@ window.addEventListener("keydown", (event) => {
   if (!typing && event.key === "Escape" && !confirmEl.hidden) {
     event.preventDefault();
     confirmIgnoreSkin();
-    return;
-  }
-  if (!typing && event.key === "Escape" && !skinSide.hidden) {
-    event.preventDefault();
-    requestCloseSkinPanel();
-    return;
-  }
-  // The theme panel takes the arrows while it is open: a theme is walked
-  // through and previewed without the mouse. Closed, the arrows fly again.
-  if (!typing && !skinSide.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-    event.preventDefault();
-    moveSkinCursor(event.key === "ArrowDown" ? 1 : -1);
     return;
   }
   const flyKey = flyToken(event.key);
@@ -4176,9 +4206,8 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 
 window.addEventListener("resize", resizeView);
 
-// Themes: what the /skin command opens. The panel previews on click and
-// remembers only on Save, so what the browser opens with next time is what
-// was saved, and closing without saving drops the preview.
+// Themes: what the /skin command opens. Arrows preview in place. Enter
+// remembers the theme. Closing without that drops the preview.
 
 const SKIN_KEY = "citydiff.skin";
 
@@ -4197,14 +4226,18 @@ function storeSkin(id) {
   } catch { /* the preview still holds for this session */ }
 }
 
-const skinSide = document.querySelector("#skin-side");
-const skinList = document.querySelector("#skin-list");
-const skinNote = document.querySelector("#skin-note");
-const skinSave = document.querySelector("#skin-save");
+const skinMenu = document.querySelector("#skin-menu");
+const skinPrev = document.querySelector("#skin-prev");
+const skinNext = document.querySelector("#skin-next");
+const skinName = document.querySelector("#skin-name");
+const skinLinePrev = document.querySelector("#skin-line-prev");
+const skinLineNext = document.querySelector("#skin-line-next");
 let skinChoices = null;
 let skinPreview = null;
+let skinPose = null;
 let skinGen = 0;
 let skinError = "";
+const skinById = new Map();
 
 async function loadSkinChoices() {
   if (skinChoices) return skinChoices;
@@ -4219,41 +4252,75 @@ async function loadSkinChoices() {
   return skinChoices;
 }
 
-function markSkin() {
-  const saved = storedSkin();
-  const current = skinPreview || saved;
-  for (const button of skinList.querySelectorAll("button")) {
-    button.classList.toggle("on", button.dataset.skin === current);
-  }
-  skinSave.disabled = !skinPreview || skinPreview === saved;
-  if (skinError) skinNote.textContent = skinError;
-  else if (skinPreview && skinPreview !== saved) skinNote.textContent = "Previewing " + skinPreview + ". Save keeps it, esc asks first.";
-  else skinNote.textContent = "Click a theme to preview it. Save keeps it, esc asks first.";
+function skinLabel(id) {
+  return String(id || "").split("-").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
-function renderSkinList() {
-  skinList.replaceChildren();
-  const saved = storedSkin();
-  for (const id of skinChoices) {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.skin = id;
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = id;
-    button.append(name);
-    if (id === saved) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "saved";
-      button.append(tag);
-    }
-    button.addEventListener("click", () => previewSkin(id));
-    li.append(button);
-    skinList.append(li);
+async function cachedSkin(id) {
+  if (skinById.has(id)) return skinById.get(id);
+  const skin = await loadSkin(id);
+  skinById.set(id, skin);
+  return skin;
+}
+
+// The two dividers lean the same way, 12 degrees, and cross mid-height at
+// 15% and 85%. The gap between them stays 70% of the width.
+function layoutSkinFrame() {
+  if (!skinPicking) return;
+  const w = skinMenu.clientWidth;
+  const h = skinMenu.clientHeight;
+  if (w < 2 || h < 2) return;
+  const slide = Math.tan(12 * Math.PI / 180) * h * 0.5;
+  const leftTop = w * 0.15 + slide;
+  const leftBot = w * 0.15 - slide;
+  const rightTop = w * 0.85 + slide;
+  const rightBot = w * 0.85 - slide;
+  skinPrev.style.clipPath = "polygon(0px 0px, " + leftTop + "px 0px, " + leftBot + "px " + h + "px, 0px " + h + "px)";
+  skinNext.style.clipPath = "polygon(" + rightTop + "px 0px, " + w + "px 0px, " + w + "px " + h + "px, " + rightBot + "px " + h + "px)";
+  placeSkinLine(skinLinePrev, leftTop, leftBot, h);
+  placeSkinLine(skinLineNext, rightTop, rightBot, h);
+}
+
+function placeSkinLine(line, x1, x2, h) {
+  line.setAttribute("x1", x1);
+  line.setAttribute("y1", 0);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", h);
+}
+
+function paintSkinMenu() {
+  const id = skinPreview || storedSkin();
+  const at = skinChoices ? skinChoices.indexOf(id) : -1;
+  skinName.textContent = skinError || skinLabel(id);
+  const prev = at > 0 ? skinChoices[at - 1] : "";
+  const next = at >= 0 && skinChoices && at < skinChoices.length - 1 ? skinChoices[at + 1] : "";
+  paintWing(skinPrev, prev);
+  paintWing(skinNext, next);
+}
+
+async function paintWing(el, id) {
+  el.dataset.skin = id || "";
+  if (!id) {
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+    el.tabIndex = -1;
+    el.setAttribute("aria-hidden", "true");
+    return;
   }
-  markSkin();
+  try {
+    const skin = await cachedSkin(id);
+    if (el.dataset.skin !== id) return;
+    el.style.backgroundColor = (skin.background && skin.background.color) || (skin.hud && skin.hud.bg) || "";
+    el.style.opacity = "1";
+    el.style.pointerEvents = "auto";
+    el.tabIndex = 0;
+    el.setAttribute("aria-hidden", "false");
+    el.setAttribute("aria-label", skinLabel(id));
+  } catch {
+    if (el.dataset.skin !== id) return;
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+  }
 }
 
 // A theme change never reloads: the city keeps its camera, selection, focus,
@@ -4268,7 +4335,7 @@ async function previewSkin(id) {
   const gen = ++skinGen;
   skinError = "";
   try {
-    const skin = await loadSkin(id);
+    const skin = await cachedSkin(id);
     await loadShade(skin);
     if (gen !== skinGen) return;
     skinPreview = id;
@@ -4277,68 +4344,86 @@ async function previewSkin(id) {
     if (gen !== skinGen) return;
     skinError = "Could not read theme " + id + ". " + err.message;
   }
-  markSkin();
+  paintSkinMenu();
 }
 
 function saveSkin() {
-  if (!skinPreview) return;
+  if (!skinPreview || skinPreview === storedSkin()) {
+    closeSkinPanel();
+    return;
+  }
   const id = skinPreview;
   storeSkin(id);
   skinPreview = null;
-  markSkin();
   closeSkinPanel(); // saved: there is nothing to put back
   skinWarning = "Theme " + id + " saved.";
   updateHUD();
 }
 
-// The arrows walk the themes from wherever the preview is, which starts at
-// the saved one, and each step previews what it lands on.
+// Left and right walk the themes from the preview, which starts at the
+// saved one. The ends stop, so an empty side band means there is no theme
+// that way. Each step previews what it lands on.
 function moveSkinCursor(step) {
   if (!skinChoices.length) return;
   const at = skinChoices.indexOf(skinPreview || storedSkin());
-  const next = ((at < 0 ? 0 : at + step) + skinChoices.length) % skinChoices.length;
+  const next = (at < 0 ? 0 : at) + step;
+  if (next < 0 || next >= skinChoices.length) return;
   previewSkin(skinChoices[next]);
-  scrollSkinChoice(next);
-}
-
-function scrollSkinChoice(index) {
-  const button = skinList.querySelectorAll("button")[index];
-  if (button) button.scrollIntoView({ block: "nearest" });
 }
 
 async function openSkinPanel() {
   closeSearch();
   hud.search.blur();
+  setLegend(false);
   skinError = "";
   await loadSkinChoices();
-  renderSkinList();
-  skinSide.hidden = false;
-  // The panel is the thing the keyboard is talking to now: the arrows walk
-  // the themes, and Tab reaches Save.
-  skinSide.focus({ preventScroll: true });
-  scrollSkinChoice(skinChoices.indexOf(storedSkin()));
-  requestAnimationFrame(resizeView);
+  if (!skinChoices.length) return;
+  if (!skinPicking) {
+    skinPose = { pos: camera.position.clone(), target: controls.target.clone() };
+    skinPicking = true;
+    document.body.classList.add("skin-open");
+    skinMenu.hidden = false;
+    controls.enabled = false;
+    held.clear();
+    tween = null;
+    introSpin = false;
+    onHover(null);
+    resizeView();
+    if (laid) {
+      const pose = frameCity(0.84);
+      applyFitLimits(pose);
+      flyTo(pose.pos, pose.target);
+    }
+  }
+  paintSkinMenu();
+  skinMenu.focus({ preventScroll: true });
 }
 
 async function closeSkinPanel() {
-  if (skinSide.hidden) return;
+  if (!skinPicking) return;
   const preview = skinPreview;
   skinPreview = null;
-  skinSide.hidden = true;
-  requestAnimationFrame(resizeView);
+  skinPicking = false;
+  skinMenu.hidden = true;
+  document.body.classList.remove("skin-open");
+  controls.enabled = true;
+  const back = skinPose;
+  skinPose = null;
+  resizeView();
+  if (back) flyTo(back.pos, back.target);
   if (!preview || preview === storedSkin()) return;
   // Closing without saving drops the preview and puts the saved theme back.
   const gen = ++skinGen;
   try {
-    const skin = await loadSkin(storedSkin());
+    const skin = await cachedSkin(storedSkin());
     await loadShade(skin);
     if (gen === skinGen) fadeToTheme(skin);
   } catch { /* the saved theme is gone; keep what is on screen */ }
 }
 
-// A preview that was never saved is the one case where leaving the panel loses
-// something the user asked for. Escape, the × and the backdrop all come through
-// here: they ask, rather than quietly putting the old theme back.
+// A preview that was never saved is the one case where leaving the menu loses
+// something the user asked for. Escape asks, rather than quietly putting the
+// old theme back.
 const confirmEl = document.querySelector("#confirm");
 const confirmText = document.querySelector("#confirm-text");
 const confirmChange = document.querySelector("#confirm-change");
@@ -4349,7 +4434,7 @@ function unsavedPreview() {
 }
 
 function askAboutSkin() {
-  if (skinSide.hidden) return false;
+  if (!skinPicking) return false;
   if (!unsavedPreview()) return false;
   confirmText.textContent =
     "\u201c" + skinPreview + "\u201d is previewed and not saved. Change to it, or ignore the preview and stay on \u201c" + storedSkin() + "\u201d.";
@@ -4360,7 +4445,7 @@ function askAboutSkin() {
 
 function closeConfirm() {
   confirmEl.hidden = true;
-  if (!skinSide.hidden) skinSide.focus({ preventScroll: true });
+  if (skinPicking) skinMenu.focus({ preventScroll: true });
 }
 
 // Change: what was previewed becomes the saved theme, and the panel closes.
@@ -4381,8 +4466,8 @@ function requestCloseSkinPanel() {
   closeSkinPanel();
 }
 
-document.querySelector("#skin-close").addEventListener("click", requestCloseSkinPanel);
-skinSave.addEventListener("click", saveSkin);
+skinPrev.addEventListener("click", () => moveSkinCursor(-1));
+skinNext.addEventListener("click", () => moveSkinCursor(1));
 confirmChange.addEventListener("click", confirmChangeSkin);
 confirmIgnore.addEventListener("click", confirmIgnoreSkin);
 confirmEl.addEventListener("click", (event) => { if (event.target === confirmEl) confirmIgnoreSkin(); });

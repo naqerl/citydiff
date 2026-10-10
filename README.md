@@ -156,7 +156,7 @@ Paths outside the served directory are refused. The terminal is
 
 A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) and the Omarchy themes are built in beside it. Skins that are not in the binary live in a directory of your own.
 
-Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme panel in the right sidebar. It lists the themes, previews one the moment you click it (or walk them with the arrows), and **Save** remembers it and closes the panel. The choice lives in the browser (localStorage), so a reload comes back to the theme you saved, and closing the panel without saving drops the preview. Nothing about it reaches the command line or the address bar.
+Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme menu over the city. The left sidebar hides, and the city is framed between two diagonal lines, 15% in from each side. `←` and `→` preview the previous and next theme: the city recolours in place, and each side band shows that neighbour's colour under a haze when there is one. **Enter** remembers the theme and closes the menu. Closing without saving drops the preview, and `esc` asks first when a preview would be lost. The choice lives in the browser (localStorage). Nothing about it reaches the command line or the address bar.
 
 The fields, the skybox shapes, and how to point the viewer at a skins directory are in [SKINS.md](SKINS.md).
 

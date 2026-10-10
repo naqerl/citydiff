@@ -27,26 +27,30 @@ CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 Choosing a skin is the page's job. The viewer process only learns where the extra skins
 live, and it learns that from the environment, not from a flag.
 
-### The theme panel
+### The theme menu
 
 Type `/` in the search box: it lists the commands, and `/skin` is the one that opens the
-theme panel in the right sidebar, where the tour plays. `↑` / `↓` and `tab` / `shift-tab`
-walk the completions. The panel lists every skin the viewer serves — the built-ins first,
-then the skins directory.
+theme menu over the city. `↑` / `↓` and `tab` / `shift-tab` walk the completions.
 
-- **Click a theme** to preview it, or walk the list with `↑` / `↓` once the panel has the
-  keyboard (it takes it when it opens). The city recolours in place, in a 450 ms fade: the
-  camera, the selection, the focus, the mode and an open tour all stay where they are. While
-  the panel is open the arrows belong to it, not to the camera.
-- **Save** remembers it for this browser and closes the panel. Until you press Save, nothing
+The left sidebar hides while the menu is open, and clicks no longer select anything. Two
+diagonal lines sit 15% in from each side. The whole city is framed in the middle, between
+them, and the theme name sits at the bottom of that middle. A side band is the colour of
+the theme in that direction, under a transparent haze. The first theme has no left band,
+and the last theme has no right band.
+
+- **`←` and `→`** preview the previous and next theme. A click on a side band does the
+  same. The city recolours in place, in a 450 ms fade, and the bands and the name follow.
+  The menu holds the camera: it frames the city while it is open, and puts the camera back
+  when it closes. The selection, the focus, the mode and an open tour stay where they are.
+- **Enter** remembers the theme for this browser and closes the menu. Until then, nothing
   is remembered.
-- **Closing asks when there is something to lose.** With a preview that was never saved, `esc`,
-  the × and a click on the backdrop open a question: **Change** keeps the previewed theme (what
-  Save does) and **Ignore** drops it and puts the saved theme back. `esc` on the question is
-  Ignore. With nothing previewed — or with the saved theme previewed again — `esc` just closes.
+- **Closing asks when there is something to lose.** With a preview that was never saved,
+  `esc` opens a question: **Change** keeps the previewed theme and **Ignore** drops it and
+  puts the saved theme back. `esc` on the question is Ignore. With nothing new previewed,
+  `esc` just closes.
 
-`/skin` also works while the viewer serves a tour (`citydiff tour serve`): the panel and the
-tour sidebar share the right edge, and the theme outlives the tour.
+`/skin` also works while the viewer serves a tour (`citydiff tour serve`). The tour sidebar
+hides for the menu and comes back when the menu closes. The theme outlives the tour.
 
 ### Where the choice is kept
 
@@ -401,8 +405,7 @@ paper/
 ```
 
 Put that directory at `~/.config/citydiff/skins/paper` (the default skins directory) and open
-the viewer: `/skin` in the page lists `paper` beside the built-in skins. Click it to preview
-it and Save to keep it.
+the viewer: `/skin` in the page walks to `paper` with `←` / `→`. Enter keeps it.
 
 A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 
@@ -410,4 +413,4 @@ A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 ```
 
-Picking the built-in `light` in the theme panel compares it with the built-in light skin.
+Picking the built-in `light` in the theme menu compares it with the built-in light skin.
