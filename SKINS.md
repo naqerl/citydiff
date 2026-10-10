@@ -62,10 +62,13 @@ override what the browser saved, and opening the same viewer in another browser 
 opens with until something else is saved. A folder of the same name in the skins directory
 does not replace a built-in.
 
-The Omarchy skins take their colours from the themes
-[Omarchy ships](https://github.com/omacom/omarchy/tree/quattro/themes). Each one uses the same
-keys as [dark](skins/dark/skin.json). `catppuccin-latte`, `flexoki-light`, `lupine`,
-`rose-pine`, and `white` are light. The others are dark.
+The Omarchy skins take their hues from the themes
+[Omarchy ships](https://github.com/omacom/omarchy/tree/quattro/themes). The page and the
+change colours use those values. The city is then built in HSL so each kind of block sits
+on its own lightness, with a coloured edge, because the raw background ramp is too close
+together to read. Each skin uses the same keys as [dark](skins/dark/skin.json).
+`catppuccin-latte`, `flexoki-light`, `lupine`, `rose-pine`, and `white` are light. The
+others are dark.
 
 `catppuccin`, `catppuccin-latte`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`,
 `hackerman`, `kanagawa`, `last-horizon`, `lumon`, `lupine`, `matte-black`, `miasma`, `nord`,

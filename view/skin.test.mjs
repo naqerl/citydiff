@@ -188,12 +188,15 @@ test("omarchy themes use the same keys as dark", () => {
   assert.deepEqual(names.slice(0, 2), ["catppuccin", "catppuccin-latte"]);
   assert.ok(names.includes("dark") && names.includes("light") && names.includes("tokyo-night"));
   const skip = new Set(["name"]);
-  const darkPaths = paths(dark).filter((p) => !skip.has(p.split(".")[0]) || p === "name");
+  const shaderKey = (p) => p.endsWith(".vertexSource") || p.endsWith(".fragmentSource");
+  const structure = (skin) => paths(skin).filter((p) => (!skip.has(p.split(".")[0]) || p === "name") && !shaderKey(p));
+  const darkPaths = structure(dark);
+  const lit = (hex) => contrast(hex, "#000000");
   for (const name of names) {
     const skin = readSkin(name);
     assert.equal(skin.name, name);
     assert.deepEqual(Object.keys(skin), ["name", ...ELEMENTS]);
-    assert.deepEqual(paths(skin).filter((p) => !skip.has(p.split(".")[0]) || p === "name"), darkPaths);
+    assert.deepEqual(structure(skin), darkPaths);
     assert.ok(skin.hud.scheme === "dark" || skin.hud.scheme === "light", name);
     const walk = (value) => {
       if (typeof value === "string" && value.startsWith("#")) assert.match(value, /^#[0-9a-f]{6}$/, name);
@@ -215,6 +218,30 @@ test("omarchy themes use the same keys as dark", () => {
         skin.call.std,
       ];
       for (const hex of fills) assert.ok(contrast(hex, skin.label.text) >= 4.5, name + " " + hex);
+    }
+    const plain = name === "dark" || name === "light";
+    if (plain) {
+      assert.equal(skin.entity.vertexSource, undefined, name);
+      assert.equal(skin.package.vertexSource, undefined, name);
+    } else {
+      assert.ok(skin.entity.vertexSource && skin.entity.fragmentSource, name);
+      assert.ok(skin.package.vertexSource && skin.package.fragmentSource, name);
+      const steps = skin.package.steps;
+      if (skin.hud.scheme === "dark") {
+        const seq = [skin.background.color, skin.ground.color, ...steps];
+        for (let i = 1; i < seq.length; i++) assert.ok(lit(seq[i]) > lit(seq[i - 1]), name + " " + seq[i]);
+        const top = steps[steps.length - 1];
+        assert.ok(lit(skin.method.color) > lit(top), name);
+        assert.ok(lit(skin.type.color) > lit(skin.method.color), name);
+        assert.ok(lit(skin.function.color) > lit(skin.type.color), name);
+        assert.ok(contrast(skin.method.color, top) >= 1.7, name);
+        assert.ok(contrast(skin.function.color, top) >= 3, name);
+        assert.ok(contrast(skin.label.text, top) >= 3, name);
+      } else {
+        const seq = [skin.background.color, ...steps];
+        for (let i = 1; i < seq.length; i++) assert.ok(lit(seq[i]) < lit(seq[i - 1]), name + " " + seq[i]);
+        assert.ok(lit(skin.function.color) < lit(steps[0]), name);
+      }
     }
   }
 
