@@ -21,7 +21,7 @@ export function diffTarget(selected, byEntity, byPackage) {
     const found = byEntity.get(selected.id);
     if (!found || !found.entity.file) return null;
     const e = found.entity;
-    const out = { file: e.file, label: label(e), where: e.file, change: e.change };
+    const out = { file: e.file, label: label(e), where: e.file, change: e.change, part: e.part };
     if (e.line > 0) {
       // A removed declaration only has lines on the old side of the diff.
       out.line = e.line;
@@ -50,6 +50,16 @@ function nextDeclaration(byEntity, entity) {
     if (!next || other.line < next) next = other.line;
   }
   return next;
+}
+
+// partWord is what changed in a function or method, for the header: the diff
+// is of a body, a signature or both, and the page says which.
+function partWord(change, part) {
+  if (change !== "modified") return "";
+  if (part === "body") return "body changed";
+  if (part === "signature") return "signature changed";
+  if (part === "both") return "signature and body changed";
+  return "";
 }
 
 function label(entity) {
@@ -93,7 +103,8 @@ export async function openDiff(target, onClose) {
   const p = { root, onClose, onKey: null };
   panel = p;
   root.querySelector(".diff-title").textContent = target.label || target.file || target.dir || "";
-  root.querySelector(".diff-where").textContent = target.where || "";
+  const part = partWord(target.change, target.part);
+  root.querySelector(".diff-where").textContent = [target.where, part].filter(Boolean).join(" · ");
   root.addEventListener("click", (event) => {
     if (event.target === root) closeDiff();
   });

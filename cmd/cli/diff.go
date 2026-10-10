@@ -95,12 +95,16 @@ func nodeDiff(patch []git.FileDiff, file string, line, end int, side string) []d
 
 // hunkCovers is true when one of the hunk's changed lines sits inside the
 // node. Context lines do not count: a hunk that merely passes the node's
-// boundary belongs to the declaration on the other side of it. end is the
-// line after the node's last, or line+1 when the page did not know where the
-// node ends.
+// boundary belongs to the declaration on the other side of it.
+//
+// end is the line after the node's last. When the page does not know it — the
+// node is the last declaration in its file, so there is no next one to bound
+// it — the node runs to the end of the file and every changed line below it
+// counts. Guessing one line instead cut such a node off at its first line,
+// which made a body change read as someone else's.
 func hunkCovers(hunk git.Hunk, line, end int, side string) bool {
 	if end <= line {
-		end = line + 1
+		end = 1 << 30
 	}
 	old, fresh := hunk.OldStart, hunk.NewStart
 	for _, l := range hunk.Lines {
