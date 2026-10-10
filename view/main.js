@@ -11,7 +11,7 @@ import { KEYBINDS, birdAction, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
-import { applyPage, loadSkin } from "./skin.js";
+import { applyPage, cycleSkin, loadSkin } from "./skin.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
 
@@ -5314,8 +5314,9 @@ function paintSkinMenu() {
   const at = skinChoices ? skinChoices.indexOf(id) : -1;
   skinName.textContent = skinError || skinLabel(id);
   skinCount.textContent = at >= 0 && skinChoices.length ? (at + 1) + "/" + skinChoices.length : "";
-  const prev = at > 0 ? skinChoices[at - 1] : "";
-  const next = at >= 0 && skinChoices && at < skinChoices.length - 1 ? skinChoices[at + 1] : "";
+  // The list is a ring, so both sides always show a neighbour.
+  const prev = at >= 0 ? cycleSkin(skinChoices, id, -1) : "";
+  const next = at >= 0 ? cycleSkin(skinChoices, id, 1) : "";
   paintWing(skinPrev, prev);
   paintWing(skinNext, next);
 }
@@ -5520,15 +5521,13 @@ async function saveSkin() {
 }
 
 // Left and right walk the themes from the preview, which starts at the
-// saved one. The ends stop, so an empty side band means there is no theme
-// that way. Each step previews what it lands on.
+// saved one. The list wraps: left of the first theme is the last, right of
+// the last is the first. Each step previews what it lands on.
 function moveSkinCursor(step) {
   if (skinRevealing || !skinChoices.length) return;
   clearSkinFind();
-  const at = skinChoices.indexOf(skinPreview || storedSkin());
-  const next = (at < 0 ? 0 : at) + step;
-  if (next < 0 || next >= skinChoices.length) return;
-  previewSkin(skinChoices[next]);
+  const next = cycleSkin(skinChoices, skinPreview || storedSkin(), step);
+  if (next) previewSkin(next);
 }
 
 // Letters find a theme by the start of its id or its displayed name.

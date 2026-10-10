@@ -31,6 +31,17 @@ const SKIN_NAME = /^[A-Za-z0-9_-]+$/;
 
 // The page owns the choice: an empty spec is the built-in dark skin, a name
 // is a skin the server serves. A path or a URL is not a name.
+// cycleSkin is the theme step from current in the menu's list. The list is a
+// ring: before the first theme is the last, and after the last the first. A
+// current that is not in the list steps from the first. With fewer than two
+// themes there is nowhere to go, and the answer is "".
+export function cycleSkin(list, current, step) {
+  if (!list || list.length < 2 || !step) return "";
+  const at = Math.max(0, list.indexOf(current));
+  const n = list.length;
+  return list[(((at + step) % n) + n) % n];
+}
+
 export function skinURL(spec) {
   const name = String(spec ?? "").trim();
   if (!name) return DARK_URL;

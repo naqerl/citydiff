@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { ELEMENTS, assetURL, loadSkin, mergeSkin, pageVars, skinFromValue, skinURL, skyboxKind } from "./skin.js";
+import { ELEMENTS, assetURL, cycleSkin, loadSkin, mergeSkin, pageVars, skinFromValue, skinURL, skyboxKind } from "./skin.js";
 
 function readSkin(name) {
   return JSON.parse(readFileSync(new URL("../skins/" + name + "/skin.json", import.meta.url), "utf8"));
@@ -293,3 +293,17 @@ test("a script skin is json", () => {
   assert.throws(() => skinFromValue(null), /JSON object/);
 });
 
+
+test("the theme list is a ring", () => {
+  const list = ["dark", "light", "gruvbox"];
+  assert.equal(cycleSkin(list, "light", 1), "gruvbox");
+  assert.equal(cycleSkin(list, "light", -1), "dark");
+  // Before the first is the last; after the last is the first.
+  assert.equal(cycleSkin(list, "dark", -1), "gruvbox");
+  assert.equal(cycleSkin(list, "gruvbox", 1), "dark");
+  // An id the list does not have steps from the first.
+  assert.equal(cycleSkin(list, "gone", 1), "light");
+  // One theme, or none, has nowhere to go.
+  assert.equal(cycleSkin(["dark"], "dark", 1), "");
+  assert.equal(cycleSkin([], "dark", 1), "");
+});
