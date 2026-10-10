@@ -553,19 +553,78 @@ function setSide(open) {
 const touchUI = window.matchMedia("(hover: none) and (pointer: coarse)");
 const sheetMode = window.matchMedia("(hover: none) and (pointer: coarse) and (orientation: portrait)");
 
-// The sheet shows one sidebar at a time. With a tour, the tabs under it pick
-// which: the city's own panel or the tour. A sidebar that opens takes the
-// sheet. Folded, the sheet keeps its title row; the grip on top drags it.
+// The bottom sheet works the way the iOS and Android ones do. It rests at
+// one of three detents: the peek (its title row), half the screen, or full.
+// It moves by a transform, so its content never reflows while it slides.
+// A drag anywhere on it moves it, and on release it settles on the detent the
+// drag was heading for: a flick carries it on to the next one. Below full, a
+// drag on the content moves the sheet instead of scrolling; at full the
+// content scrolls, and pulling down from the top of it takes the sheet down.
+// The peek is the sidebar's closed state (side=closed in the address).
+// With a tour, the tabs under the sheet pick which sidebar it shows.
 const sheetTabs = {
   side: document.querySelector("#tab-side"),
   tour: document.querySelector("#tab-tour"),
 };
 const tourSideEl = document.querySelector("#tour-side");
+const sheetPanes = [hud.side, tourSideEl];
 let sheetPane = "side";
+let sheetLevel = "half";
 let tourWasOpen = false;
+let sheetDrag = null;
+const SHEET_SETTLE = "transform 0.42s cubic-bezier(0.32, 0.72, 0, 1)";
 
 function tourOpen() {
   return !tourSideEl.hidden && !tourSideEl.classList.contains("is-collapsed");
+}
+
+function paneOpen() {
+  return sheetPane === "tour" ? tourOpen() : !hud.side.classList.contains("is-collapsed");
+}
+
+function setPaneOpen(open) {
+  if (sheetPane === "tour") {
+    if (tourUI) tourUI.setOpen(open);
+  } else setSide(open);
+}
+
+// The three resting heights, in pixels of sheet on screen.
+function sheetDetents() {
+  const pane = sheetPane === "tour" ? tourSideEl : hud.side;
+  const full = pane.offsetHeight || window.innerHeight * 0.8;
+  const peek = parseFloat(getComputedStyle(document.body).getPropertyValue("--peek")) || 76;
+  const tabs = document.querySelector("#sheet-tabs").offsetHeight || 0;
+  const half = Math.max(peek + 80, Math.min(full, Math.round((window.innerHeight - tabs) * 0.5)));
+  return { peek, half, full };
+}
+
+function sheetShown() {
+  const d = sheetDetents();
+  if (!paneOpen()) return d.peek;
+  return sheetLevel === "full" ? d.full : d.half;
+}
+
+function placeSheet(shown, animate) {
+  const full = sheetDetents().full;
+  for (const pane of sheetPanes) {
+    pane.style.transition = animate ? SHEET_SETTLE : "none";
+    pane.style.transform = "translateY(" + Math.round(full - shown) + "px)";
+  }
+}
+
+function settleSheet(animate = true) {
+  if (!sheetMode.matches) {
+    for (const pane of sheetPanes) {
+      pane.style.transition = "";
+      pane.style.transform = "";
+    }
+    document.body.classList.remove("sheet-full");
+    return;
+  }
+  const full = paneOpen() && sheetLevel === "full";
+  document.body.classList.toggle("sheet-full", full);
+  if (!full) for (const pane of sheetPanes) if (!paneOpen()) pane.scrollTop = 0;
+  placeSheet(sheetShown(), animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
 function syncSheet() {
@@ -583,16 +642,22 @@ function syncSheet() {
   sheetTabs.tour.classList.toggle("on", tourShown);
   sheetTabs.side.setAttribute("aria-pressed", String(sideShown));
   sheetTabs.tour.setAttribute("aria-pressed", String(tourShown));
+  if (!sheetDrag) settleSheet();
 }
 
-function paneOpen() {
-  return sheetPane === "tour" ? tourOpen() : !hud.side.classList.contains("is-collapsed");
-}
-
-function setPaneOpen(open) {
-  if (sheetPane === "tour") {
-    if (tourUI) tourUI.setOpen(open);
-  } else setSide(open);
+// Settle on a detent: the peek closes the sidebar, the others open it.
+function goToDetent(level) {
+  if (level === "peek") {
+    if (paneOpen()) setPaneOpen(false);
+    else settleSheet();
+    return;
+  }
+  sheetLevel = level;
+  if (!paneOpen()) setPaneOpen(true);
+  else {
+    settleSheet();
+    requestAnimationFrame(resizeView);
+  }
 }
 
 function showTourPane() {
@@ -610,68 +675,118 @@ sheetTabs.tour.addEventListener("click", () => {
   else showTourPane();
 });
 
-// Folded, the title row is the handle: a tap on it (not on its buttons)
-// opens the sheet again.
+// The grabber steps through the detents, the way a tap on it does on iOS.
+for (const grip of document.querySelectorAll(".sheet-grip")) {
+  grip.addEventListener("click", () => {
+    if (!sheetMode.matches) return;
+    if (!paneOpen()) goToDetent("half");
+    else goToDetent(sheetLevel === "half" ? "full" : "half");
+  });
+}
+// Peeking, the title row is the handle: a tap on it (not on its buttons)
+// brings the sheet up.
 for (const row of [document.querySelector("#title-row"), document.querySelector("#tour-title-row")]) {
   row.addEventListener("click", (event) => {
     if (!sheetMode.matches || paneOpen() || event.target.closest("button")) return;
-    setPaneOpen(true);
+    goToDetent("half");
+  });
+}
+// A box that takes focus wants the keyboard and room above it: full.
+for (const pane of sheetPanes) {
+  pane.addEventListener("focusin", (event) => {
+    if (sheetMode.matches && event.target.matches("input") && (sheetLevel !== "full" || !paneOpen())) goToDetent("full");
   });
 }
 
-// The grip: a tap folds or opens the sheet, a drag sets its height. Let go
-// low enough and it folds; the height it had stays for the next time.
-const SHEET_FOLD_PX = 140;
-let sheetHeight = 0;
-let sheetDrag = null;
-
-function sheetMax() {
-  const tabs = document.querySelector("#sheet-tabs").getBoundingClientRect().height || 0;
-  return Math.max(SHEET_FOLD_PX, window.innerHeight - tabs - 24);
+// Past either end the sheet gives less and less, like a rubber band.
+function rubber(over, size) {
+  const k = 0.55;
+  return (1 - 1 / ((over * k) / size + 1)) * size;
 }
 
-function setSheetHeight(px) {
-  document.body.style.setProperty("--sheet-h", Math.round(px) + "px");
-}
-
-for (const grip of document.querySelectorAll(".sheet-grip")) {
-  grip.addEventListener("pointerdown", (event) => {
-    if (!sheetMode.matches) return;
-    event.preventDefault();
-    grip.setPointerCapture(event.pointerId);
-    const pane = grip.parentElement.getBoundingClientRect();
-    sheetDrag = { id: event.pointerId, y: event.clientY, from: pane.height, open: paneOpen(), moved: false, height: pane.height };
-  });
-  grip.addEventListener("pointermove", (event) => {
-    const drag = sheetDrag;
-    if (!drag || drag.id !== event.pointerId) return;
-    const dy = drag.y - event.clientY;
-    if (!drag.moved && Math.abs(dy) < 6) return;
-    drag.moved = true;
-    drag.height = Math.min(sheetMax(), Math.max(40, drag.from + dy));
-    setSheetHeight(drag.height);
-    if (!paneOpen()) setPaneOpen(true);
-    else requestAnimationFrame(resizeView);
-  });
-  const end = (event) => {
-    const drag = sheetDrag;
-    if (!drag || drag.id !== event.pointerId) return;
+function onSheetTouchStart(event) {
+  if (!sheetMode.matches || event.touches.length !== 1) {
     sheetDrag = null;
-    if (!drag.moved) {
-      setPaneOpen(!drag.open);
-      return;
-    }
-    if (drag.height < SHEET_FOLD_PX) {
-      if (sheetHeight) setSheetHeight(sheetHeight);
-      else document.body.style.removeProperty("--sheet-h");
-      setPaneOpen(false);
-      return;
-    }
-    sheetHeight = drag.height;
-    requestAnimationFrame(resizeView);
+    return;
+  }
+  const touch = event.touches[0];
+  const pane = event.currentTarget;
+  sheetDrag = {
+    pane,
+    x: touch.clientX,
+    y: touch.clientY,
+    mode: "",
+    // The grabber and the header always move the sheet; so does any drag
+    // while the sheet is short of full.
+    head: !!event.target.closest(".sheet-grip, #side-head, #tour-head"),
+    from: sheetShown(),
+    shown: sheetShown(),
+    samples: [[touch.clientY, event.timeStamp]],
   };
-  grip.addEventListener("pointerup", end);
-  grip.addEventListener("pointercancel", end);
+}
+
+function onSheetTouchMove(event) {
+  const drag = sheetDrag;
+  if (!drag || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  const dy = touch.clientY - drag.y;
+  const dx = touch.clientX - drag.x;
+  if (!drag.mode) {
+    if (!dx && !dy) return;
+    // The first move decides, before the browser commits to a scroll.
+    const atFull = paneOpen() && sheetLevel === "full";
+    if (Math.abs(dx) > Math.abs(dy) * 1.2) drag.mode = "none";
+    else if (drag.head || !atFull) drag.mode = "sheet";
+    else if (dy > 0 && drag.pane.scrollTop <= 0) drag.mode = "sheet";
+    else drag.mode = "scroll";
+    if (drag.mode === "sheet") {
+      drag.y = touch.clientY;
+      closeSearch();
+      hud.search.blur();
+    }
+  }
+  if (drag.mode !== "sheet") return;
+  event.preventDefault();
+  const { peek, full } = sheetDetents();
+  let shown = drag.from - (touch.clientY - drag.y);
+  if (shown > full) shown = full + rubber(shown - full, 120);
+  if (shown < peek) shown = peek - rubber(peek - shown, 120);
+  drag.shown = shown;
+  drag.samples.push([touch.clientY, event.timeStamp]);
+  if (drag.samples.length > 6) drag.samples.shift();
+  placeSheet(shown, false);
+}
+
+function onSheetTouchEnd() {
+  const drag = sheetDrag;
+  sheetDrag = null;
+  if (!drag || drag.mode !== "sheet") return;
+  // Velocity over the last ~100 ms, in px/ms, positive upward.
+  const last = drag.samples[drag.samples.length - 1];
+  let first = drag.samples[0];
+  for (const sample of drag.samples) if (last[1] - sample[1] <= 100) { first = sample; break; }
+  const dt = Math.max(1, last[1] - first[1]);
+  const velocity = (first[0] - last[0]) / dt;
+  const d = sheetDetents();
+  const order = [["peek", d.peek], ["half", d.half], ["full", d.full]];
+  let level;
+  if (Math.abs(velocity) > 0.4) {
+    // A flick goes to the next detent in its direction from where it is now.
+    const ahead = order.filter(([, at]) => (velocity > 0 ? at > drag.shown + 1 : at < drag.shown - 1));
+    level = ahead.length ? (velocity > 0 ? ahead[0][0] : ahead[ahead.length - 1][0]) : (velocity > 0 ? "full" : "peek");
+  } else {
+    // Otherwise the nearest detent to where it would coast to.
+    const projected = drag.shown + velocity * 160;
+    level = order.reduce((best, item) => (Math.abs(item[1] - projected) < Math.abs(best[1] - projected) ? item : best))[0];
+  }
+  goToDetent(level);
+}
+
+for (const pane of sheetPanes) {
+  pane.addEventListener("touchstart", onSheetTouchStart, { passive: true });
+  pane.addEventListener("touchmove", onSheetTouchMove, { passive: false });
+  pane.addEventListener("touchend", onSheetTouchEnd);
+  pane.addEventListener("touchcancel", onSheetTouchEnd);
 }
 
 document.querySelector("#side-theme").addEventListener("click", () => openSkinPanel());
@@ -685,9 +800,11 @@ for (const query of [touchUI, sheetMode]) {
   query.addEventListener("change", () => {
     closeSearch();
     syncSheet();
+    settleSheet(false);
     requestAnimationFrame(resizeView);
   });
 }
+window.addEventListener("resize", () => settleSheet(false));
 syncSheet();
 let arcSubject = null;
 let entitySubject = null;
@@ -784,9 +901,12 @@ let viewInsets = { left: 0, right: 0, bottom: 0, free: 1, width: 1, height: 1, f
 // running past the sides rather than shrunk to a phone's width.
 const UPRIGHT_ASPECT = 1.25;
 const UPRIGHT_SKIN_ASPECT = 0.7;
-// The shape the theme menu last framed the city for, so turning the phone
-// while it is open frames the city again.
-let skinFitShape = "";
+// The screen size the theme menu last framed the city for. Turning the phone
+// fires several resizes while the browser settles (the toolbars move too), so
+// the framing waits for the last one: each orientation then always gets the
+// same framing, flown to from wherever the camera is.
+let skinFitSize = "";
+let skinFitTimer = 0;
 // The theme menu frames the city in the middle 70% and takes the keys.
 let skinPicking = false;
 // Applying a preview walks the lines outward. The camera and the sidebars stay
@@ -799,18 +919,41 @@ function coverOf(selector) {
   return el.getBoundingClientRect().width;
 }
 
-// How much of the view the bottom sheet and its tabs cover, held upright.
+// How much of the view the bottom sheet and its tabs cover, held upright,
+// at the detent it is resting on. Past half the city is behind the sheet
+// anyway, so it stays where half put it.
 function coverBelow() {
   if (!sheetMode.matches || skinPicking) return 0;
-  const view = viewEl.getBoundingClientRect();
-  let edge = view.bottom;
-  for (const selector of ["#sheet-tabs", "#side", "#tour-side"]) {
-    const el = document.querySelector(selector);
-    if (!el || el.hidden) continue;
-    const box = el.getBoundingClientRect();
-    if (box.height >= 1) edge = Math.min(edge, box.top);
-  }
-  return Math.max(0, view.bottom - edge);
+  const tabs = document.querySelector("#sheet-tabs").offsetHeight || 0;
+  return tabs + Math.min(sheetShown(), sheetDetents().half);
+}
+
+// The city's lift above the sheet eases to its new height when only the
+// sheet moved, so the city glides with it instead of jumping.
+let liftNow = 0;
+let liftAnim = 0;
+let lastViewSize = "";
+
+function applyViewOffset(w, h, offset, lift) {
+  if (offset || lift) camera.setViewOffset(w, h, offset, lift, w, h);
+  else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
+}
+
+function easeLift(w, h, offset, lift) {
+  cancelAnimationFrame(liftAnim);
+  const from = liftNow;
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / 420);
+    const eased = 1 - Math.pow(1 - k, 3);
+    liftNow = from + (lift - from) * eased;
+    applyViewOffset(w, h, offset, liftNow);
+    viewDirty = true;
+    requestFrame();
+    if (k < 1) liftAnim = requestAnimationFrame(step);
+  };
+  liftAnim = requestAnimationFrame(step);
 }
 
 // The camera fit for a box, in the free area between the sidebars.
@@ -858,16 +1001,27 @@ function resizeView() {
   loadUI.root.style.paddingBottom = bottom + "px";
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
   const lift = viewOffsetY(bottom);
-  if (offset || lift) camera.setViewOffset(w, h, offset, lift, w, h);
-  else camera.clearViewOffset();
-  camera.updateProjectionMatrix();
+  const size = w + "x" + h;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (size === lastViewSize && Math.abs(lift - liftNow) > 0.5 && !reduce) {
+    easeLift(w, h, offset, lift);
+  } else {
+    cancelAnimationFrame(liftAnim);
+    liftNow = lift;
+    applyViewOffset(w, h, offset, lift);
+  }
+  lastViewSize = size;
   renderer.setSize(w, h, false);
   updatePointScale();
   placeResults();
   layoutSkinFrame();
-  // Turned while the theme menu is open: frame the whole city for the new shape.
-  const shape = w > h ? "wide" : "tall";
-  if (skinPicking && laid && skinFitShape && skinFitShape !== shape) frameSkinCity();
+  // Resized while the theme menu is open: frame the whole city again.
+  if (skinPicking && laid && skinFitSize && skinFitSize !== size) {
+    clearTimeout(skinFitTimer);
+    skinFitTimer = setTimeout(() => {
+      if (skinPicking && !skinRevealing) frameSkinCity();
+    }, 200);
+  }
   viewDirty = true;
   requestFrame();
 }
@@ -4498,34 +4652,23 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   activate(describeHit(hitTest()));
 });
 
-// Touch taps are counted before they act. One tap does what a click does,
-// and a tap on the ground or the sky is Escape. Two taps zoom in toward the
-// spot, three zoom out. A tap waits out the pause in which the next one
-// could arrive, so the second tap of a zoom never also selects.
-const TAP_GAP_MS = 260;
+// A touch tap acts at once: it does what a click does, and on the ground or
+// the sky it is Escape. Taps that follow it quickly in the same spot are a
+// burst: the second zooms in toward the spot, the third zooms out. The first
+// tap has already acted, so a double tap on a tower selects it and moves in.
+const TAP_GAP_MS = 300;
 const TAP_SLOP_PX = 40;
 let taps = null;
 
 function countTap(x, y) {
-  if (taps && Math.hypot(x - taps.x, y - taps.y) <= TAP_SLOP_PX) {
-    taps.count++;
-    clearTimeout(taps.timer);
-  } else {
-    if (taps) {
-      clearTimeout(taps.timer);
-      runTaps(taps);
-    }
-    taps = { x, y, count: 1, timer: 0 };
-  }
-  const now = taps;
-  now.timer = setTimeout(() => {
-    if (taps === now) taps = null;
-    runTaps(now);
-  }, TAP_GAP_MS);
+  const now = performance.now();
+  const near = taps && now - taps.at <= TAP_GAP_MS && Math.hypot(x - taps.x, y - taps.y) <= TAP_SLOP_PX;
+  taps = near ? { x, y, at: now, count: taps.count + 1 } : { x, y, at: now, count: 1 };
+  runTap(x, y, taps.count);
 }
 
-function runTaps({ x, y, count }) {
-  if (skinPicking || !laid) return;
+function runTap(x, y, count) {
+  if (skinPicking || !laid || bird.on) return;
   aimPointer(x, y);
   noteActivity();
   endIntro();
@@ -5411,10 +5554,12 @@ async function openSkinPanel() {
 }
 
 function frameSkinCity() {
-  skinFitShape = viewEl.clientWidth > viewEl.clientHeight ? "wide" : "tall";
+  skinFitSize = viewEl.clientWidth + "x" + viewEl.clientHeight;
   const pose = frameCity(0.84);
   applyFitLimits(pose);
   flyTo(pose.pos, pose.target);
+  // Called from a timer too, when nothing else has asked for a frame.
+  requestFrame();
 }
 
 async function closeSkinPanel() {
@@ -5423,7 +5568,8 @@ async function closeSkinPanel() {
   const preview = skinPreview;
   skinPreview = null;
   skinPicking = false;
-  skinFitShape = "";
+  skinFitSize = "";
+  clearTimeout(skinFitTimer);
   closeSkinSearch();
   skinMenu.hidden = true;
   document.body.classList.remove("skin-open");
