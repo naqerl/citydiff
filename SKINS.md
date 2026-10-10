@@ -96,7 +96,7 @@ The viewer always reads a JSON object. `skin.json` is that object. A directory m
 export default function skin() {
   return {
     name: "paper",
-    plane: { color: "#e4ded4" },
+    plane: { color: "#e4ded4", opacity: 0.35 },
   };
 }
 ```
@@ -116,6 +116,7 @@ Shaders and textures are optional. Leave them out and the element keeps the mate
 | `fragment` | the same elements | A GLSL file inserted after the colour is chosen. Write `diffuseColor`. `vUv` and `uTime` are available here too. |
 | `fragment` | `fog` | Replaces the fog on the city meshes. `fogFactor`, `fogColor`, `vFogDepth`, `vSkinWorld`, and `gl_FragColor` are in scope. |
 | `segments` | `plane` | How finely the floor grid is divided when it has a vertex shader. The default is 64. |
+| `opacity` | `plane`, `ground`, `horizon` | How solid the surface is. The built-in skins set the floor's to `0`, so the city floats on its disc instead of standing on a field; a skin is merged over `dark`, so it inherits that `0` unless it says `"opacity": 1` itself. A skin change fades the value, because the fade lerps opacity. |
 
 On buildings, [`aHouse.x`](view/main.js#L1179) is `0` for a type, `1` for a function, and `2` for a method. `aHouse.y` is a variation from 0 to 1, steady for each declaration. Copy them to `vHouse` to use them in the fragment shader. `vLocalUp` is yours to set from `normal.y` when a fragment needs to know the top face. These names are read while the shader is compiled ([shade.js](view/shade.js)).
 
@@ -141,7 +142,7 @@ The keys are [`background`](view/skin.js#L7), [`fog`](view/skin.js#L8), [`plane`
 
 ## Scene
 
-The city stands on a disc. A larger floor sits under that disc. Fog fades the city toward the horizon. The sky is a skybox, and fog leaves the sky alone. The usual camera looks down, so most of the sky you see is the horizon band, with the top colour in the upper corners.
+The city stands on a disc, and a larger floor sits under that disc — except in `dark` and `light`, which set the floor's `opacity` to `0` and leave the city floating on its disc. Fog fades the city toward the horizon. The sky is a skybox, and fog leaves the sky alone. The usual camera looks down, so most of the sky you see is the horizon band, with the top colour in the upper corners.
 
 The floor ignores clicks. The camera frames the city.
 

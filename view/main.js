@@ -293,8 +293,17 @@ function mixBuffers(from, to, k) {
 
 function repaintScene() {
   paintPlinths();
-  if (planeMesh) planeMesh.material.color.set(theme.plane.color);
-  if (groundMesh) groundMesh.material.color.set(theme.ground.color);
+  if (planeMesh) {
+    planeMesh.material.color.set(theme.plane.color);
+    planeMesh.material.opacity = theme.plane.opacity ?? 1;
+    // A surface you can see writes depth; one that is faded out does not.
+    planeMesh.material.depthWrite = (theme.plane.opacity ?? 1) >= 1;
+  }
+  if (groundMesh) {
+    groundMesh.material.color.set(theme.ground.color);
+    groundMesh.material.opacity = theme.ground.opacity ?? 1;
+    groundMesh.material.depthWrite = (theme.ground.opacity ?? 1) >= 1;
+  }
   if (horizonMesh) {
     horizonMesh.material.color.set(theme.horizon.color);
     horizonMesh.material.opacity = theme.horizon.opacity;
@@ -1085,9 +1094,17 @@ function buildCity() {
   const groundRadius = span * 0.95;
   const planeSize = Math.max(groundRadius * 8, 80);
   const planeSeg = theme.plane.vertexSource ? (theme.plane.segments || 64) : 1;
+  // The field and the disc carry an opacity, so a skin can leave the city
+  // floating on its disc: both are transparent materials, because a boolean
+  // like `transparent` cannot be faded and the fade lerps opacity.
   planeMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(planeSize, planeSize, planeSeg, planeSeg),
-    rememberShade(dress(new THREE.MeshLambertMaterial({ color: theme.plane.color }), theme.plane, theme), theme.plane),
+    rememberShade(dress(new THREE.MeshLambertMaterial({
+      color: theme.plane.color,
+      transparent: true,
+      depthWrite: (theme.plane.opacity ?? 1) >= 1,
+      opacity: theme.plane.opacity ?? 1,
+    }), theme.plane, theme), theme.plane),
   );
   planeMesh.rotation.x = -Math.PI / 2;
   planeMesh.position.y = -0.12;
@@ -1095,7 +1112,12 @@ function buildCity() {
   city.add(planeMesh);
   groundMesh = new THREE.Mesh(
     new THREE.CircleGeometry(groundRadius, 72),
-    rememberShade(dress(new THREE.MeshLambertMaterial({ color: theme.ground.color }), theme.ground, theme), theme.ground),
+    rememberShade(dress(new THREE.MeshLambertMaterial({
+      color: theme.ground.color,
+      transparent: true,
+      depthWrite: (theme.ground.opacity ?? 1) >= 1,
+      opacity: theme.ground.opacity ?? 1,
+    }), theme.ground, theme), theme.ground),
   );
   groundMesh.rotation.x = -Math.PI / 2;
   groundMesh.position.y = -0.04;
