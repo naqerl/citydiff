@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { ELEMENTS, assetURL, loadSkin, mergeSkin, pageVars, skinFromValue, skinURL, skyboxKind } from "./skin.js";
 
 function readSkin(name) {
@@ -173,6 +173,101 @@ test("light objects stay light enough for the dark label text", () => {
   assert.equal(pageVars(dark)["--both"], "#fff1a0");
   assert.equal(pageVars(dark)["--body-text"], "#b36b00");
   assert.equal(pageVars(dark)["--both-text"], "#fff1a0");
+});
+
+function builtinNames() {
+  return readdirSync(new URL("../skins/", import.meta.url), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+}
+
+test("omarchy themes use the same keys as dark", () => {
+  const names = builtinNames();
+  assert.equal(names.length, 25);
+  assert.deepEqual(names.slice(0, 2), ["catppuccin", "catppuccin-latte"]);
+  assert.ok(names.includes("dark") && names.includes("light") && names.includes("tokyo-night"));
+  const skip = new Set(["name"]);
+  const shaderKey = (p) => p.endsWith(".vertexSource") || p.endsWith(".fragmentSource");
+  const structure = (skin) => paths(skin).filter((p) => (!skip.has(p.split(".")[0]) || p === "name") && !shaderKey(p));
+  const darkPaths = structure(dark);
+  const lit = (hex) => contrast(hex, "#000000");
+  for (const name of names) {
+    const skin = readSkin(name);
+    assert.equal(skin.name, name);
+    assert.deepEqual(Object.keys(skin), ["name", ...ELEMENTS]);
+    assert.deepEqual(structure(skin), darkPaths);
+    assert.ok(skin.hud.scheme === "dark" || skin.hud.scheme === "light", name);
+    const walk = (value) => {
+      if (typeof value === "string" && value.startsWith("#")) assert.match(value, /^#[0-9a-f]{6}$/, name);
+      else if (typeof value === "string" && value.startsWith("rgba")) {
+        assert.match(value, /^rgba\(\d+, \d+, \d+, [\d.]+\)$/, name + " " + value);
+      } else if (value && typeof value === "object") Object.values(value).forEach(walk);
+    };
+    walk(skin);
+    if (skin.hud.scheme === "light") {
+      const fills = [
+        skin.function.color,
+        skin.method.color,
+        skin.type.color,
+        skin.external.color,
+        skin.package.synthetic,
+        ...skin.package.steps,
+        ...Object.values(skin.change),
+        skin.call.color,
+        skin.call.std,
+      ];
+      for (const hex of fills) assert.ok(contrast(hex, skin.label.text) >= 4.5, name + " " + hex);
+    }
+    const plain = name === "dark" || name === "light";
+    if (plain) {
+      assert.equal(skin.entity.vertexSource, undefined, name);
+      assert.equal(skin.package.vertexSource, undefined, name);
+    } else {
+      assert.ok(skin.entity.vertexSource && skin.entity.fragmentSource, name);
+      assert.ok(skin.package.vertexSource && skin.package.fragmentSource, name);
+      const steps = skin.package.steps;
+      if (skin.hud.scheme === "dark") {
+        const seq = [skin.background.color, skin.ground.color, ...steps];
+        for (let i = 1; i < seq.length; i++) assert.ok(lit(seq[i]) > lit(seq[i - 1]), name + " " + seq[i]);
+        const top = steps[steps.length - 1];
+        assert.ok(lit(skin.method.color) > lit(top), name);
+        assert.ok(lit(skin.type.color) > lit(skin.method.color), name);
+        assert.ok(lit(skin.function.color) > lit(skin.type.color), name);
+        assert.ok(contrast(skin.method.color, top) >= 1.7, name);
+        assert.ok(contrast(skin.function.color, top) >= 3, name);
+        assert.ok(contrast(skin.label.text, top) >= 3, name);
+      } else {
+        const seq = [skin.background.color, ...steps];
+        for (let i = 1; i < seq.length; i++) assert.ok(lit(seq[i]) < lit(seq[i - 1]), name + " " + seq[i]);
+        assert.ok(lit(skin.function.color) < lit(steps[0]), name);
+      }
+    }
+  }
+
+  const tokyo = readSkin("tokyo-night");
+  assert.equal(tokyo.hud.scheme, "dark");
+  assert.equal(tokyo.hud.bg, "#1a1b26");
+  assert.equal(tokyo.hud.fg, "#c0caf5");
+  assert.equal(tokyo.hud.accent, "#7aa2f7");
+  assert.equal(tokyo.change.added, "#9ece6a");
+  assert.equal(tokyo.change.removed, "#f7768e");
+  assert.equal(tokyo.change.modified, "#e0af68");
+  assert.equal(tokyo.change.body, "#eb927b");
+  assert.equal(tokyo.change.both, "#ff9e64");
+  assert.equal(tokyo.change.moved, "#ad8ee6");
+  assert.equal(tokyo.call.color, "#449dab");
+
+  const nord = readSkin("nord");
+  assert.equal(nord.background.color, "#2e3440");
+  assert.equal(nord.change.added, "#a3be8c");
+  assert.equal(nord.hud.accent, "#81a1c1");
+
+  const latte = readSkin("catppuccin-latte");
+  assert.equal(latte.hud.scheme, "light");
+  assert.equal(latte.hud.bg, "#eff1f5");
+  assert.equal(latte.hud.fg, "#4c4f69");
+  assert.equal(latte.label.text, "#4c4f69");
 });
 
 test("the page takes its colours from the skin", () => {

@@ -1,0 +1,138 @@
+{
+  "name": "last-horizon",
+  "background": {
+    "color": "#0c0b0c",
+    "skybox": {
+      "top": "#000000",
+      "horizon": "#383338",
+      "bottom": "#0c0b0c"
+    }
+  },
+  "fog": {
+    "color": "#0c0b0c",
+    "falloff": 0.07
+  },
+  "plane": {
+    "opacity": 0,
+    "color": "#383338"
+  },
+  "ground": {
+    "color": "#1c1c1c"
+  },
+  "horizon": {
+    "color": "#818181",
+    "opacity": 0.7
+  },
+  "light": {
+    "exposure": 1.08,
+    "hemiSky": "#fafafa",
+    "hemiGround": "#1c1c1c",
+    "hemiIntensity": 0.55,
+    "key": "#f8f7f7",
+    "keyIntensity": 0.8,
+    "rim": "#dfbdb4",
+    "rimIntensity": 0.34
+  },
+  "package": {
+    "steps": ["#3a3a3a", "#4f4f4f", "#5f5f5f", "#6d6d6d"],
+    "synthetic": "#1c1c1c",
+    "emissive": "#ffffff",
+    "emissiveIntensity": 0.06,
+    "depEmissive": 0.62,
+    "markedEmissive": 0.22,
+    "vertexSource": "vUv = uv;\nvLocalUp = clamp(normal.y, 0.0, 1.0);",
+    "fragmentSource": "float skinEdge = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));\nfloat skinPx = max(fwidth(skinEdge), 0.0008);\nfloat skinBorder = 1.0 - smoothstep(skinPx * 0.5, skinPx * 2.2, skinEdge);\nfloat skinRise = clamp(vLocalUp, 0.0, 1.0);\nvec3 skinBody = diffuseColor.rgb * mix(0.80, 1.16, skinRise);\nvec3 skinLine = vec3(0.875, 0.741, 0.706);\ndiffuseColor.rgb = mix(skinBody, skinLine, skinBorder * 0.90);"
+  },
+  "external": {
+    "color": "#285d78",
+    "metalness": 0.35,
+    "roughness": 0.6,
+    "emissive": "#000000",
+    "emissiveIntensity": 0.2,
+    "depEmissive": 0.7
+  },
+  "type": {
+    "color": "#e6aad3"
+  },
+  "function": {
+    "color": "#eae7e6"
+  },
+  "method": {
+    "color": "#5daad0"
+  },
+  "entity": {
+    "color": "#ffffff",
+    "emissive": "#ffffff",
+    "emissiveIntensity": 0.28,
+    "vertexSource": "vUv = uv;\nvLocalUp = clamp(position.y + 0.5, 0.0, 1.0);",
+    "fragmentSource": "float skinEdge = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));\nfloat skinPx = max(fwidth(skinEdge), 0.0008);\nfloat skinBorder = 1.0 - smoothstep(skinPx * 0.5, skinPx * 2.2, skinEdge);\nfloat skinRise = clamp(vLocalUp, 0.0, 1.0);\nvec3 skinBody = diffuseColor.rgb * mix(0.64, 1.18, skinRise);\nvec3 skinLine = vec3(0.412, 0.220, 0.176);\ndiffuseColor.rgb = mix(skinBody, skinLine, skinBorder * 0.82);"
+  },
+  "change": {
+    "added": "#87a9b0",
+    "removed": "#c38b7b",
+    "modified": "#6b5e73",
+    "body": "#796d86",
+    "both": "#8a7d91",
+    "moved": "#c4d8e2",
+    "same": "#fafcfb"
+  },
+  "call": {
+    "color": "#a5a0b6",
+    "std": "#cfd3cd"
+  },
+  "selection": {
+    "color": "#b59790",
+    "ring": "#dfbdb4",
+    "ringOpacity": 0.55
+  },
+  "label": {
+    "background": "transparent",
+    "text": "#e2dddc"
+  },
+  "dim": {
+    "entity": 0.04,
+    "package": 0.2,
+    "external": 0.22,
+    "plate": 0.35,
+    "emissive": 0.02
+  },
+  "hud": {
+    "scheme": "dark",
+    "bg": "#0c0b0c",
+    "elev": "#584e51",
+    "panel": "rgba(12, 11, 12, 0.4)",
+    "search": "rgba(12, 11, 12, 0.35)",
+    "fg": "#e2dddc",
+    "dim": "#cfd3cd",
+    "muted": "#e2dddc",
+    "faint": "#fafcfb",
+    "fainter": "#fafcfb",
+    "line": "#584e51",
+    "lineStrong": "#584e51",
+    "edge": "rgba(255, 255, 255, 0.08)",
+    "shadow": "#000000",
+    "link": "#b59790",
+    "code": "#83748d",
+    "accent": "#b59790",
+    "pre": "#e2dddc",
+    "addedBg": "rgba(135, 169, 176, 0.14)",
+    "addedFg": "#c1cfd2",
+    "removedBg": "rgba(195, 139, 123, 0.14)",
+    "removedFg": "#dbc5bf",
+    "addedLine": "#87a9b0",
+    "removedLine": "#c38b7b",
+    "modifiedLine": "#83748d",
+    "addedText": "#87a9b0",
+    "removedText": "#c38b7b",
+    "modifiedText": "#83748d",
+    "bodyText": "#926b9d",
+    "bothText": "#92869c",
+    "movedText": "#c4d8e2",
+    "codeBg": "rgba(6, 6, 6, 0.8)",
+    "drop": "rgba(12, 11, 12, 0.6)",
+    "dropBorder": "#b59790",
+    "scrim": "rgba(12, 11, 12, 0.78)",
+    "on": "rgba(88, 78, 81, 0.55)",
+    "currentBg": "rgba(181, 151, 144, 0.08)"
+  }
+}

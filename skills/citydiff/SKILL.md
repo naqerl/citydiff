@@ -109,12 +109,16 @@ kill "$(cat /tmp/citydiff-view.pid)"
 The viewer exposes `GET /scene.json` (the scene graph) and `/` (static assets, embedded in
 the binary). Bind to `127.0.0.1` unless remote access is intended — it has no auth.
 
-Inside the page, `/` in the search box lists its commands: `/skin` opens the theme panel in
-the right sidebar, where a skin is previewed on click and kept with Save. Closing the panel
-with a preview that was never saved asks first — Change keeps it, Ignore drops it. The choice lives in
-the browser (localStorage); the process has no say in it, and `CITYDIFF_SKINS_DIR` is what
-points at extra skins. Selecting a node shows its calls or its callers, drawn between the
-towers that make them.
+Inside the page, `/` in the search box lists its commands: `/skin` opens the theme menu over
+the city. The left sidebar hides, the city is framed between two diagonal lines, and the top
+left counts the place in the list (6/10). `←` / `→` preview the previous and next theme in
+place. Letters do too: a short pause, then the first theme whose name starts with what was
+typed. The viewer's other keys do nothing while the menu is open. Enter applies the preview:
+the diagonal lines move out to the edges, the new theme between them and the old theme
+outside. Change after esc does the same. Ignore drops the preview with the lines unmoved.
+The choice lives in the browser (localStorage); the process has no say in it, and
+`CITYDIFF_SKINS_DIR` is what points at extra skins. Selecting a node shows its calls or its
+callers, drawn between the towers that make them.
 
 ## Building from source (no release available)
 

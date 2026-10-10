@@ -450,7 +450,7 @@
     .fig .mod.body { background: var(--body); }
     .fig .mod.both { background: var(--both); }
     .fig svg { width: 72px; height: 48px; }
-    #tour-side, #skin-side {
+    #tour-side {
       position: absolute;
       top: 0;
       right: 0;
@@ -467,7 +467,89 @@
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
     }
-    #tour-side[hidden], #skin-side[hidden], #tour-drop[hidden] { display: none; }
+    #tour-side[hidden], #tour-drop[hidden], #skin-menu[hidden] { display: none; }
+    body.skin-open #side,
+    body.skin-open #tour-side,
+    body.skin-open #tour-drop,
+    body.skin-open #results,
+    body.skin-open #tag { display: none !important; }
+    #skin-menu {
+      position: fixed;
+      inset: 0;
+      z-index: 6;
+      pointer-events: none;
+    }
+    #skin-menu:focus, #skin-menu:focus-visible { outline: none; }
+    .skin-wing {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      opacity: 0;
+      pointer-events: none;
+      cursor: pointer;
+      transition: background-color 0.45s ease, opacity 0.45s ease;
+    }
+    .skin-wing::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05) 46%, rgba(0, 0, 0, 0.2));
+      pointer-events: none;
+    }
+    #skin-lines {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    #skin-lines line {
+      stroke: var(--fg);
+      stroke-width: 2;
+      stroke-linecap: square;
+      filter: drop-shadow(0 0 1px var(--bg));
+    }
+    #skin-name {
+      position: absolute;
+      z-index: 2;
+      left: 18%;
+      right: 18%;
+      bottom: 36px;
+      text-align: center;
+      font-size: clamp(20px, 2.6vw, 34px);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--fg);
+      text-shadow: 0 0 16px var(--bg), 0 1px 2px var(--bg);
+      pointer-events: none;
+    }
+    #skin-count {
+      position: absolute;
+      z-index: 2;
+      top: 22px;
+      left: 24px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--fg);
+      text-shadow: 0 0 16px var(--bg), 0 1px 2px var(--bg);
+      pointer-events: none;
+    }
+    /* The apply still. The clip is the band between the two diagonal lines:
+       inside is the new theme, and the live city behind it is the old one. */
+    #skin-reveal {
+      position: fixed;
+      z-index: 4;
+      pointer-events: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .skin-wing { transition: none; }
+    }
     #tour-side.is-collapsed {
       bottom: auto;
       left: auto;
@@ -568,53 +650,6 @@
     #tour-keys { padding: 0 14px 12px; color: var(--fainter); font-size: 11px; }
     #tour-keys kbd { color: var(--muted); }
     @keyframes tour-progress { from { width: 0; } to { width: 100%; } }
-    #skin-side:focus { outline: none; }
-    #skin-side:focus-visible { outline: none; }
-    #skin-head { padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); min-width: 0; }
-    #skin-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    #skin-title { flex: 1; min-width: 0; font-size: 14px; letter-spacing: 0.08em; }
-    #skin-close {
-      width: 22px;
-      height: 22px;
-      flex: none;
-      display: grid;
-      place-items: center;
-      padding: 0;
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--line);
-    }
-    #skin-close:hover { color: var(--fg); border-color: var(--line-strong); }
-    #skin-note { color: var(--faint); font-size: 11px; }
-    #skin-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-    #skin-list { list-style: none; margin: 0; padding: 0; }
-    #skin-list button {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      min-width: 0;
-      text-align: left;
-      background: transparent;
-      border: 0;
-      border-bottom: 1px solid var(--line);
-      padding: 9px 14px;
-      color: var(--fg);
-    }
-    #skin-list button.on { background: var(--on); }
-    #skin-list button:hover { background: var(--on); }
-    #skin-list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #skin-list .tag { flex: none; color: var(--faint); font-size: 11px; }
-    #skin-actions { border-top: 1px solid var(--line); padding: 12px 14px; display: flex; gap: 8px; }
-    #skin-save {
-      flex: 1;
-      background: transparent;
-      color: var(--fg);
-      border: 1px solid var(--line-strong);
-      padding: 8px 10px;
-    }
-    #skin-save:disabled { color: var(--faint); border-color: var(--line); }
-    #skin-save:not(:disabled):hover { background: var(--on); }
     #tour-drop {
       position: fixed;
       inset: 12px;
@@ -681,19 +716,6 @@
           <div id="detail-body"></div>
         </div>
       </aside>
-      <aside id="skin-side" tabindex="-1" hidden>
-        <div id="skin-head">
-          <div id="skin-title-row">
-            <div id="skin-title">theme</div>
-            <button id="skin-close" type="button" aria-label="Close themes" title="Close (esc)">
-              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5"/></svg>
-            </button>
-          </div>
-          <div id="skin-note">Click a theme to preview it. Save keeps it.</div>
-        </div>
-        <div id="skin-scroll"><ul id="skin-list"></ul></div>
-        <div id="skin-actions"><button id="skin-save" type="button" disabled>Save</button></div>
-      </aside>
       <aside id="tour-side" hidden>
         <button id="tour-logo" type="button" aria-label="Show tour" title="Show tour (t)">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M5 3 L12 8 L5 13 Z" fill="currentColor"/></svg>
@@ -735,6 +757,16 @@
         <div id="view"></div>
       </div>
     </div>
+  </div>
+  <div id="skin-menu" tabindex="-1" hidden role="dialog" aria-modal="true" aria-label="Theme">
+    <button type="button" id="skin-prev" class="skin-wing" aria-label="Previous theme" tabindex="-1"></button>
+    <button type="button" id="skin-next" class="skin-wing" aria-label="Next theme" tabindex="-1"></button>
+    <svg id="skin-lines" aria-hidden="true">
+      <line id="skin-line-prev"></line>
+      <line id="skin-line-next"></line>
+    </svg>
+    <div id="skin-count"></div>
+    <div id="skin-name"></div>
   </div>
   <div id="tag"></div>
   <div id="confirm" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">

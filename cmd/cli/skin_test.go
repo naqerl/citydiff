@@ -50,13 +50,28 @@ func TestBuiltinSkins(t *testing.T) {
 	}
 	srv := skinMux("")
 	defer srv.Close()
-	for _, path := range []string{"/skins/dark/skin.json", "/skins/light/skin.json"} {
-		code, body := getBody(t, srv, path)
-		if code != http.StatusOK {
-			t.Fatalf("%s: %d", path, code)
+	names := builtinSkinNames()
+	if len(names) != 25 || names[0] != "dark" || names[1] != "light" {
+		t.Fatalf("built-ins: %v", names)
+	}
+	for _, name := range []string{"catppuccin", "nord", "tokyo-night", "rose-pine", "white", "flexoki-light"} {
+		if !containsName(names, name) {
+			t.Fatalf("missing %s in %v", name, names)
 		}
-		if !strings.Contains(body, `"name"`) {
-			t.Fatalf("%s: %s", path, body)
+	}
+	for _, name := range names {
+		code, body := getBody(t, srv, "/skins/"+name+"/skin.json")
+		if code != http.StatusOK {
+			t.Fatalf("%s: %d", name, code)
+		}
+		var meta struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal([]byte(body), &meta); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if meta.Name != name {
+			t.Fatalf("%s: name %q", name, meta.Name)
 		}
 	}
 	code, _ := getBody(t, srv, "/skins/missing/skin.json")
@@ -144,15 +159,16 @@ func TestSkinCatalog(t *testing.T) {
 	}
 
 	ids := choiceIDs(getCatalog(t, "").Skins)
-	if len(ids) < 2 || ids[0] != "dark" || ids[1] != "light" {
-		t.Fatalf("built-ins first: %v", ids)
+	builtins := builtinSkinNames()
+	if strings.Join(ids, ",") != strings.Join(builtins, ",") {
+		t.Fatalf("catalog = %v want %v", ids, builtins)
 	}
 	if strings.Contains(strings.Join(ids, ","), "paper") {
 		t.Fatalf("a missing directory contributed skins: %v", ids)
 	}
 
 	ids = choiceIDs(getCatalog(t, root).Skins)
-	want := []string{"dark", "light", "ink", "paper"}
+	want := append(append([]string{}, builtins...), "ink", "paper")
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
 		t.Fatalf("catalog = %v want %v", ids, want)
 	}
@@ -171,6 +187,15 @@ func getCatalog(t *testing.T, dir string) skinCatalog {
 		t.Fatal(err)
 	}
 	return catalog
+}
+
+func containsName(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
 }
 
 func choiceIDs(skins []skinChoice) []string {
