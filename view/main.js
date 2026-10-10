@@ -3287,25 +3287,17 @@ function goBackInner() {
     exitFocus();
     return;
   }
-  const onPackage = selected && (selected.kind === "package" || selected.kind === "external");
-  if (onPackage || entered || entitySubject || arcSubject) {
-    entered = null;
-    entitySubject = null;
-    arcSubject = null;
-    // The repo package does not answer a further escape, so a package backs out to the city.
-    selected = onPackage || !sceneDoc.root ? null : { kind: "package", id: sceneDoc.root };
-    ring.visible = false;
-    applyMode();
-    cityPose = frameCity();
-    applyFitLimits(cityPose);
-    flyTo(cityPose.pos, cityPose.target);
-    return;
-  }
-  selected = null;
-  ring.visible = false;
+  const hadSelection = selected || entered || entitySubject || arcSubject;
+  entered = null;
   entitySubject = null;
   arcSubject = null;
+  selected = null;
+  ring.visible = false;
   applyMode();
+  if (!hadSelection) return;
+  cityPose = frameCity();
+  applyFitLimits(cityPose);
+  flyTo(cityPose.pos, cityPose.target);
 }
 
 // What a jump restores: the whole navigation state, not just the camera.
