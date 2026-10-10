@@ -70,6 +70,11 @@ citydiff tour schema
 | `-addr` | listen address for `-view` (default `127.0.0.1:8787`). |
 | `-tour` | with `-view`, a [tour](#tours) script the viewer loads and plays. |
 
+The command line stays this small on purpose: every flag is context a model has to read
+before it can use the tool, and a long flag list costs more than it explains. View state
+belongs to the page, and paths belong to the environment — `CITYDIFF_SKINS_DIR` for the
+[skins](#skins) directory, not a flag. See [AGENTS.md](AGENTS.md).
+
 Notes:
 
 - With `-range`, `-path` must live inside a **git checkout**: the nearest parent directory
@@ -126,6 +131,18 @@ entry.
 | `space` | tour: play / pause |
 | `,` `.` | tour: previous / next step |
 | `?` | legend |
+
+## Skins
+
+A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) is the built-in light skin. Skins that are not in the binary live in a directory of your own.
+
+Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme panel in the right sidebar. It lists the themes, previews one the moment you click it (or walk them with the arrows), and **Save** remembers it and closes the panel. The choice lives in the browser (localStorage), so a reload comes back to the theme you saved, and closing the panel without saving drops the preview. Nothing about it reaches the command line or the address bar.
+
+The fields, the skybox shapes, and how to point the viewer at a skins directory are in [SKINS.md](SKINS.md).
+
+```sh
+CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
+```
 
 ## Tours
 
@@ -308,6 +325,8 @@ On a `v*` tag it also publishes a GitHub Release with
 | `lib/git/` | git source: reads trees at refs via go-git |
 | `lib/files/` | filesystem source |
 | `view/` | embedded browser viewer (three.js) |
+| `skins/` | built-in viewer skins, `dark` and `light` |
+| `SKINS.md` | how to write a viewer skin |
 | `lib/tour/` | tour scripts: schema, name resolution, validation, call paths, code snippets |
 | `cmd/cli/tour.go` | the `nodes` and `tour` subcommands and the tour HTTP endpoints |
 | `skills/citydiff-tour/` | the agent skill for writing tours |

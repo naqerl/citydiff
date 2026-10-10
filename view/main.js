@@ -8,24 +8,388 @@ import { packageCallEdges } from "./edges.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
 import { KEYBINDS } from "./keys.js";
+import { applyPage, loadSkin } from "./skin.js";
+import { dress, loadShade } from "./shade.js";
+import { applyGradient, applySky } from "./sky.js";
 
-// shadcn zinc. The city stays in this grayscale.
-const STONE = new THREE.Color(0xf4f4f5);
-const TYPE_COLOR = new THREE.Color(0xd4d4d8);
-const FUNC_COLOR = new THREE.Color(0xfafafa);
-const METHOD_COLOR = new THREE.Color(0xa1a1aa);
-// git's default diff colors: old red, new green, changed yellow, moved magenta, hunk cyan.
-// Semantic accents from the Radix Colors dark scales. The steps are not the
-// same on purpose: added (grass 11) is lighter than deleted (red 9) so the two
-// stay apart under deuteranopia, where a constant-lightness pair collapses.
-// All five are at least 4.5:1 on the #09090b stage.
-const ADD = new THREE.Color(0x71d083);
-const REMOVE = new THREE.Color(0xe5484d);
-const MODIFY = new THREE.Color(0xffc53d);
-const MOVED = new THREE.Color(0x7d66d9);
-const ARC = new THREE.Color(0x23afd0);
-// A standard-library edge is quieter than a project edge.
-const STD_LINE = new THREE.Color(0xd4d4d8);
+let theme = null;
+let themeReady = false;
+let themeFade = null;
+let skinWarning = "";
+const THEME_FADE_MS = 450;
+const paint = {
+  added: new THREE.Color(),
+  removed: new THREE.Color(),
+  modified: new THREE.Color(),
+  moved: new THREE.Color(),
+  same: new THREE.Color(),
+  call: new THREE.Color(),
+  std: new THREE.Color(),
+  type: new THREE.Color(),
+  function: new THREE.Color(),
+  method: new THREE.Color(),
+  selection: new THREE.Color(),
+};
+
+function syncPaint(next) {
+  paint.added.set(next.change.added);
+  paint.removed.set(next.change.removed);
+  paint.modified.set(next.change.modified);
+  paint.moved.set(next.change.moved);
+  paint.same.set(next.change.same);
+  paint.call.set(next.call.color);
+  paint.std.set(next.call.std);
+  paint.type.set(next.type.color);
+  paint.function.set(next.function.color);
+  paint.method.set(next.method.color);
+  paint.selection.set(next.selection.color);
+}
+
+function useTheme(next) {
+  theme = next;
+  syncPaint(next);
+  applyPage(next);
+  applySky(scene, next);
+  renderer.toneMappingExposure = next.light.exposure;
+  renderer.setClearColor(next.background.color);
+  scene.fog.color.set(next.fog.color);
+  ring.material.color.set(next.selection.ring);
+  ring.material.opacity = next.selection.ringOpacity;
+  haloMaterial.uniforms.uColor.value.copy(paint.selection);
+  themeReady = true;
+  document.documentElement.classList.add("theme-ready");
+}
+
+// The theme is a browser preference: it is remembered in localStorage, never
+// in the address, and the process has no say in it.
+async function readTheme() {
+  const spec = storedSkin();
+  try {
+    const skin = await loadSkin(spec);
+    await loadShade(skin);
+    if (skin.shadeWarning) skinWarning = skin.shadeWarning;
+    return skin;
+  } catch (err) {
+    if (spec !== "dark") {
+      try {
+        skinWarning = "Could not read skin " + spec + ". " + err.message;
+        const skin = await loadSkin("dark");
+        await loadShade(skin);
+        return skin;
+      } catch { /* the dark skin failed too */ }
+    }
+    skinWarning = "Could not read the skin. " + err.message;
+    return null;
+  }
+}
+
+function shadeKey(spec, skin) {
+  const src = spec || {};
+  const maps = src.maps && typeof src.maps === "object"
+    ? Object.keys(src.maps).sort().map((key) => key + ":" + src.maps[key]).join(",")
+    : "";
+  const fog = (skin && skin.fog && skin.fog.fragmentSource) || "";
+  return [src.vertexSource || "", src.fragmentSource || "", src.map || "", maps, fog].join("\0");
+}
+
+function rememberShade(mat, spec) {
+  mat.userData.shadeKey = shadeKey(spec, theme);
+  return mat;
+}
+
+function parseCSSColor(value) {
+  const text = String(value || "").trim();
+  if (text === "transparent") return [0, 0, 0, 0];
+  const hex = text.replace("#", "");
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16), 1];
+  }
+  const match = text.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/i);
+  if (match) return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] == null ? 1 : Number(match[4])];
+  return [0, 0, 0, 1];
+}
+
+function formatCSSColor(color) {
+  if (color[3] <= 0.001) return "transparent";
+  const rgb = color.slice(0, 3).map((channel) => Math.round(channel));
+  if (color[3] >= 0.999) return "#" + rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("");
+  return "rgba(" + rgb.join(", ") + ", " + color[3].toFixed(3) + ")";
+}
+
+function mixCSS(from, to, k) {
+  const a = parseCSSColor(from);
+  const b = parseCSSColor(to);
+  return formatCSSColor(a.map((channel, index) => channel + (b[index] - channel) * k));
+}
+
+function skyColors(skin) {
+  const box = skin.background && skin.background.skybox;
+  if (!box || typeof box !== "object" || Array.isArray(box) || !box.top) return null;
+  return { top: box.top, horizon: box.horizon, bottom: box.bottom };
+}
+
+function swapMaterial(mesh, spec, skin, factory) {
+  if (!mesh) return null;
+  const key = shadeKey(spec, skin);
+  const old = mesh.material;
+  if (old && old.userData.shadeKey === key) return old;
+  const created = factory();
+  if (old) {
+    if (old.color && created.color) created.color.copy(old.color);
+    if (old.emissive && created.emissive) created.emissive.copy(old.emissive);
+    if (typeof old.emissiveIntensity === "number" && typeof created.emissiveIntensity === "number") created.emissiveIntensity = old.emissiveIntensity;
+    if (typeof old.opacity === "number") created.opacity = old.opacity;
+    if (typeof old.metalness === "number") created.metalness = old.metalness;
+    if (typeof old.roughness === "number") created.roughness = old.roughness;
+    created.transparent = old.transparent;
+    created.depthWrite = old.depthWrite;
+    created.side = old.side;
+    if (old.vertexColors) created.vertexColors = true;
+    old.dispose();
+  }
+  created.userData.shadeKey = key;
+  mesh.material = created;
+  return created;
+}
+
+function adoptShaders(next) {
+  if (planeMesh) {
+    const segs = next.plane.vertexSource ? (next.plane.segments || 64) : 1;
+    const params = planeMesh.geometry.parameters;
+    if (params.widthSegments !== segs) {
+      planeMesh.geometry.dispose();
+      planeMesh.geometry = new THREE.PlaneGeometry(params.width, params.height, segs, segs);
+    }
+  }
+  swapMaterial(planeMesh, next.plane, next, () => {
+    const mat = new THREE.MeshLambertMaterial();
+    tintEmissive(mat);
+    return dress(mat, next.plane, next);
+  });
+  swapMaterial(groundMesh, next.ground, next, () => {
+    const mat = new THREE.MeshLambertMaterial();
+    tintEmissive(mat);
+    return dress(mat, next.ground, next);
+  });
+  swapMaterial(horizonMesh, next.horizon, next, () => {
+    const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true });
+    return dress(mat, next.horizon, next);
+  });
+  for (const plinth of plinths) {
+    if (plinth.external) {
+      plinth.material = swapMaterial(plinth.mesh, next.external, next, () => dress(new THREE.MeshStandardMaterial(), next.external, next));
+    } else {
+      plinth.material = swapMaterial(plinth.mesh, next.package, next, () => {
+        const mat = new THREE.MeshLambertMaterial();
+        tintEmissive(mat);
+        return dress(mat, next.package, next);
+      });
+    }
+  }
+  if (solidMesh && next.entity.vertexSource && next.entity.vertexSource.includes("aHouse") && !solidMesh.geometry.getAttribute("aHouse")) {
+    solidMesh.geometry.setAttribute("aHouse", houseAttribute(solidMesh.userData.slots));
+  }
+  if (solidMesh) {
+    solidMat = swapMaterial(solidMesh, next.entity, next, () => {
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+      tintEmissive(mat);
+      return dress(mat, next.entity, next);
+    });
+  }
+}
+
+function captureLook() {
+  const mats = [];
+  const instances = [];
+  const attrs = [];
+  scene.traverse((obj) => {
+    const list = !obj.material ? [] : (Array.isArray(obj.material) ? obj.material : [obj.material]);
+    for (const mat of list) {
+      if (!mat || mat.isShaderMaterial) continue;
+      const rec = { mat };
+      if (mat.color && mat.color.isColor) rec.color = mat.color.clone();
+      if (mat.emissive && mat.emissive.isColor) rec.emissive = mat.emissive.clone();
+      if (typeof mat.emissiveIntensity === "number") rec.emissiveIntensity = mat.emissiveIntensity;
+      if (typeof mat.opacity === "number") rec.opacity = mat.opacity;
+      if (typeof mat.metalness === "number") rec.metalness = mat.metalness;
+      if (typeof mat.roughness === "number") rec.roughness = mat.roughness;
+      mats.push(rec);
+    }
+    if (obj.instanceColor) instances.push({ attr: obj.instanceColor, colors: Float32Array.from(obj.instanceColor.array) });
+    const painted = obj.geometry && obj.geometry.getAttribute && obj.geometry.getAttribute("aColor");
+    if (painted) attrs.push({ attr: painted, colors: Float32Array.from(painted.array) });
+  });
+  const clear = new THREE.Color();
+  renderer.getClearColor(clear);
+  return {
+    mats,
+    instances,
+    attrs,
+    hemi: hemiLight && { color: hemiLight.color.clone(), ground: hemiLight.groundColor.clone(), intensity: hemiLight.intensity },
+    key: keyLight && { color: keyLight.color.clone(), intensity: keyLight.intensity },
+    rim: rimLight && { color: rimLight.color.clone(), intensity: rimLight.intensity },
+    fog: { color: scene.fog.color.clone(), density: scene.fog.density },
+    exposure: renderer.toneMappingExposure,
+    clear,
+    halo: haloMaterial.uniforms.uColor.value.clone(),
+  };
+}
+
+function mixNumber(from, to, k) {
+  return from + (to - from) * k;
+}
+
+function mixLook(from, to, k) {
+  const count = Math.min(from.mats.length, to.mats.length);
+  for (let i = 0; i < count; i++) {
+    const start = from.mats[i];
+    const end = to.mats[i];
+    const mat = end.mat;
+    if (start.mat !== mat) continue;
+    if (start.color && end.color) mat.color.copy(start.color).lerp(end.color, k);
+    if (start.emissive && end.emissive) mat.emissive.copy(start.emissive).lerp(end.emissive, k);
+    if (start.emissiveIntensity != null && end.emissiveIntensity != null) mat.emissiveIntensity = mixNumber(start.emissiveIntensity, end.emissiveIntensity, k);
+    if (start.opacity != null && end.opacity != null) mat.opacity = mixNumber(start.opacity, end.opacity, k);
+    if (start.metalness != null && end.metalness != null) mat.metalness = mixNumber(start.metalness, end.metalness, k);
+    if (start.roughness != null && end.roughness != null) mat.roughness = mixNumber(start.roughness, end.roughness, k);
+  }
+  mixBuffers(from.instances, to.instances, k);
+  mixBuffers(from.attrs, to.attrs, k);
+  if (from.hemi && to.hemi) {
+    hemiLight.color.copy(from.hemi.color).lerp(to.hemi.color, k);
+    hemiLight.groundColor.copy(from.hemi.ground).lerp(to.hemi.ground, k);
+    hemiLight.intensity = mixNumber(from.hemi.intensity, to.hemi.intensity, k);
+  }
+  if (from.key && to.key) {
+    keyLight.color.copy(from.key.color).lerp(to.key.color, k);
+    keyLight.intensity = mixNumber(from.key.intensity, to.key.intensity, k);
+  }
+  if (from.rim && to.rim) {
+    rimLight.color.copy(from.rim.color).lerp(to.rim.color, k);
+    rimLight.intensity = mixNumber(from.rim.intensity, to.rim.intensity, k);
+  }
+  scene.fog.color.copy(from.fog.color).lerp(to.fog.color, k);
+  scene.fog.density = mixNumber(from.fog.density, to.fog.density, k);
+  renderer.toneMappingExposure = mixNumber(from.exposure, to.exposure, k);
+  renderer.setClearColor(from.clear.clone().lerp(to.clear, k));
+  haloMaterial.uniforms.uColor.value.copy(from.halo).lerp(to.halo, k);
+}
+
+function mixBuffers(from, to, k) {
+  const count = Math.min(from.length, to.length);
+  for (let i = 0; i < count; i++) {
+    if (from[i].attr !== to[i].attr) continue;
+    const start = from[i].colors;
+    const end = to[i].colors;
+    const dest = to[i].attr.array;
+    const n = Math.min(start.length, end.length, dest.length);
+    for (let c = 0; c < n; c++) dest[c] = mixNumber(start[c], end[c], k);
+    to[i].attr.needsUpdate = true;
+  }
+}
+
+function repaintScene() {
+  paintPlinths();
+  if (planeMesh) planeMesh.material.color.set(theme.plane.color);
+  if (groundMesh) groundMesh.material.color.set(theme.ground.color);
+  if (horizonMesh) {
+    horizonMesh.material.color.set(theme.horizon.color);
+    horizonMesh.material.opacity = theme.horizon.opacity;
+  }
+  if (hemiLight) {
+    const light = theme.light;
+    hemiLight.color.set(light.hemiSky);
+    hemiLight.groundColor.set(light.hemiGround);
+    hemiLight.intensity = light.hemiIntensity;
+    keyLight.color.set(light.key);
+    keyLight.intensity = light.keyIntensity;
+    rimLight.color.set(light.rim);
+    rimLight.intensity = light.rimIntensity;
+  }
+  renderer.toneMappingExposure = theme.light.exposure;
+  renderer.setClearColor(theme.background.color);
+  scene.fog.color.set(theme.fog.color);
+  if (laid) scene.fog.density = theme.fog.falloff / citySpan();
+  ring.material.color.set(theme.selection.ring);
+  ring.material.opacity = theme.selection.ringOpacity;
+  updateHalo();
+}
+
+function fadeToTheme(next) {
+  if (theme && theme.uTime) next.uTime = theme.uTime;
+  adoptShaders(next);
+  const from = captureLook();
+  const fromLabel = theme.label.text;
+  const fromBg = theme.label.background;
+  const fromSky = skyColors(theme);
+  theme = next;
+  syncPaint(next);
+  repaintScene();
+  const to = captureLook();
+  const glideSky = fromSky && skyColors(next);
+  mixLook(from, to, 0);
+  redrawPlates(fromLabel, fromBg);
+  if (glideSky) applyGradient(scene, fromSky);
+  else applySky(scene, next);
+  skinWarning = next.shadeWarning || "";
+  applyPage(next, false);
+  updateHUD();
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) {
+    mixLook(from, to, 1);
+    redrawPlates(next.label.text, next.label.background);
+    if (glideSky) applyGradient(scene, glideSky);
+    if (next.hud && next.hud.scheme) document.documentElement.style.colorScheme = next.hud.scheme;
+    updateHalo();
+    viewDirty = true;
+    requestFrame();
+    return;
+  }
+  themeFade = {
+    from,
+    to,
+    fromLabel,
+    toLabel: next.label.text,
+    fromBg,
+    toBg: next.label.background,
+    fromSky: glideSky ? fromSky : null,
+    toSky: glideSky,
+    scheme: next.hud && next.hud.scheme,
+    schemeSet: false,
+    t0: performance.now(),
+    ms: THEME_FADE_MS,
+  };
+  viewDirty = true;
+  requestFrame();
+}
+
+function tickThemeFade(now) {
+  if (!themeFade) return false;
+  const fade = themeFade;
+  const k = Math.min(1, (now - fade.t0) / fade.ms);
+  const s = k * k * (3 - 2 * k);
+  mixLook(fade.from, fade.to, s);
+  redrawPlates(mixCSS(fade.fromLabel, fade.toLabel, s), mixCSS(fade.fromBg, fade.toBg, s));
+  if (fade.fromSky) {
+    applyGradient(scene, {
+      top: mixCSS(fade.fromSky.top, fade.toSky.top, s),
+      horizon: mixCSS(fade.fromSky.horizon, fade.toSky.horizon, s),
+      bottom: mixCSS(fade.fromSky.bottom, fade.toSky.bottom, s),
+    });
+  }
+  if (!fade.schemeSet && s >= 0.5 && fade.scheme) {
+    fade.schemeSet = true;
+    document.documentElement.style.colorScheme = fade.scheme;
+  }
+  if (k >= 1) {
+    if (fade.scheme) document.documentElement.style.colorScheme = fade.scheme;
+    themeFade = null;
+    paintPlinths();
+    redrawPlates(fade.toLabel, fade.toBg);
+    updateHalo();
+  }
+  return true;
+}
 
 const scratch = {
   pos: new THREE.Vector3(),
@@ -78,6 +442,7 @@ const byDecl = new Map();
 const callersOf = new Map();
 const catalog = [];
 let searchHits = [];
+let commandHits = [];
 let searchCursor = 0;
 let showUnchanged = false;
 const marchStops = new Set();
@@ -241,7 +606,9 @@ function resizeView() {
   camera.aspect = w / h;
   // The city is drawn between the two sidebars: the look-at point sits in
   // the middle of the free area, and fits use only its width.
-  viewInsets = insets(w, coverOf("#side"), coverOf("#tour-side"));
+  // The theme panel and the tour sidebar share the right edge.
+  const right = Math.max(coverOf("#tour-side"), coverOf("#skin-side"));
+  viewInsets = insets(w, coverOf("#side"), right);
   viewInsets.width = w;
   viewInsets.height = h;
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
@@ -278,7 +645,7 @@ scene.add(arcGroup);
 const haloMaterial = new THREE.ShaderMaterial({
   uniforms: {
     uTime: { value: 0 },
-    uColor: { value: new THREE.Color(ARC) },
+    uColor: { value: new THREE.Color(0x23afd0) },
     uHeight: { value: 1 },
     uStrength: { value: 1 },
   },
@@ -349,7 +716,7 @@ function updateHalo() {
   halo.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
   haloMaterial.uniforms.uHeight.value = box.h;
   const change = (byPackage.get(subject.kind === "package" ? subject.id : "") || {}).change;
-  haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : ARC);
+  haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : paint.selection);
   halo.visible = true;
 }
 const selectArcs = new THREE.Group();
@@ -359,6 +726,12 @@ scene.add(focusGroup);
 
 let solidMesh = null;
 let solidMat = null;
+let planeMesh = null;
+let groundMesh = null;
+let horizonMesh = null;
+let hemiLight = null;
+let keyLight = null;
+let rimLight = null;
 let tween = null;
 const ring = new THREE.LineLoop(
   circlePositions(72),
@@ -368,14 +741,18 @@ ring.visible = false;
 scene.add(ring);
 
 function boot() {
-  const hemi = new THREE.HemisphereLight(0xf4f4f5, 0x27272a, 0.55);
+  const light = theme.light;
+  const hemi = new THREE.HemisphereLight(light.hemiSky, light.hemiGround, light.hemiIntensity);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfafafa, 0.8);
+  const key = new THREE.DirectionalLight(light.key, light.keyIntensity);
   key.position.set(70, 150, 90);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0xd4d4d8, 0.18);
+  const rim = new THREE.DirectionalLight(light.rim, light.rimIntensity);
   rim.position.set(-90, 50, -20);
   scene.add(rim);
+  hemiLight = hemi;
+  keyLight = key;
+  rimLight = rim;
 }
 
 function tintEmissive(material) {
@@ -388,6 +765,12 @@ function tintEmissive(material) {
 }
 
 async function main() {
+  const loaded = await readTheme();
+  if (!loaded) {
+    hud.note.textContent = skinWarning;
+    return;
+  }
+  useTheme(loaded);
   boot();
   let response;
   try {
@@ -691,32 +1074,50 @@ function applyFitLimits(pose) {
 
 function buildCity() {
   const span = citySpan();
-  scene.fog.density = 0.07 / span;
+  scene.fog.color.set(theme.fog.color);
+  scene.fog.density = theme.fog.falloff / span;
   const groundRadius = span * 0.95;
-  const ground = new THREE.Mesh(
+  const planeSize = Math.max(groundRadius * 8, 80);
+  const planeSeg = theme.plane.vertexSource ? (theme.plane.segments || 64) : 1;
+  planeMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(planeSize, planeSize, planeSeg, planeSeg),
+    rememberShade(dress(new THREE.MeshLambertMaterial({ color: theme.plane.color }), theme.plane, theme), theme.plane),
+  );
+  planeMesh.rotation.x = -Math.PI / 2;
+  planeMesh.position.y = -0.12;
+  planeMesh.userData = { kind: "plane" };
+  city.add(planeMesh);
+  groundMesh = new THREE.Mesh(
     new THREE.CircleGeometry(groundRadius, 72),
-    new THREE.MeshLambertMaterial({ color: 0x18181b }),
+    rememberShade(dress(new THREE.MeshLambertMaterial({ color: theme.ground.color }), theme.ground, theme), theme.ground),
   );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.04;
-  city.add(ground);
-  const horizon = new THREE.Mesh(
+  groundMesh.rotation.x = -Math.PI / 2;
+  groundMesh.position.y = -0.04;
+  groundMesh.userData = { kind: "ground" };
+  city.add(groundMesh);
+  horizonMesh = new THREE.Mesh(
     new THREE.RingGeometry(groundRadius * 0.92, groundRadius * 0.935, 80),
-    new THREE.MeshBasicMaterial({ color: 0x3f3f46, side: THREE.DoubleSide, transparent: true, opacity: 0.7 }),
+    rememberShade(dress(new THREE.MeshBasicMaterial({
+      color: theme.horizon.color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: theme.horizon.opacity,
+    }), theme.horizon, theme), theme.horizon),
   );
-  horizon.rotation.x = -Math.PI / 2;
-  horizon.position.y = 0.01;
-  city.add(horizon);
+  horizonMesh.rotation.x = -Math.PI / 2;
+  horizonMesh.position.y = 0.01;
+  city.add(horizonMesh);
 
   for (const box of laid.packages) {
     const pkg = byPackage.get(box.id);
     const geom = new THREE.BoxGeometry(box.w, box.h, box.d);
     const material = new THREE.MeshLambertMaterial({
       color: plinthColor(box.depth, box.synthetic),
-      emissive: new THREE.Color(0xffffff),
-      emissiveIntensity: 0.2,
+      emissive: new THREE.Color(theme.package.emissive),
+      emissiveIntensity: theme.package.emissiveIntensity,
     });
     tintEmissive(material);
+    rememberShade(dress(material, theme.package, theme), theme.package);
     const mesh = new THREE.Mesh(geom, material);
     mesh.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
     mesh.userData = { kind: "package", id: box.id };
@@ -729,8 +1130,15 @@ function buildCity() {
   for (const box of laid.externals) {
     const mesh = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.9, 0),
-      new THREE.MeshStandardMaterial({ color: 0x3f3f46, metalness: 0.35, roughness: 0.6, emissive: 0x000000, emissiveIntensity: 0.2 }),
+      new THREE.MeshStandardMaterial({
+        color: theme.external.color,
+        metalness: theme.external.metalness,
+        roughness: theme.external.roughness,
+        emissive: theme.external.emissive,
+        emissiveIntensity: theme.external.emissiveIntensity,
+      }),
     );
+    rememberShade(dress(mesh.material, theme.external, theme), theme.external);
     mesh.position.set(box.x, box.y + 1.2, box.z);
     mesh.userData = { kind: "external", id: box.id };
     city.add(mesh);
@@ -756,13 +1164,17 @@ function buildCity() {
   }
 
   const geo = coloredBox();
+  if (theme.entity.vertexSource && theme.entity.vertexSource.includes("aHouse")) {
+    geo.setAttribute("aHouse", houseAttribute(solids));
+  }
   solidMat = new THREE.MeshLambertMaterial({
-    color: 0xffffff,
-    emissive: 0xffffff,
-    emissiveIntensity: 0.28,
+    color: theme.entity.color,
+    emissive: theme.entity.emissive,
+    emissiveIntensity: theme.entity.emissiveIntensity,
     vertexColors: true,
   });
   tintEmissive(solidMat);
+  rememberShade(dress(solidMat, theme.entity, theme), theme.entity);
   solidMesh = makeInstances(geo, solidMat, solids);
   if (solidMesh) city.add(solidMesh);
 }
@@ -775,6 +1187,22 @@ function coloredBox() {
   colors.fill(1);
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   return geo;
+}
+
+function houseAttribute(slots) {
+  const data = new Float32Array(slots.length * 2);
+  for (let i = 0; i < slots.length; i++) {
+    const kind = slots[i].kind;
+    data[i * 2] = kind === "type" ? 0 : kind === "method" ? 2 : 1;
+    data[i * 2 + 1] = varyUnit(slots[i].id);
+  }
+  return new THREE.InstancedBufferAttribute(data, 2);
+}
+
+function varyUnit(id) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 33 + id.charCodeAt(i)) >>> 0;
+  return (hash % 1000) / 999;
 }
 
 function makeInstances(geo, material, slots) {
@@ -823,6 +1251,29 @@ function writeSlot(mesh, index, slot, open) {
   return true;
 }
 
+function drawSign(canvas, text, textColor, background) {
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (background && background !== "transparent") {
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.font = "600 48px ui-monospace, monospace";
+  ctx.fillStyle = textColor;
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 14, 36);
+}
+
+function redrawPlates(textColor, background) {
+  for (const plinth of plinths) {
+    const plate = plinth.plate;
+    const tex = plate && plate.userData.sign;
+    if (!tex) continue;
+    drawSign(tex.image, plate.userData.signText, textColor, background);
+    tex.needsUpdate = true;
+  }
+}
+
 function signTexture(label) {
   const font = "600 48px ui-monospace, monospace";
   const probe = document.createElement("canvas").getContext("2d");
@@ -832,17 +1283,12 @@ function signTexture(label) {
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(64, textW + 28);
   canvas.height = 72;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#09090b";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.font = font;
-  ctx.fillStyle = "#fafafa";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 14, 36);
+  const background = theme.label.background;
+  drawSign(canvas, text, theme.label.text, background);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  return { tex, aspect: canvas.width / canvas.height };
+  return { tex, aspect: canvas.width / canvas.height, text };
 }
 
 function setPlateOpacity(plate, opacity) {
@@ -862,7 +1308,7 @@ function setPlateOpacity(plate, opacity) {
 // 0 → +z, π → −z, +π/2 → +x, −π/2 → −x.
 function namePlate(box) {
   if (Math.max(box.w, box.d) < 5 || Math.min(box.w, box.d) < 2.2) return null;
-  const { tex, aspect } = signTexture(box.name || box.id);
+  const { tex, aspect, text } = signTexture(box.name || box.id);
   const limit = Math.min(box.w, box.d) * 0.86;
   let height = Math.min(1.35, Math.max(0.42, limit * 0.2));
   let width = height * aspect;
@@ -873,6 +1319,8 @@ function namePlate(box) {
   const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
   const geo = new THREE.PlaneGeometry(width, height);
   const group = new THREE.Group();
+  group.userData.sign = tex;
+  group.userData.signText = text;
   const y = box.h / 2 - height / 2 - 0.06;
   const gap = 0.045;
   const faces = [
@@ -891,8 +1339,8 @@ function namePlate(box) {
 }
 
 function plinthColor(depth, synthetic) {
-  if (synthetic) return new THREE.Color(0x18181b);
-  const steps = [0x27272a, 0x3f3f46, 0x52525b, 0x71717a];
+  if (synthetic) return new THREE.Color(theme.package.synthetic);
+  const steps = theme.package.steps;
   return new THREE.Color(steps[Math.min(Math.max(depth, 0), steps.length - 1)]);
 }
 
@@ -900,7 +1348,7 @@ function entityColor(entity) {
   if (mode === "overlay" && entity.change && entity.change !== "same") {
     return changeColor(entity.change);
   }
-  const base = entity.kind === "type" ? TYPE_COLOR : entity.kind === "method" ? METHOD_COLOR : FUNC_COLOR;
+  const base = entity.kind === "type" ? paint.type : entity.kind === "method" ? paint.method : paint.function;
   return vary(entity.id, base);
 }
 
@@ -1442,10 +1890,75 @@ window.citydiffCheck = () => {
 function addArc(group, from, to, color, lift, data, fromId, toId) {
   const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null);
   if (!mesh) return;
+  const tint = { kind: data.kind, change: data.change, std: !!data.std };
   mesh.userData = data;
+  mesh.userData.tint = tint;
   group.add(mesh);
   const flow = makeFlow(from, to, color, lift);
-  if (flow) group.add(flow);
+  if (flow) {
+    flow.userData.tint = tint;
+    group.add(flow);
+  }
+}
+
+function paintLinks(group) {
+  if (!group) return;
+  for (const child of group.children) {
+    const tint = child.userData && child.userData.tint;
+    if (!tint) continue;
+    const color = tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
+    if (child.material && child.material.color) child.material.color.copy(color);
+    const attr = child.geometry && child.geometry.getAttribute && child.geometry.getAttribute("aColor");
+    if (!attr) continue;
+    for (let i = 0; i < attr.count; i++) attr.setXYZ(i, color.r, color.g, color.b);
+    attr.needsUpdate = true;
+  }
+}
+
+function paintPlinths() {
+  const overlay = mode === "overlay";
+  for (const plinth of plinths) {
+    const change = (byPackage.get(plinth.id) || {}).change || "same";
+    const role = packageRole(plinth.id);
+    const marked = overlay && change !== "same";
+    if (!plinth.material) continue;
+    if (plinth.external) {
+      if (marked) plinth.material.color.copy(changeColor(change));
+      else if (role === "dep") plinth.material.color.copy(paint.call);
+      else plinth.material.color.set(theme.external.color);
+      if (role === "dep" || marked) plinth.material.emissive.copy(plinth.material.color);
+      else plinth.material.emissive.set(theme.external.emissive);
+      plinth.material.emissiveIntensity = role === "dep" ? theme.external.depEmissive : theme.external.emissiveIntensity;
+      plinth.material.metalness = theme.external.metalness;
+      plinth.material.roughness = theme.external.roughness;
+      if (role === "dim") {
+        plinth.material.color.multiplyScalar(theme.dim.external);
+        plinth.material.emissive.multiplyScalar(theme.dim.external);
+      }
+      continue;
+    }
+    if (role === "dep" && !marked) plinth.material.color.copy(paint.call);
+    else plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
+    plinth.material.emissive.set(theme.package.emissive);
+    plinth.material.emissiveIntensity = role === "dep" ? theme.package.depEmissive : (marked ? theme.package.markedEmissive : theme.package.emissiveIntensity);
+    if (plinth.plate) plinth.plate.visible = change !== "removed" || overlay;
+    if (role === "dim") {
+      plinth.material.color.multiplyScalar(theme.dim.package);
+      plinth.material.emissiveIntensity = theme.dim.emissive;
+      setPlateOpacity(plinth.plate, theme.dim.plate);
+    } else {
+      setPlateOpacity(plinth.plate, 1);
+    }
+  }
+  recolor(solidMesh);
+  if (solidMat) {
+    solidMat.color.set(theme.entity.color);
+    solidMat.emissive.set(theme.entity.emissive);
+    solidMat.emissiveIntensity = theme.entity.emissiveIntensity;
+  }
+  paintLinks(arcGroup);
+  paintLinks(selectArcs);
+  paintLinks(focusGroup);
 }
 
 function applyMode() {
@@ -1458,40 +1971,14 @@ function applyMode() {
     const removed = change === "removed";
     const show = plinth.external || !removed || overlay;
     plinth.mesh.visible = show;
-    const role = packageRole(plinth.id);
-    const marked = overlay && change !== "same";
-    if (plinth.external) {
-      if (marked) plinth.material.color.copy(changeColor(change));
-      else if (role === "dep") plinth.material.color.copy(ARC);
-      else plinth.material.color.set(0x3f3f46);
-      if (role === "dep" || marked) plinth.material.emissive.copy(plinth.material.color);
-      else plinth.material.emissive.set(0x000000);
-      plinth.material.emissiveIntensity = role === "dep" ? 0.7 : 0.2;
-      if (role === "dim") {
-        plinth.material.color.multiplyScalar(0.22);
-        plinth.material.emissive.multiplyScalar(0.22);
-      }
-      continue;
-    }
-    if (!plinth.material) continue;
-    if (role === "dep" && !marked) plinth.material.color.copy(ARC);
-    else plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
-    plinth.material.emissive.set(0xffffff);
-    plinth.material.emissiveIntensity = role === "dep" ? 0.62 : (marked ? 0.22 : 0.06);
-    plinth.material.transparent = false;
-    plinth.material.opacity = 1;
-    plinth.material.depthWrite = true;
-    plinth.material.wireframe = false;
     if (plinth.plate) plinth.plate.visible = !removed || overlay;
-    if (role === "dim") {
-      plinth.material.color.multiplyScalar(0.2);
-      plinth.material.emissiveIntensity = 0.02;
-      setPlateOpacity(plinth.plate, 0.35);
-    } else {
-      setPlateOpacity(plinth.plate, 1);
+    if (!plinth.external && plinth.material) {
+      plinth.material.transparent = false;
+      plinth.material.opacity = 1;
+      plinth.material.depthWrite = true;
+      plinth.material.wireframe = false;
     }
   }
-  recolor(solidMesh);
   if (solidMat) {
     solidMat.transparent = false;
     solidMat.opacity = 1;
@@ -1521,6 +2008,7 @@ function applyMode() {
       linkFrame = [];
     }
   }
+  paintPlinths();
   updateHUD();
   viewDirty = true;
   requestFrame();
@@ -1764,7 +2252,7 @@ function drawCallLinks(group, links) {
     const far = link.far || link.target;
     const std = !!(far.pkg && isStdPackage(far.pkg.id));
     const color = linkColor(link.change, std);
-    const data = { kind: "call", entityId: far.entity.id, step: link.step, label: entityLabel(far.entity) };
+    const data = { kind: "call", entityId: far.entity.id, step: link.step, label: entityLabel(far.entity), change: link.change, std };
     const lift = callLift(from, to);
     addArc(group, from, to, color, lift, data);
     frame.push(...entityExtent(link.from), ...entityExtent(link.target));
@@ -1775,11 +2263,11 @@ function drawCallLinks(group, links) {
 }
 
 function changeColor(change) {
-  if (change === "added") return ADD;
-  if (change === "removed") return REMOVE;
-  if (change === "modified") return MODIFY;
-  if (change === "moved") return MOVED;
-  return STONE;
+  if (change === "added") return paint.added;
+  if (change === "removed") return paint.removed;
+  if (change === "modified") return paint.modified;
+  if (change === "moved") return paint.moved;
+  return paint.same;
 }
 
 function recolor(mesh) {
@@ -1787,7 +2275,7 @@ function recolor(mesh) {
   const color = new THREE.Color();
   mesh.userData.slots.forEach((slot, index) => {
     color.copy(entityColor(slot.entity));
-    if (!entityIsLit(slot.id, slot.pkgId)) color.multiplyScalar(0.04);
+    if (!entityIsLit(slot.id, slot.pkgId)) color.multiplyScalar(theme.dim.entity);
     mesh.setColorAt(index, color);
   });
   mesh.instanceColor.needsUpdate = true;
@@ -1908,8 +2396,8 @@ function placeRing(id) {
 
 function linkColor(change, std) {
   if (mode === "overlay" && change && change !== "same") return changeColor(change);
-  if (std) return STD_LINE;
-  return ARC;
+  if (std) return paint.std;
+  return paint.call;
 }
 
 function drawSelectionArcs(id, inbound) {
@@ -2033,10 +2521,12 @@ function addBodyBars(entity, overlay) {
   if (!ghost) return;
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(ghost.w, ghost.h, ghost.d),
-    new THREE.MeshBasicMaterial({ color: REMOVE, transparent: true, opacity: 0.28, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: paint.removed, transparent: true, opacity: 0.28, depthWrite: false }),
   );
   mesh.position.set(ghost.x + ghost.w / 2, ghost.y + ghost.h / 2, ghost.z + ghost.d / 2);
   mesh.userData.oldBody = true;
+  // A skin change repaints the ghost from the same tint the arcs use.
+  mesh.userData.tint = { kind: "bar", change: "removed" };
   focusGroup.add(mesh);
 }
 
@@ -2234,6 +2724,7 @@ function updateHUD() {
     const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
     note = note ? note + "  ·  " + at : at;
   }
+  if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   hud.note.textContent = note;
   renderCrumb();
   renderDetail();
@@ -2914,7 +3405,10 @@ function animate(now) {
   // decoration is paced lower than one the user is driving.
   const motion = tweening || viewDirty || (flying && !idleSpin);
   const flowing = tickFlows(dt);
+  const fading = tickThemeFade(t);
   if (halo.visible) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  const live = theme && theme.live;
+  if (live) theme.uTime.value += dt > 0 ? dt : 0;
   let hovered = false;
   if (idleSpin) {
     hovered = pointerDirty;
@@ -2925,11 +3419,11 @@ function animate(now) {
     hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (moved || flowing || viewDirty || hovered || halo.visible) {
+  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading)) {
     renderer.render(scene, camera);
     viewDirty = false;
   }
-  if (motion || idleSpin || flowing || halo.visible || introSpin) {
+  if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading) {
     requestFrame();
   } else {
     parkLoop();
@@ -3021,6 +3515,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
 
 function closeSearch() {
   searchHits = [];
+  commandHits = [];
   searchCursor = 0;
   hud.results.hidden = true;
   hud.results.replaceChildren();
@@ -3082,10 +3577,67 @@ function placeResults() {
   list.style.width = box.width + "px";
 }
 
+// The box finds nodes. A value that starts with a slash is a command: the
+// list shows what the viewer can do, and Enter runs the highlighted one.
 function onSearch() {
-  searchHits = rankMatches(catalog, hud.search.value, 12);
   searchCursor = 0;
+  if (hud.search.value.startsWith("/")) {
+    searchHits = [];
+    commandHits = matchCommands(hud.search.value);
+    renderCommands();
+    return;
+  }
+  commandHits = [];
+  searchHits = rankMatches(catalog, hud.search.value, 12);
   renderSearch();
+}
+
+const COMMANDS = [
+  { name: "/skin", does: "choose a theme", run: () => openSkinPanel() },
+];
+
+function matchCommands(value) {
+  const q = value.trim().toLowerCase();
+  if (q === "/") return COMMANDS;
+  return COMMANDS.filter((cmd) => cmd.name.startsWith(q));
+}
+
+function renderCommands() {
+  stopMarches();
+  hud.results.replaceChildren();
+  if (!commandHits.length) {
+    hud.results.hidden = true;
+    return;
+  }
+  hud.results.hidden = false;
+  placeResults();
+  commandHits.forEach((cmd, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    if (index === searchCursor) button.className = "on";
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    kind.textContent = "cmd";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = cmd.name;
+    const where = document.createElement("span");
+    where.className = "where";
+    where.textContent = cmd.does;
+    button.append(kind, name, where);
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => runCommand(cmd));
+    hud.results.append(button);
+  });
+  revealSearchCursor();
+}
+
+function runCommand(cmd) {
+  if (!cmd) return;
+  hud.search.value = "";
+  closeSearch();
+  hud.search.blur();
+  cmd.run();
 }
 
 function goToResult(item) {
@@ -3155,23 +3707,45 @@ window.addEventListener("keydown", (event) => {
     setLegend(false);
     return;
   }
+  if (!typing && event.key === "Escape" && !skinSide.hidden) {
+    event.preventDefault();
+    closeSkinPanel();
+    return;
+  }
+  // The theme panel takes the arrows while it is open: a theme is walked
+  // through and previewed without the mouse. Closed, the arrows fly again.
+  if (!typing && !skinSide.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
+    moveSkinCursor(event.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
   const flyKey = flyToken(event.key);
   if (!typing && hud.legend.hidden && flyKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
     held.add(flyKey);
     event.preventDefault();
   }
   if (typing) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    // Arrows, Tab and Shift-Tab walk the completions. Tab only takes the key
+    // when there is something to complete; with an empty list it moves focus
+    // the way it always does.
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
+      const list = commandHits.length ? commandHits : searchHits;
+      if (!list.length) {
+        if (event.key === "Tab") return;
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
-      if (!searchHits.length) return;
-      const step = event.key === "ArrowDown" ? 1 : -1;
-      searchCursor = (searchCursor + step + searchHits.length) % searchHits.length;
-      renderSearch();
+      const back = event.key === "ArrowUp" || event.shiftKey;
+      searchCursor = (searchCursor + (back ? -1 : 1) + list.length) % list.length;
+      if (commandHits.length) renderCommands();
+      else renderSearch();
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (searchHits[searchCursor]) goToResult(searchHits[searchCursor]);
+      if (commandHits.length) runCommand(commandHits[searchCursor]);
+      else if (searchHits[searchCursor]) goToResult(searchHits[searchCursor]);
       return;
     }
     if (event.key === "Escape") {
@@ -3254,6 +3828,169 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 }
 
 window.addEventListener("resize", resizeView);
+
+// Themes: what the /skin command opens. The panel previews on click and
+// remembers only on Save, so what the browser opens with next time is what
+// was saved, and closing without saving drops the preview.
+
+const SKIN_KEY = "citydiff.skin";
+
+function storedSkin() {
+  try {
+    return localStorage.getItem(SKIN_KEY) || "dark";
+  } catch {
+    return "dark"; // storage can be off; the viewer still works
+  }
+}
+
+function storeSkin(id) {
+  try {
+    if (!id || id === "dark") localStorage.removeItem(SKIN_KEY);
+    else localStorage.setItem(SKIN_KEY, id);
+  } catch { /* the preview still holds for this session */ }
+}
+
+const skinSide = document.querySelector("#skin-side");
+const skinList = document.querySelector("#skin-list");
+const skinNote = document.querySelector("#skin-note");
+const skinSave = document.querySelector("#skin-save");
+let skinChoices = null;
+let skinPreview = null;
+let skinGen = 0;
+let skinError = "";
+
+async function loadSkinChoices() {
+  if (skinChoices) return skinChoices;
+  skinChoices = [];
+  try {
+    const res = await fetch("/skins.json");
+    if (res.ok) {
+      const catalog = await res.json();
+      skinChoices = (catalog.skins || []).map((skin) => skin.id).filter(Boolean);
+    }
+  } catch { /* the panel shows nothing to choose */ }
+  return skinChoices;
+}
+
+function markSkin() {
+  const saved = storedSkin();
+  const current = skinPreview || saved;
+  for (const button of skinList.querySelectorAll("button")) {
+    button.classList.toggle("on", button.dataset.skin === current);
+  }
+  skinSave.disabled = !skinPreview || skinPreview === saved;
+  if (skinError) skinNote.textContent = skinError;
+  else if (skinPreview && skinPreview !== saved) skinNote.textContent = "Previewing " + skinPreview + ". Save keeps it.";
+  else skinNote.textContent = "Click a theme to preview it. Save keeps it.";
+}
+
+function renderSkinList() {
+  skinList.replaceChildren();
+  const saved = storedSkin();
+  for (const id of skinChoices) {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.skin = id;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = id;
+    button.append(name);
+    if (id === saved) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "saved";
+      button.append(tag);
+    }
+    button.addEventListener("click", () => previewSkin(id));
+    li.append(button);
+    skinList.append(li);
+  }
+  markSkin();
+}
+
+// A theme change never reloads: the city keeps its camera, selection, focus,
+// mode and tour, and the colours cross over in the fade.
+async function showTheme(id) {
+  const skin = await loadSkin(id);
+  await loadShade(skin);
+  fadeToTheme(skin);
+}
+
+async function previewSkin(id) {
+  const gen = ++skinGen;
+  skinError = "";
+  try {
+    const skin = await loadSkin(id);
+    await loadShade(skin);
+    if (gen !== skinGen) return;
+    skinPreview = id;
+    fadeToTheme(skin);
+  } catch (err) {
+    if (gen !== skinGen) return;
+    skinError = "Could not read theme " + id + ". " + err.message;
+  }
+  markSkin();
+}
+
+function saveSkin() {
+  if (!skinPreview) return;
+  const id = skinPreview;
+  storeSkin(id);
+  skinPreview = null;
+  markSkin();
+  closeSkinPanel(); // saved: there is nothing to put back
+  skinWarning = "Theme " + id + " saved.";
+  updateHUD();
+}
+
+// The arrows walk the themes from wherever the preview is, which starts at
+// the saved one, and each step previews what it lands on.
+function moveSkinCursor(step) {
+  if (!skinChoices.length) return;
+  const at = skinChoices.indexOf(skinPreview || storedSkin());
+  const next = ((at < 0 ? 0 : at + step) + skinChoices.length) % skinChoices.length;
+  previewSkin(skinChoices[next]);
+  scrollSkinChoice(next);
+}
+
+function scrollSkinChoice(index) {
+  const button = skinList.querySelectorAll("button")[index];
+  if (button) button.scrollIntoView({ block: "nearest" });
+}
+
+async function openSkinPanel() {
+  closeSearch();
+  hud.search.blur();
+  skinError = "";
+  await loadSkinChoices();
+  renderSkinList();
+  skinSide.hidden = false;
+  // The panel is the thing the keyboard is talking to now: the arrows walk
+  // the themes, and Tab reaches Save.
+  skinSide.focus({ preventScroll: true });
+  scrollSkinChoice(skinChoices.indexOf(storedSkin()));
+  requestAnimationFrame(resizeView);
+}
+
+async function closeSkinPanel() {
+  if (skinSide.hidden) return;
+  const preview = skinPreview;
+  skinPreview = null;
+  skinSide.hidden = true;
+  requestAnimationFrame(resizeView);
+  if (!preview || preview === storedSkin()) return;
+  // Closing without saving drops the preview and puts the saved theme back.
+  const gen = ++skinGen;
+  try {
+    const skin = await loadSkin(storedSkin());
+    await loadShade(skin);
+    if (gen === skinGen) fadeToTheme(skin);
+  } catch { /* the saved theme is gone; keep what is on screen */ }
+}
+
+document.querySelector("#skin-close").addEventListener("click", closeSkinPanel);
+skinSave.addEventListener("click", saveSkin);
 
 main();
 

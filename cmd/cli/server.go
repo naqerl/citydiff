@@ -144,6 +144,7 @@ func (v *viewer) handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, view)
 	})
+	mountSkins(mux, skinsDir())
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	return mux
 }
