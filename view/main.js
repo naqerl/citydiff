@@ -3593,6 +3593,29 @@ function entityDetail(entity) {
   return wrap;
 }
 
+// One line of the calls or callers list in the head. A line whose node is in
+// the snapshot is a button that opens it, exactly as clicking the node does;
+// one that is not stays the plain text it always was. The change colour stays
+// on the <li>, so the mark and the tint are the same either way.
+function callItem(label, change, open) {
+  const li = document.createElement("li");
+  li.className = mode === "overlay" ? change : "";
+  const clip = clipText(label);
+  if (!open) {
+    li.append(clip);
+    attachMarquee(li, clip);
+    return li;
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "call-row";
+  button.append(clip);
+  attachMarquee(button, clip);
+  button.addEventListener("click", open);
+  li.append(button);
+  return li;
+}
+
 function focusDetail(entity) {
   const wrap = document.createElement("div");
   const title = document.createElement("h2");
@@ -3633,13 +3656,10 @@ function focusDetail(entity) {
     wrap.append(empty);
   }
   for (const step of show) {
-    const li = document.createElement("li");
-    li.className = mode === "overlay" ? step.change : "";
     const mark = step.change === "added" ? "+ " : step.change === "removed" ? "− " : "";
-    const line = clipText((mode === "overlay" ? mark : "") + (step.expr || step.name || "call"));
-    li.append(line);
-    attachMarquee(li, line);
-    list.append(li);
+    const line = (mode === "overlay" ? mark : "") + (step.expr || step.name || "call");
+    const target = declaredTarget(step);
+    list.append(callItem(line, step.change, target ? () => openEntity(target.entity.id) : null));
   }
   if (mode !== "overlay" && steps.length > 40) {
     const more = document.createElement("p");
@@ -3680,13 +3700,10 @@ function callerDetail(entity) {
   }
   const list = document.createElement("ul");
   for (const link of show) {
-    const li = document.createElement("li");
-    li.className = mode === "overlay" ? link.change : "";
     const mark = link.change === "added" ? "+ " : link.change === "removed" ? "− " : "";
-    const line = clipText((mode === "overlay" ? mark : "") + entityLabel(link.target.entity));
-    li.append(line);
-    attachMarquee(li, line);
-    list.append(li);
+    const line = (mode === "overlay" ? mark : "") + entityLabel(link.target.entity);
+    const target = link.target;
+    list.append(callItem(line, link.change, target && target.box ? () => openEntity(target.entity.id) : null));
   }
   wrap.append(list);
   if (mode !== "overlay" && links.length > 40) {
@@ -4449,6 +4466,10 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "1") { mode = "overview"; applyMode(); }
   if (event.key === "2") { mode = "overlay"; applyMode(); }
   if (event.key === "Escape") goBack();
+  // A focused button owns Enter. The browser is about to activate it, and
+  // re-rendering the panel from here would detach it first, so the click would
+  // never land. The list rows are buttons, and so are the sidebar's own.
+  if (event.key === "Enter" && event.target?.closest?.("button")) return;
   if (event.key === "Enter" && selected && selected.kind === "entity") {
     const found = byEntity.get(selected.id);
     if (found && (found.entity.kind === "function" || found.entity.kind === "method")) enterFocus(found);
