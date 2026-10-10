@@ -332,6 +332,10 @@
     .modified.both { color: var(--both-text); }
     .moved { color: var(--moved-text); }
     .tally span { margin-left: 8px; white-space: nowrap; }
+    /* A low level code change: the modified colour, muted, so the sentence
+       and the badge read as the same quiet change the city draws. */
+    .low-level { color: var(--modified-text); opacity: 0.7; }
+    #detail button.row .mark.stats .low { color: var(--modified-text); opacity: 0.7; }
     #tag {
       position: fixed;
       transform: translate(-50%, -140%);
@@ -876,7 +880,7 @@
       </button>
       <button class="ex" type="button">
         <div class="fig"><i class="mod body"></i><i class="mod"></i><i class="mod both"></i></div>
-        <div><b class="modified">Changed</b><p>Yellow is a package or a declaration that changed. On a function or a method, a darker yellow is a body change, this yellow is a signature change, and a brighter yellow is both. Its size stays the size of the body.</p></div>
+        <div><b class="modified">Changed</b><p>Yellow is a package or a declaration that changed. On a function or a method, a darker yellow is a body change, this yellow is a signature change, and a brighter yellow is both. Its size stays the size of the body. A package whose file changed but whose declarations did not is a muted yellow: a low level code change.</p></div>
       </button>
       <button class="ex" type="button">
         <div class="fig">

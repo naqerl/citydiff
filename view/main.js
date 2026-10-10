@@ -463,6 +463,9 @@ let entered = null;
 let focus = null;
 let cityPose = null;
 let pointerDown = null;
+// What took part in the diff, worked out once per scene for the Changes
+// view's fading. Null until a scene has been indexed.
+let overlayTint = null;
 
 const byEntity = new Map();
 const byPackage = new Map();
@@ -1202,6 +1205,7 @@ function syncURL() {
 }
 
 function indexScene() {
+  overlayTint = null;
   catalog.length = 0;
   for (const pkg of sceneDoc.packages || []) {
     byPackage.set(pkg.id, pkg);
@@ -2214,7 +2218,8 @@ function paintLinks(group) {
 function paintPlinths() {
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
-    const change = (byPackage.get(plinth.id) || {}).change || "same";
+    const pkgObj = byPackage.get(plinth.id);
+    const change = (pkgObj || {}).change || "same";
     const role = packageRole(plinth.id);
     const marked = overlay && change !== "same";
     if (!plinth.material) continue;
@@ -2233,10 +2238,14 @@ function paintPlinths() {
       }
       continue;
     }
+    // A package whose file changed but whose declarations did not is a quiet
+    // change: it keeps the modified hue, muted, instead of the bright one.
+    const low = isLowLevel(pkgObj);
     if (role === "dep" && !marked) plinth.material.color.copy(paint.call);
+    else if (marked && low) plinth.material.color.copy(lowLevelColor());
     else plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
     plinth.material.emissive.set(theme.package.emissive);
-    plinth.material.emissiveIntensity = role === "dep" ? theme.package.depEmissive : (marked ? theme.package.markedEmissive : theme.package.emissiveIntensity);
+    plinth.material.emissiveIntensity = role === "dep" ? theme.package.depEmissive : (marked && !low ? theme.package.markedEmissive : theme.package.emissiveIntensity);
     if (plinth.plate) plinth.plate.visible = change !== "removed" || overlay;
     if (role === "dim") {
       plinth.material.color.multiplyScalar(theme.dim.package);
@@ -2316,10 +2325,84 @@ function applyMode() {
   requestFrame();
 }
 
+// The Changes view fades what took no part in the diff. Overview draws one
+// snapshot, so nothing fades there, and a range without a diff has no change
+// to keep and fades nothing either.
+function overlayFade() {
+  return mode === "overlay" && !!(sceneDoc && sceneDoc.diff);
+}
+
+// What took part in the diff. A package or a declaration is involved when it
+// changed, when a changed call touches it, or when a changed import ties it to
+// another package. A package also carries its descendants: the path down to a
+// change stays on screen. Worked out once per scene, because the diff does not
+// move.
+function overlayInvolvement() {
+  if (overlayTint) return overlayTint;
+  const packages = new Set();
+  const entities = new Set();
+  for (const pkg of sceneDoc.packages || []) {
+    if (pkg.change && pkg.change !== "same") packages.add(pkg.id);
+  }
+  for (const found of byEntity.values()) {
+    if (found.entity.change && found.entity.change !== "same") {
+      entities.add(found.entity.id);
+      if (found.pkg) packages.add(found.pkg.id);
+    }
+  }
+  // Both ends of a changed call are part of the change, even the end that did
+  // not change itself: the call is what moved.
+  for (const link of changedCallLinks()) {
+    entities.add(link.from.entity.id);
+    entities.add(link.target.entity.id);
+    if (link.from.pkg) packages.add(link.from.pkg.id);
+    if (link.target.pkg) packages.add(link.target.pkg.id);
+  }
+  // An added or removed import is a change of its own, with no declaration
+  // behind it.
+  for (const pkg of sceneDoc.packages || []) {
+    if (pkg.external) continue;
+    for (const dep of pkg.deps || []) {
+      if (dep.change !== "added" && dep.change !== "removed") continue;
+      packages.add(pkg.id);
+      if (byPackage.has(dep.to)) packages.add(dep.to);
+    }
+  }
+  for (const id of [...packages]) {
+    let parent = (byPackage.get(id) || {}).parent;
+    while (parent && !packages.has(parent)) {
+      packages.add(parent);
+      parent = (byPackage.get(parent) || {}).parent;
+    }
+  }
+  overlayTint = { packages, entities };
+  return overlayTint;
+}
+
+// The file changed under the package but no declaration in it did: imports,
+// re-exports, comments, formatting. A real change, and a quiet one.
+function isLowLevel(pkg) {
+  if (!pkg || !overlayFade() || pkg.change !== "modified") return false;
+  return !declaredEntities(pkg).some((entity) => entity.change && entity.change !== "same");
+}
+
+// The muted yellow a low level change is drawn in: the modified hue,
+// desaturated and darker, so it is plainly the same family and plainly quieter.
+function lowLevelColor() {
+  const color = changeColor("modified").clone();
+  const hsl = { h: 0, s: 0, l: 0 };
+  color.getHSL(hsl);
+  color.setHSL(hsl.h, hsl.s * 0.5, hsl.l * 0.55);
+  return color;
+}
+
 // "dep" is a module on the other end of a module arc. It stays bright and
 // takes the arc color. "dim" is everyone else while a selection is up.
 function packageRole(id) {
-  if (!lit) return "idle";
+  if (!lit) {
+    if (!overlayFade()) return "idle";
+    return overlayInvolvement().packages.has(id) ? "idle" : "dim";
+  }
   if (lit.packages && lit.packages.has(id)) {
     if (arcSubject && arcSubject.id === id) return "subject";
     return "dep";
@@ -2334,7 +2417,10 @@ function packageRole(id) {
 }
 
 function entityIsLit(id, pkgId) {
-  if (!lit) return true;
+  if (!lit) {
+    if (!overlayFade()) return true;
+    return overlayInvolvement().entities.has(id);
+  }
   if (lit.entities) return lit.entities.has(id);
   if (lit.packages && lit.packages.has(pkgId)) return true;
   if (lit.browse && pkgId === lit.browse) return true;
@@ -3203,6 +3289,15 @@ function packageDetail(pkg) {
   }
   wrap.append(meta);
   wrap.append(changeTally(declaredEntities(pkg)));
+  // The change is real but sits below the declarations: importing, re-exporting,
+  // a comment, a reformat. The city draws it muted; the panel says why.
+  if (isLowLevel(pkg)) {
+    const line = document.createElement("p");
+    line.className = "low-level";
+    line.textContent = "low level code change";
+    line.title = "The file changed but no declaration did: imports, re-exports, comments, formatting.";
+    wrap.append(line);
+  }
   const deps = pkg.deps || [];
   if (deps.length && mode === "overlay") {
     const added = deps.filter((dep) => dep.change === "added").length;
@@ -3595,15 +3690,24 @@ function packageRow(pkg, ownerId) {
   ].filter(([, , count]) => count > 0);
   // Overview shows the city, not the diff: no counts, no marks, nothing that
   // only means something next to a change.
-  if (parts.length && mode === "overlay") {
+  const low = isLowLevel(pkg);
+  if ((parts.length || low) && mode === "overlay") {
     const mark = document.createElement("span");
     mark.className = "mark stats";
-    mark.title = parts.map(([, , count, word]) => count + " " + word).join(", ");
+    const summary = parts.map(([, , count, word]) => count + " " + word).join(", ");
+    if (low) mark.title = [summary, "low level code change"].filter(Boolean).join("; ");
+    else mark.title = summary;
     for (const [kind, glyph, count] of parts) {
       const span = document.createElement("span");
       span.className = kind;
       span.textContent = glyph + count;
       mark.append(span);
+    }
+    if (low) {
+      const hint = document.createElement("span");
+      hint.className = "low";
+      hint.textContent = "low level";
+      mark.append(hint);
     }
     button.append(mark);
   }
