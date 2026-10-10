@@ -130,19 +130,25 @@
     }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
     body { font: 13px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
-    #detail, #results, .legend-card {
+    #detail, #results, .legend-card, #diff-body {
       scrollbar-width: thin;
       scrollbar-color: var(--line-strong) transparent;
     }
     #detail::-webkit-scrollbar,
     #results::-webkit-scrollbar,
-    .legend-card::-webkit-scrollbar { width: 6px; height: 0; }
+    .legend-card::-webkit-scrollbar,
+    #diff-body::-webkit-scrollbar { width: 6px; height: 0; }
+    /* The diff scrolls sideways too — a line can be longer than the panel —
+       so its bar keeps the height the sidebar's does not need. */
+    #diff-body::-webkit-scrollbar { height: 6px; }
     #detail::-webkit-scrollbar-thumb,
     #results::-webkit-scrollbar-thumb,
-    .legend-card::-webkit-scrollbar-thumb { background: var(--line-strong); }
+    .legend-card::-webkit-scrollbar-thumb,
+    #diff-body::-webkit-scrollbar-thumb { background: var(--line-strong); }
     #detail::-webkit-scrollbar-track,
     #results::-webkit-scrollbar-track,
-    .legend-card::-webkit-scrollbar-track { background: transparent; }
+    .legend-card::-webkit-scrollbar-track,
+    #diff-body::-webkit-scrollbar-track { background: transparent; }
     button, input { font: inherit; color: inherit; }
     button { cursor: pointer; }
     #app { height: 100%; background: var(--bg); }
