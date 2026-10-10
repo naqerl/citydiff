@@ -59,9 +59,15 @@ func within(root, rel string) (string, error) {
 	return full, nil
 }
 
+// errNotInWorkingTree marks a file the working tree does not have, so the
+// caller can fall back to the snapshot's own bytes. The working tree need not
+// be checked out at either side of the range the scene came from.
+var errNotInWorkingTree = errors.New("not in the working tree; it may be deleted in this range")
+
 // resolveEdit maps the page's request to what is on disk. A package names
 // its directory and, as a fallback, its first file. A file that is not in the
-// working tree, as one deleted in the range, is a clear error.
+// working tree is errNotInWorkingTree, for the caller to answer from the
+// snapshot.
 func resolveEdit(root, file, dir string, line, col int) (editTarget, error) {
 	if dir != "" {
 		full, err := within(root, dir)
@@ -78,7 +84,7 @@ func resolveEdit(root, file, dir string, line, col int) (editTarget, error) {
 	}
 	info, err := os.Stat(full)
 	if errors.Is(err, fs.ErrNotExist) {
-		return editTarget{}, fmt.Errorf("%s is not in the working tree; it may be deleted in this range", file)
+		return editTarget{}, fmt.Errorf("%s is %w", file, errNotInWorkingTree)
 	}
 	if err != nil {
 		return editTarget{}, err
@@ -87,6 +93,45 @@ func resolveEdit(root, file, dir string, line, col int) (editTarget, error) {
 		return editTarget{path: full, dir: true}, nil
 	}
 	return editTarget{path: full, line: max(line, 0), col: max(col, 0)}, nil
+}
+
+// snapshotEdit opens the snapshot's copy of a file the working tree does not
+// have. A range's sources are already in memory: the checkout does not have to
+// be at either side of the range, so E must open the bytes the city was drawn
+// from. The right side wins because that is what the city draws; the left side
+// answers for a declaration removed in the range. The copy is read-only — it is
+// a copy, and an edit must not be mistaken for an edit of the repo file — and
+// it lives only as long as the editor's socket.
+func (v *viewer) snapshotEdit(file string, line, col int) (editTarget, func(), error) {
+	v.mu.Lock()
+	snap := v.snap
+	v.mu.Unlock()
+	src, found := []byte(nil), false
+	if snap != nil {
+		if b, ok := snap.after[file]; ok {
+			src, found = b, true
+		} else if b, ok := snap.before[file]; ok {
+			src, found = b, true
+		}
+	}
+	if !found {
+		if snap != nil && snap.commitRange != "" {
+			return editTarget{}, nil, fmt.Errorf("%s is not in the working tree nor at %s", file, snap.commitRange)
+		}
+		return editTarget{}, nil, fmt.Errorf("%s is not in the working tree", file)
+	}
+	dir, err := os.MkdirTemp("", "citydiff-edit-")
+	if err != nil {
+		return editTarget{}, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	// Keep the base name so the editor still reads the syntax from the extension.
+	path := filepath.Join(dir, filepath.Base(filepath.FromSlash(file)))
+	if err := os.WriteFile(path, src, 0o444); err != nil {
+		cleanup()
+		return editTarget{}, nil, err
+	}
+	return editTarget{path: path, line: max(line, 0), col: max(col, 0)}, cleanup, nil
 }
 
 // editorArgs are the arguments after the editor command: the cursor goes to
@@ -138,6 +183,13 @@ func (v *viewer) serveEditor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target, err := resolveEdit(root, q.Get("file"), q.Get("dir"), atoi(q.Get("line")), atoi(q.Get("col")))
+	if errors.Is(err, errNotInWorkingTree) {
+		var cleanup func()
+		target, cleanup, err = v.snapshotEdit(q.Get("file"), atoi(q.Get("line")), atoi(q.Get("col")))
+		if cleanup != nil {
+			defer cleanup()
+		}
+	}
 	if err != nil {
 		fail(err)
 		return
