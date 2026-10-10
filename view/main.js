@@ -6,9 +6,10 @@ import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
-import { KEYBINDS, editAction } from "./keys.js";
+import { KEYBINDS, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
+import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
 import { applyPage, loadSkin } from "./skin.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
@@ -18,6 +19,7 @@ let themeReady = false;
 let themeFade = null;
 let skinWarning = "";
 const THEME_FADE_MS = 450;
+const THEME_REVEAL_MS = 800;
 const paint = {
   added: new THREE.Color(),
   removed: new THREE.Color(),
@@ -594,6 +596,11 @@ const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 let updatePointScale = () => {};
 
 let viewInsets = { left: 0, right: 0, free: 1, width: 1, height: 1 };
+// The theme menu frames the city in the middle 70% and takes the keys.
+let skinPicking = false;
+// Applying a preview walks the lines outward. The camera and the sidebars stay
+// put until it finishes, so the still of the new theme lines up with the old one.
+let skinRevealing = false;
 
 function coverOf(selector) {
   const el = document.querySelector(selector);
@@ -616,15 +623,19 @@ function fitTo(points, dir = FIT_DIR) {
 const FIT_DIR = [0.32, 0.48, 0.78];
 
 function resizeView() {
+  // A resize mid-circle would move the live city off the still.
+  if (skinRevealing) return;
   const w = viewEl.clientWidth;
   const h = viewEl.clientHeight;
   if (w < 2 || h < 2) return;
   camera.aspect = w / h;
   // The city is drawn between the two sidebars: the look-at point sits in
   // the middle of the free area, and fits use only its width.
-  // The theme panel and the tour sidebar share the right edge.
-  const right = Math.max(coverOf("#tour-side"), coverOf("#skin-side"));
-  viewInsets = insets(w, coverOf("#side"), right);
+  // The theme menu uses the middle 70%. Otherwise the tour takes the right edge.
+  const band = skinPicking ? w * 0.15 : 0;
+  const right = skinPicking ? band : coverOf("#tour-side");
+  const left = skinPicking ? band : coverOf("#side");
+  viewInsets = insets(w, left, right);
   viewInsets.width = w;
   viewInsets.height = h;
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
@@ -634,6 +645,7 @@ function resizeView() {
   renderer.setSize(w, h, false);
   updatePointScale();
   placeResults();
+  layoutSkinFrame();
   viewDirty = true;
   requestFrame();
 }
@@ -1103,7 +1115,7 @@ function citySpan() {
   return Math.max(b.maxX - b.minX, b.maxZ - b.minZ, 20);
 }
 
-function frameCity() {
+function frameCity(margin = 0.92) {
   const b = laid.bounds;
   const cx = (b.minX + b.maxX) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
@@ -1132,7 +1144,7 @@ function frameCity() {
     points.push({ x: ext.x, y: ext.y + ext.h, z: ext.z });
   }
   const aspect = (camera.aspect > 0.05 ? camera.aspect : 1) * (viewInsets.free / Math.max(1, viewInsets.width));
-  const dist = fitDistance(points, look, dir, camera.fov, aspect, 0.92);
+  const dist = fitDistance(points, look, dir, camera.fov, aspect, margin);
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   return {
     pos: new THREE.Vector3(look.x + (dir.x / len) * dist, look.y + (dir.y / len) * dist, look.z + (dir.z / len) * dist),
@@ -1494,6 +1506,7 @@ function changedCallLinks() {
   for (const found of byEntity.values()) {
     if (!found.box) continue;
     for (const link of entityLinks(found)) {
+      if (link.attached) continue;
       const change = link.step && link.step.change;
       if (!change || change === "same") continue;
       links.push({ from: found, target: link.target, far: link.target, change, step: link.step });
@@ -2168,10 +2181,14 @@ function packageEdges(id, inbound) {
 function entityLinks(found) {
   if (!found) return [];
   if (found.entity.kind === "type") {
+    // A type does not call its methods: they are drawn on top of it, as towers
+    // on its own base. The links are kept for the list — a method is one click
+    // away there — and marked so the city does not also draw a curve to a
+    // tower the eye can already see standing on the type.
     const links = [];
     for (const other of byEntity.values()) {
       if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
-      links.push({ target: other, change: other.entity.change || "same", step: null });
+      links.push({ target: other, change: other.entity.change || "same", step: null, attached: true });
     }
     return links;
   }
@@ -2269,6 +2286,8 @@ function packageCallLinks(id) {
   for (const found of byEntity.values()) {
     if (!found.box || !found.pkg || found.pkg.id !== id) continue;
     for (const link of entityLinks(found)) {
+      // A method attached to a type is already a tower on that type: no curve.
+      if (link.attached) continue;
       links.push({ from: found, target: link.target, far: link.target, change: link.change, step: link.step });
     }
   }
@@ -2349,7 +2368,7 @@ function drawEntityLinks(group, found) {
   // arc is drawn from the caller to this tower, so the particle walk, which
   // always runs from the first end to the second, comes back in.
   const inbound = callInbound && hasDirection(found);
-  const links = subjectLinks(found).map((link) => (inbound
+  const links = subjectLinks(found).filter((link) => !link.attached).map((link) => (inbound
     ? { from: link.target, target: found, far: link.target, change: link.change, step: link.step }
     : { from: found, target: link.target, far: link.target, change: link.change, step: link.step }));
   drawCallLinks(group, links);
@@ -2728,7 +2747,7 @@ function describeHit(hit) {
 }
 
 function onHover(hit) {
-  if (idleSpin) {
+  if (skinPicking || idleSpin) {
     hud.tag.style.display = "none";
     renderer.domElement.style.cursor = "";
     return;
@@ -3311,7 +3330,8 @@ function entityRow(entity) {
   const name = clipText(entityLabel(entity));
   button.append(name);
   attachMarquee(button, name);
-  const mark = changeMark(entity.change, entity.part);
+  const named = entity.kind === "function" || entity.kind === "method";
+  const mark = changeMark(entity.change, entity.part, named);
   if (mark) {
     mark.classList.add("mark");
     button.append(mark);
@@ -3516,6 +3536,17 @@ function sizeText(entity) {
   return "";
 }
 
+// changePart is the word for what changed in a function or method: the mark
+// says "~ body" rather than leaving a colour to be decoded, and the tooltip
+// says the whole sentence. A declaration that is not callable has no parts.
+function changePart(change, part, named) {
+  if (!named || change !== "modified") return "";
+  if (part === "body") return "body";
+  if (part === "signature") return "signature";
+  if (part === "both") return "both";
+  return "";
+}
+
 function modifiedClass(part) {
   if (part === "body" || part === "both") return "modified " + part;
   return "modified";
@@ -3556,7 +3587,8 @@ function changeMark(change, part, named) {
   } else {
     return null;
   }
-  span.textContent = CHANGE_GLYPH[change] || "~";
+  const word = changePart(change, part, named);
+  span.textContent = (CHANGE_GLYPH[change] || "~") + (word ? " " + word : "");
   span.title = changeWord(change, part, named);
   return span;
 }
@@ -3729,6 +3761,10 @@ function axis(positive, negative, keys = held) {
 }
 
 function flyCamera(dt, now) {
+  if (skinPicking) {
+    idleSpin = false;
+    return false;
+  }
   // A focused search box must not steer the camera, but it must not stop the
   // city either: the idle orbit is global, so only the keys are dropped.
   const keys = typingSearch() ? NO_KEYS : held;
@@ -3868,6 +3904,7 @@ function setCallDirection(inbound, node) {
 // direction. The canvas still swallows the browser's context menu.
 renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
 renderer.domElement.addEventListener("pointerdown", (event) => {
+  if (skinPicking) return;
   pointerDown = { x: event.clientX, y: event.clientY, button: event.button };
   if (tourUI) tourUI.userTookOver();
   tween = null;
@@ -3884,6 +3921,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   const start = pointerDown;
   const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   pointerDown = null;
+  if (skinPicking) return;
   if (moved > 5 || start.button !== 0) return;
   activate(describeHit(hitTest()));
 });
@@ -4051,6 +4089,47 @@ window.addEventListener("pointerdown", (event) => {
 // not reset the idle clock, or the orbit and the animations would never settle.
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
+// Registered first, and on the capture path, so it runs before the viewer's
+// own keys and before the tour. While the menu is open those keys do nothing.
+window.addEventListener("keydown", (event) => {
+  if (event.target === hud.search) return;
+  if (!skinPicking && !skinRevealing) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  requestFrame();
+  if (skinRevealing) return;
+  noteActivity();
+  endIntro();
+  if (!confirmEl.hidden) {
+    if (event.key === "Escape") confirmIgnoreSkin();
+    return;
+  }
+  const plain = !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey;
+  if (event.key === "Escape") {
+    clearSkinFind();
+    requestCloseSkinPanel();
+    return;
+  }
+  if (plain && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    moveSkinCursor(event.key === "ArrowRight" ? 1 : -1);
+    return;
+  }
+  if (event.key === "Enter" && !event.repeat) {
+    void acceptSkin();
+    return;
+  }
+  if (plain && event.key === "Backspace") {
+    if (!skinFind) return;
+    const rest = skinFind.slice(0, -1);
+    if (!rest) clearSkinFind();
+    else queueSkinFind(rest);
+    return;
+  }
+  if (plain && event.key.length === 1 && /[a-z0-9- ]/i.test(event.key)) {
+    queueSkinFind(skinFind + event.key.toLowerCase());
+  }
+}, true);
+
 window.addEventListener("keydown", (event) => {
   // The terminal owns the keyboard while it is up; esc closes an error.
   if (editorActive()) {
@@ -4060,6 +4139,9 @@ window.addEventListener("keydown", (event) => {
     }
     return;
   }
+  // The diff overlay is a reading surface: it scrolls, it takes Escape, and
+  // nothing else the viewer listens for should fire while it is up.
+  if (diffActive()) return;
   requestFrame();
   if (editAction(event) && event.target !== hud.search) {
     const target = editTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
@@ -4067,6 +4149,15 @@ window.addEventListener("keydown", (event) => {
       event.preventDefault();
       held.clear();
       openEditor(target, () => { renderer.domElement.focus?.(); requestFrame(); });
+    }
+    return;
+  }
+  if (diffAction(event) && event.target !== hud.search) {
+    const target = diffTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
+    if (target) {
+      event.preventDefault();
+      held.clear();
+      openDiff(target, () => { renderer.domElement.focus?.(); requestFrame(); }).catch(() => {});
     }
     return;
   }
@@ -4102,18 +4193,6 @@ window.addEventListener("keydown", (event) => {
   if (!typing && event.key === "Escape" && !confirmEl.hidden) {
     event.preventDefault();
     confirmIgnoreSkin();
-    return;
-  }
-  if (!typing && event.key === "Escape" && !skinSide.hidden) {
-    event.preventDefault();
-    requestCloseSkinPanel();
-    return;
-  }
-  // The theme panel takes the arrows while it is open: a theme is walked
-  // through and previewed without the mouse. Closed, the arrows fly again.
-  if (!typing && !skinSide.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-    event.preventDefault();
-    moveSkinCursor(event.key === "ArrowDown" ? 1 : -1);
     return;
   }
   const flyKey = flyToken(event.key);
@@ -4228,9 +4307,10 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 
 window.addEventListener("resize", resizeView);
 
-// Themes: what the /skin command opens. The panel previews on click and
-// remembers only on Save, so what the browser opens with next time is what
-// was saved, and closing without saving drops the preview.
+// Themes: what the /skin command opens. Arrows preview in place. Letters find
+// a theme by the start of its name. Enter, and Change on the question, apply
+// the preview: the two diagonal lines move out to the edges, the new theme
+// between them and the old one outside. Closing any other way drops the preview.
 
 const SKIN_KEY = "citydiff.skin";
 
@@ -4249,14 +4329,26 @@ function storeSkin(id) {
   } catch { /* the preview still holds for this session */ }
 }
 
-const skinSide = document.querySelector("#skin-side");
-const skinList = document.querySelector("#skin-list");
-const skinNote = document.querySelector("#skin-note");
-const skinSave = document.querySelector("#skin-save");
+const skinMenu = document.querySelector("#skin-menu");
+const skinPrev = document.querySelector("#skin-prev");
+const skinNext = document.querySelector("#skin-next");
+const skinName = document.querySelector("#skin-name");
+const skinCount = document.querySelector("#skin-count");
+const skinLinePrev = document.querySelector("#skin-line-prev");
+const skinLineNext = document.querySelector("#skin-line-next");
 let skinChoices = null;
 let skinPreview = null;
+let skinPose = null;
 let skinGen = 0;
 let skinError = "";
+let skinFind = "";
+let skinFindTimer = 0;
+let skinFindGen = 0;
+let skinFindJob = null;
+let skinAccepting = false;
+const skinById = new Map();
+const SKIN_INSET = 0.15;
+const SKIN_FIND_MS = 400;
 
 async function loadSkinChoices() {
   if (skinChoices) return skinChoices;
@@ -4271,41 +4363,94 @@ async function loadSkinChoices() {
   return skinChoices;
 }
 
-function markSkin() {
-  const saved = storedSkin();
-  const current = skinPreview || saved;
-  for (const button of skinList.querySelectorAll("button")) {
-    button.classList.toggle("on", button.dataset.skin === current);
-  }
-  skinSave.disabled = !skinPreview || skinPreview === saved;
-  if (skinError) skinNote.textContent = skinError;
-  else if (skinPreview && skinPreview !== saved) skinNote.textContent = "Previewing " + skinPreview + ". Save keeps it, esc asks first.";
-  else skinNote.textContent = "Click a theme to preview it. Save keeps it, esc asks first.";
+function skinLabel(id) {
+  return String(id || "").split("-").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
-function renderSkinList() {
-  skinList.replaceChildren();
-  const saved = storedSkin();
-  for (const id of skinChoices) {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.skin = id;
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = id;
-    button.append(name);
-    if (id === saved) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "saved";
-      button.append(tag);
-    }
-    button.addEventListener("click", () => previewSkin(id));
-    li.append(button);
-    skinList.append(li);
+async function cachedSkin(id) {
+  if (skinById.has(id)) return skinById.get(id);
+  const skin = await loadSkin(id);
+  skinById.set(id, skin);
+  return skin;
+}
+
+// The two dividers lean the same way, 12 degrees. At rest they cross
+// mid-height at 15% and 85%, so the gap between them is 70% of the width.
+// inset is that margin: 0 puts a line on each edge, and past 0 the line
+// has left the screen.
+function skinFrame(inset) {
+  const w = skinMenu.clientWidth;
+  const h = skinMenu.clientHeight;
+  const slide = Math.tan(12 * Math.PI / 180) * h * 0.5;
+  const left = w * inset;
+  const right = w * (1 - inset);
+  return {
+    w, h, slide,
+    leftTop: left + slide,
+    leftBot: left - slide,
+    rightTop: right + slide,
+    rightBot: right - slide,
+  };
+}
+
+function paintSkinFrame(frame) {
+  const { w, h, leftTop, leftBot, rightTop, rightBot } = frame;
+  skinPrev.style.clipPath = "polygon(0px 0px, " + leftTop + "px 0px, " + leftBot + "px " + h + "px, 0px " + h + "px)";
+  skinNext.style.clipPath = "polygon(" + rightTop + "px 0px, " + w + "px 0px, " + w + "px " + h + "px, " + rightBot + "px " + h + "px)";
+  placeSkinLine(skinLinePrev, leftTop, leftBot, h);
+  placeSkinLine(skinLineNext, rightTop, rightBot, h);
+  return "polygon(" + leftTop + "px 0px, " + rightTop + "px 0px, " + rightBot + "px " + h + "px, " + leftBot + "px " + h + "px)";
+}
+
+function layoutSkinFrame() {
+  if (!skinPicking || skinRevealing) return;
+  const frame = skinFrame(SKIN_INSET);
+  if (frame.w < 2 || frame.h < 2) return;
+  paintSkinFrame(frame);
+}
+
+function placeSkinLine(line, x1, x2, h) {
+  line.setAttribute("x1", x1);
+  line.setAttribute("y1", 0);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", h);
+}
+
+function paintSkinMenu() {
+  const id = skinPreview || storedSkin();
+  const at = skinChoices ? skinChoices.indexOf(id) : -1;
+  skinName.textContent = skinError || skinLabel(id);
+  skinCount.textContent = at >= 0 && skinChoices.length ? (at + 1) + "/" + skinChoices.length : "";
+  const prev = at > 0 ? skinChoices[at - 1] : "";
+  const next = at >= 0 && skinChoices && at < skinChoices.length - 1 ? skinChoices[at + 1] : "";
+  paintWing(skinPrev, prev);
+  paintWing(skinNext, next);
+}
+
+async function paintWing(el, id) {
+  el.dataset.skin = id || "";
+  el.style.transition = "";
+  if (!id) {
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+    el.tabIndex = -1;
+    el.setAttribute("aria-hidden", "true");
+    return;
   }
-  markSkin();
+  try {
+    const skin = await cachedSkin(id);
+    if (el.dataset.skin !== id) return;
+    el.style.backgroundColor = (skin.background && skin.background.color) || (skin.hud && skin.hud.bg) || "";
+    el.style.opacity = "1";
+    el.style.pointerEvents = "auto";
+    el.tabIndex = 0;
+    el.setAttribute("aria-hidden", "false");
+    el.setAttribute("aria-label", skinLabel(id));
+  } catch {
+    if (el.dataset.skin !== id) return;
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+  }
 }
 
 // A theme change never reloads: the city keeps its camera, selection, focus,
@@ -4317,10 +4462,11 @@ async function showTheme(id) {
 }
 
 async function previewSkin(id) {
+  if (skinRevealing) return;
   const gen = ++skinGen;
   skinError = "";
   try {
-    const skin = await loadSkin(id);
+    const skin = await cachedSkin(id);
     await loadShade(skin);
     if (gen !== skinGen) return;
     skinPreview = id;
@@ -4329,68 +4475,297 @@ async function previewSkin(id) {
     if (gen !== skinGen) return;
     skinError = "Could not read theme " + id + ". " + err.message;
   }
-  markSkin();
+  paintSkinMenu();
 }
 
-function saveSkin() {
-  if (!skinPreview) return;
-  const id = skinPreview;
-  storeSkin(id);
-  skinPreview = null;
-  markSkin();
-  closeSkinPanel(); // saved: there is nothing to put back
-  skinWarning = "Theme " + id + " saved.";
+// Drop the 450 ms page fade so the lines are the only transition. The class
+// comes back after the new values are committed, or the background would ease
+// under the still.
+function snapPage(next) {
+  const root = document.documentElement;
+  const ready = root.classList.contains("theme-ready");
+  if (ready) root.classList.remove("theme-ready");
+  applyPage(next, true);
+  if (ready) {
+    void root.offsetWidth;
+    root.classList.add("theme-ready");
+  }
+}
+
+// Paint a theme in one frame. The fade leaves colours mid-lerp, and the lines
+// need a finished picture of each side.
+function showThemeNow(next) {
+  if (!next) return;
+  themeFade = null;
+  if (theme && theme.uTime) next.uTime = theme.uTime;
+  adoptShaders(next);
+  theme = next;
+  syncPaint(next);
+  repaintScene();
+  redrawPlates(next.label.text, next.label.background);
+  applySky(scene, next);
+  snapPage(next);
+  skinWarning = next.shadeWarning || "";
   updateHUD();
+  renderer.render(scene, camera);
+  viewDirty = false;
 }
 
-// The arrows walk the themes from wherever the preview is, which starts at
-// the saved one, and each step previews what it lands on.
+// The WebGL canvas is one theme at a time. A still of the new theme, clipped
+// to the band between the two lines, sits over the live city painted with the
+// old one. Walking the lines outward uncovers the new theme.
+function snapshotView() {
+  const src = renderer.domElement;
+  if (!src.width || !src.height) return null;
+  try {
+    const snap = document.createElement("canvas");
+    snap.id = "skin-reveal";
+    snap.width = src.width;
+    snap.height = src.height;
+    snap.setAttribute("aria-hidden", "true");
+    const ctx = snap.getContext("2d", { alpha: false });
+    if (!ctx) return null;
+    ctx.drawImage(src, 0, 0);
+    const rect = src.getBoundingClientRect();
+    snap.style.left = rect.left + "px";
+    snap.style.top = rect.top + "px";
+    snap.style.width = rect.width + "px";
+    snap.style.height = rect.height + "px";
+    snap.style.clipPath = paintSkinFrame(skinFrame(SKIN_INSET));
+    return snap;
+  } catch {
+    return null;
+  }
+}
+
+function hideSkinWings() {
+  // The stylesheet fades a wing's opacity. Applying needs the old city
+  // outside the lines on the first frame, not a neighbour colour easing away.
+  for (const wing of [skinPrev, skinNext]) {
+    wing.style.transition = "none";
+    wing.style.opacity = "0";
+    wing.style.pointerEvents = "none";
+  }
+}
+
+// inset runs from the resting 15% out past the edges, so the last frame has
+// both lines off the screen and the still covers the view.
+function spreadLines(snap) {
+  const start = SKIN_INSET;
+  const wide = skinFrame(0);
+  const end = wide.w > 0 ? -(wide.slide + 4) / wide.w : -0.2;
+  const t0 = performance.now();
+  return new Promise((resolve) => {
+    const step = (now) => {
+      if (!snap.isConnected) {
+        resolve();
+        return;
+      }
+      const k = Math.min(1, (now - t0) / THEME_REVEAL_MS);
+      const eased = 1 - (1 - k) * (1 - k) * (1 - k);
+      snap.style.clipPath = paintSkinFrame(skinFrame(start + (end - start) * eased));
+      if (k < 1) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+// Enter and Change both come through here. Arrows and letters never do: a
+// preview is the fade, and the lines leaving the screen is the apply.
+async function saveSkin() {
+  if (skinRevealing) return;
+  if (!skinPreview || skinPreview === storedSkin()) {
+    closeSkinPanel();
+    return;
+  }
+  const id = skinPreview;
+  const previousId = storedSkin();
+  const next = theme;
+  skinRevealing = true;
+  const gen = ++skinGen;
+  let snap = null;
+  let applied = false;
+  try {
+    const prev = await cachedSkin(previousId);
+    await loadShade(prev);
+    if (gen !== skinGen || !skinPicking) return;
+    storeSkin(id);
+    skinPreview = null;
+    applied = true;
+    tween = null;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduce) {
+      showThemeNow(next);
+      snap = snapshotView();
+      if (snap) showThemeNow(prev);
+    }
+    hideSkinWings();
+    if (snap) {
+      document.body.appendChild(snap);
+      await spreadLines(snap);
+      showThemeNow(next);
+      snap.remove();
+      snap = null;
+    } else {
+      showThemeNow(next);
+    }
+    skinWarning = "Theme " + id + " saved.";
+    updateHUD();
+  } catch {
+    storeSkin(id);
+    skinPreview = null;
+    applied = true;
+    try { showThemeNow(next); } catch { /* the city stays as it is */ }
+    skinWarning = "Theme " + id + " saved.";
+    updateHUD();
+  } finally {
+    if (snap && snap.parentNode) snap.remove();
+    skinRevealing = false;
+    if (applied) closeSkinPanel();
+  }
+}
+
+// Left and right walk the themes from the preview, which starts at the
+// saved one. The ends stop, so an empty side band means there is no theme
+// that way. Each step previews what it lands on.
 function moveSkinCursor(step) {
-  if (!skinChoices.length) return;
+  if (skinRevealing || !skinChoices.length) return;
+  clearSkinFind();
   const at = skinChoices.indexOf(skinPreview || storedSkin());
-  const next = ((at < 0 ? 0 : at + step) + skinChoices.length) % skinChoices.length;
+  const next = (at < 0 ? 0 : at) + step;
+  if (next < 0 || next >= skinChoices.length) return;
   previewSkin(skinChoices[next]);
-  scrollSkinChoice(next);
 }
 
-function scrollSkinChoice(index) {
-  const button = skinList.querySelectorAll("button")[index];
-  if (button) button.scrollIntoView({ block: "nearest" });
+// Letters find a theme by the start of its id or its displayed name.
+// "to" matches tokyo-night. The pause lets a second letter arrive before
+// the city recolours, so a word does not step through every prefix.
+function clearSkinFind() {
+  clearTimeout(skinFindTimer);
+  skinFindTimer = 0;
+  skinFind = "";
+  skinFindGen++;
+  skinGen++;
+}
+
+function skinFindMatch(query) {
+  const q = String(query || "").toLowerCase();
+  if (!q.trim() || !skinChoices) return "";
+  const fold = (value) => value.toLowerCase().replace(/[\s_-]+/g, "");
+  const qFold = fold(q);
+  return skinChoices.find((id) => {
+    if (id.toLowerCase().startsWith(q)) return true;
+    const label = skinLabel(id).toLowerCase();
+    return label.startsWith(q) || fold(id).startsWith(qFold) || fold(label).startsWith(qFold);
+  }) || "";
+}
+
+function queueSkinFind(text) {
+  skinFind = text;
+  clearTimeout(skinFindTimer);
+  // A letter replaces a jump that has not landed yet. The pause starts over.
+  skinFindGen++;
+  skinGen++;
+  skinFindTimer = setTimeout(() => {
+    skinFindJob = applySkinFind();
+  }, SKIN_FIND_MS);
+}
+
+async function applySkinFind() {
+  const gen = skinFindGen;
+  skinFindTimer = 0;
+  const query = skinFind;
+  skinFind = "";
+  if (!query || gen !== skinFindGen || skinRevealing || !skinPicking) return;
+  const match = skinFindMatch(query);
+  if (!match || match === (skinPreview || storedSkin())) return;
+  await previewSkin(match);
+}
+
+async function commitSkinFind() {
+  clearTimeout(skinFindTimer);
+  skinFindTimer = 0;
+  if (skinFindJob) {
+    const job = skinFindJob;
+    skinFindJob = null;
+    await job;
+  }
+  if (!skinFind) return;
+  skinFindJob = applySkinFind();
+  const job = skinFindJob;
+  skinFindJob = null;
+  await job;
+}
+
+async function acceptSkin() {
+  if (skinAccepting || skinRevealing) return;
+  skinAccepting = true;
+  try {
+    await commitSkinFind();
+    if (unsavedPreview()) await saveSkin();
+    else closeSkinPanel();
+  } finally {
+    skinAccepting = false;
+  }
 }
 
 async function openSkinPanel() {
+  if (skinRevealing) return;
+  clearSkinFind();
   closeSearch();
   hud.search.blur();
+  setLegend(false);
   skinError = "";
   await loadSkinChoices();
-  renderSkinList();
-  skinSide.hidden = false;
-  // The panel is the thing the keyboard is talking to now: the arrows walk
-  // the themes, and Tab reaches Save.
-  skinSide.focus({ preventScroll: true });
-  scrollSkinChoice(skinChoices.indexOf(storedSkin()));
-  requestAnimationFrame(resizeView);
+  if (!skinChoices.length) return;
+  if (!skinPicking) {
+    skinPose = { pos: camera.position.clone(), target: controls.target.clone() };
+    skinPicking = true;
+    document.body.classList.add("skin-open");
+    skinMenu.hidden = false;
+    controls.enabled = false;
+    held.clear();
+    tween = null;
+    introSpin = false;
+    onHover(null);
+    resizeView();
+    if (laid) {
+      const pose = frameCity(0.84);
+      applyFitLimits(pose);
+      flyTo(pose.pos, pose.target);
+    }
+  }
+  paintSkinMenu();
+  skinMenu.focus({ preventScroll: true });
 }
 
 async function closeSkinPanel() {
-  if (skinSide.hidden) return;
+  if (!skinPicking || skinRevealing) return;
+  clearSkinFind();
   const preview = skinPreview;
   skinPreview = null;
-  skinSide.hidden = true;
-  requestAnimationFrame(resizeView);
+  skinPicking = false;
+  skinMenu.hidden = true;
+  document.body.classList.remove("skin-open");
+  controls.enabled = true;
+  const back = skinPose;
+  skinPose = null;
+  resizeView();
+  if (back) flyTo(back.pos, back.target);
   if (!preview || preview === storedSkin()) return;
   // Closing without saving drops the preview and puts the saved theme back.
   const gen = ++skinGen;
   try {
-    const skin = await loadSkin(storedSkin());
+    const skin = await cachedSkin(storedSkin());
     await loadShade(skin);
     if (gen === skinGen) fadeToTheme(skin);
   } catch { /* the saved theme is gone; keep what is on screen */ }
 }
 
-// A preview that was never saved is the one case where leaving the panel loses
-// something the user asked for. Escape, the × and the backdrop all come through
-// here: they ask, rather than quietly putting the old theme back.
+// A preview that was never saved is the one case where leaving the menu loses
+// something the user asked for. Escape asks, rather than quietly putting the
+// old theme back.
 const confirmEl = document.querySelector("#confirm");
 const confirmText = document.querySelector("#confirm-text");
 const confirmChange = document.querySelector("#confirm-change");
@@ -4401,7 +4776,7 @@ function unsavedPreview() {
 }
 
 function askAboutSkin() {
-  if (skinSide.hidden) return false;
+  if (!skinPicking) return false;
   if (!unsavedPreview()) return false;
   confirmText.textContent =
     "\u201c" + skinPreview + "\u201d is previewed and not saved. Change to it, or ignore the preview and stay on \u201c" + storedSkin() + "\u201d.";
@@ -4412,7 +4787,7 @@ function askAboutSkin() {
 
 function closeConfirm() {
   confirmEl.hidden = true;
-  if (!skinSide.hidden) skinSide.focus({ preventScroll: true });
+  if (skinPicking) skinMenu.focus({ preventScroll: true });
 }
 
 // Change: what was previewed becomes the saved theme, and the panel closes.
@@ -4433,8 +4808,8 @@ function requestCloseSkinPanel() {
   closeSkinPanel();
 }
 
-document.querySelector("#skin-close").addEventListener("click", requestCloseSkinPanel);
-skinSave.addEventListener("click", saveSkin);
+skinPrev.addEventListener("click", () => moveSkinCursor(-1));
+skinNext.addEventListener("click", () => moveSkinCursor(1));
 confirmChange.addEventListener("click", confirmChangeSkin);
 confirmIgnore.addEventListener("click", confirmIgnoreSkin);
 confirmEl.addEventListener("click", (event) => { if (event.target === confirmEl) confirmIgnoreSkin(); });

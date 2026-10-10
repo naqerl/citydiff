@@ -7,7 +7,6 @@ package scene
 
 import (
 	"path"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -486,7 +485,7 @@ func pairEntities(left, right []lib.Entity, mode string) []paired {
 		old := queue[0]
 		pending[key] = queue[1:]
 		change := same
-		if !reflect.DeepEqual(old.entry, entry) {
+		if !lib.SameDeclaration(old.entry, entry) {
 			change = modified
 		}
 		out = append(out, paired{left: old.entry, right: entry, change: change, nth: old.nth})

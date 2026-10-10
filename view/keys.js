@@ -19,6 +19,7 @@ export const KEYBINDS = [
   { keys: ["click"], does: "enters" },
   { keys: ["enter"], does: "opens a function" },
   { keys: ["E"], does: "open in nvim" },
+  { keys: ["D"], does: "diff of the change" },
   { keys: ["o", "i"], does: "jump back / forward" },
   { keys: ["esc"], does: "deselect, back to the city" },
   { keys: ["space"], does: "tour play / pause" },
@@ -42,8 +43,20 @@ export function tourAction(event) {
 // E, so the e of orbit keeps its meaning. Typing, modifiers and repeats are
 // not it.
 export function editAction(event) {
+  return capital(event, "E");
+}
+
+// diffAction is true for the key that shows the selection's git diff: a
+// capital D, for the same reason E is a capital.
+export function diffAction(event) {
+  return capital(event, "D");
+}
+
+// capital is true when the event is that capital letter and nothing else: not
+// a modifier combination, not a repeat, and not typed into a field.
+function capital(event, letter) {
   if (!event || event.metaKey || event.ctrlKey || event.altKey || event.repeat) return false;
   const target = event.target;
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return false;
-  return event.key === "E";
+  return event.key === letter;
 }

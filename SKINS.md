@@ -2,7 +2,7 @@
 
 A skin recolours the citydiff viewer. It is one JSON file. Each top-level key is one drawn element: the sky, the floor, a kind of block, a call arc, the name on a building, or the page around the city.
 
-A file may set any subset of those keys. A key you leave out keeps the value from [dark](skins/dark/skin.json). [light](skins/light/skin.json) is the other built-in skin, the same city on a light ground. Both are always available. Custom skins stay outside this repository: put them in the skins directory and the viewer finds them.
+A file may set any subset of those keys. A key you leave out keeps the value from [dark](skins/dark/skin.json). [light](skins/light/skin.json) and the Omarchy themes are built in the same way, and they are always available. Custom skins stay outside this repository: put them in the skins directory and the viewer finds them.
 
 The default column in the tables below is the dark skin. The link on each field opens the line that reads it.
 
@@ -27,26 +27,39 @@ CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 Choosing a skin is the page's job. The viewer process only learns where the extra skins
 live, and it learns that from the environment, not from a flag.
 
-### The theme panel
+### The theme menu
 
 Type `/` in the search box: it lists the commands, and `/skin` is the one that opens the
-theme panel in the right sidebar, where the tour plays. `↑` / `↓` and `tab` / `shift-tab`
-walk the completions. The panel lists every skin the viewer serves — the built-ins first,
-then the skins directory.
+theme menu over the city. `↑` / `↓` and `tab` / `shift-tab` walk the completions.
 
-- **Click a theme** to preview it, or walk the list with `↑` / `↓` once the panel has the
-  keyboard (it takes it when it opens). The city recolours in place, in a 450 ms fade: the
-  camera, the selection, the focus, the mode and an open tour all stay where they are. While
-  the panel is open the arrows belong to it, not to the camera.
-- **Save** remembers it for this browser and closes the panel. Until you press Save, nothing
-  is remembered.
-- **Closing asks when there is something to lose.** With a preview that was never saved, `esc`,
-  the × and a click on the backdrop open a question: **Change** keeps the previewed theme (what
-  Save does) and **Ignore** drops it and puts the saved theme back. `esc` on the question is
-  Ignore. With nothing previewed — or with the saved theme previewed again — `esc` just closes.
+The left sidebar hides while the menu is open, and clicks no longer select anything. Two
+diagonal lines sit 15% in from each side. The whole city is framed in the middle, between
+them, and the theme name sits at the bottom of that middle. The top left corner counts
+where this theme sits, as in 6/10. A side band is the colour of the theme in that
+direction, under a transparent haze. The first theme has no left band, and the last theme
+has no right band. The viewer's other keys do nothing while the menu is open.
 
-`/skin` also works while the viewer serves a tour (`citydiff tour serve`): the panel and the
-tour sidebar share the right edge, and the theme outlives the tour.
+- **`←` and `→`** preview the previous and next theme. A click on a side band does the
+  same. The city recolours in place, in a 450 ms fade, and the bands, the name and the
+  count follow. The menu holds the camera: it frames the city while it is open, and puts
+  the camera back when it closes. The selection, the focus, the mode and an open tour
+  stay where they are.
+- **Letters** find a theme by the start of its name. `d` moves to the first theme that
+  starts with d. A short pause waits for another letter, so `da` does not stop on `d`
+  and then jump again. The move is the same preview as an arrow.
+- **Enter** applies the previewed theme. The two diagonal lines move out to the edges of
+  the screen: between them is the new theme, outside them is the old one, and the new
+  theme covers the view as the lines leave. Then the sidebar and the camera come back.
+  Until then, nothing is remembered.
+- **Closing asks when there is something to lose.** With a preview that was never saved,
+  `esc` opens a question: **Change** applies the previewed theme with that same movement
+  of the lines, and **Ignore** drops it and puts the saved theme back, with the lines
+  staying where they are. `esc` on the question is Ignore. With nothing new previewed,
+  `esc` just closes. A browser that asks for reduced motion applies the theme with the
+  lines unmoved.
+
+`/skin` also works while the viewer serves a tour (`citydiff tour serve`). The tour sidebar
+hides for the menu and comes back when the menu closes. The theme outlives the tour.
 
 ### Where the choice is kept
 
@@ -58,9 +71,22 @@ override what the browser saved, and opening the same viewer in another browser 
 
 ### Built-in skins
 
-`dark` and `light` ship inside the program. `dark` is what a browser opens with until
-something else is saved. A folder of the same name in the skins directory does not replace a
-built-in.
+`dark`, `light`, and the Omarchy themes ship inside the program. `dark` is what a browser
+opens with until something else is saved. A folder of the same name in the skins directory
+does not replace a built-in.
+
+The Omarchy skins take their hues from the themes
+[Omarchy ships](https://github.com/omacom/omarchy/tree/quattro/themes). The page and the
+change colours use those values. The city is then built in HSL so each kind of block sits
+on its own lightness, with a coloured edge, because the raw background ramp is too close
+together to read. Each skin uses the same keys as [dark](skins/dark/skin.json).
+`catppuccin-latte`, `flexoki-light`, `lupine`, `rose-pine`, and `white` are light. The
+others are dark.
+
+`catppuccin`, `catppuccin-latte`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`,
+`hackerman`, `kanagawa`, `last-horizon`, `lumon`, `lupine`, `matte-black`, `miasma`, `nord`,
+`osaka-jade`, `retro-82`, `ristretto`, `rose-pine`, `solitude`, `starship`, `tokyo-night`,
+`vantablack`, `white`.
 
 ### The skins directory
 
@@ -78,8 +104,8 @@ Each entry in the directory is one skin:
 | `ink.json` | `ink`. The file is the whole skin. |
 
 A name is letters, digits, `_`, and `-`. Other files in the directory are ignored. When both
-`paper/skin.json` and `paper.json` exist, the directory is the skin. A name that is built in
-(`dark`, `light`) is never taken from this directory.
+`paper/skin.json` and `paper.json` exist, the directory is the skin. A built-in name is never
+taken from this directory.
 
 ### What the page asks the server for
 
@@ -388,8 +414,7 @@ paper/
 ```
 
 Put that directory at `~/.config/citydiff/skins/paper` (the default skins directory) and open
-the viewer: `/skin` in the page lists `paper` beside `dark` and `light`. Click it to preview
-it and Save to keep it.
+the viewer: `/skin` in the page walks to `paper` with `←` / `→`. Enter applies it.
 
 A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 
@@ -397,4 +422,4 @@ A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 ```
 
-Picking the built-in `light` in the theme panel compares it with the built-in light skin.
+Picking the built-in `light` in the theme menu compares it with the built-in light skin.

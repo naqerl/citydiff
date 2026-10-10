@@ -146,6 +146,7 @@ tour waits instead of replacing it: play, `.` or a roadmap click starts it.
 | `c` | show calls or callers |
 | `enter` | open a function |
 | `E` | open the selected node in nvim |
+| `D` | show the selected node's diff |
 | `esc` | deselect and fly back to the city |
 | `o` `i` | jump back / forward through the selection history |
 | `b` | show / hide the left sidebar |
@@ -168,11 +169,25 @@ Paths outside the served directory are refused. The terminal is
 [ghostty-web](https://github.com/coder/ghostty-web), vendored under
 `view/vendor/ghostty` and loaded on first use, over a WebSocket to a PTY.
 
+## Show the diff
+
+With a node selected, `D` (shift-d) shows its change in the range the scene is
+showing, drawn over the city: the file's hunks with a gutter on each side, the
+added and removed lines tinted, and the code highlighted in the skin's own
+syntax colours. A function or method shows the hunks that cover it; a package
+shows every changed file under it, capped at eight. `esc` closes it.
+
+The hunks are built in-process with
+[go-git](https://github.com/go-git/go-git): the ends of the range are resolved
+and their trees patched against each other, so no `git` command runs and no
+terminal is involved. A scene without a range is one snapshot and has nothing
+to diff; the overlay says so.
+
 ## Skins
 
-A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) is the built-in light skin. Skins that are not in the binary live in a directory of your own.
+A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) and the Omarchy themes are built in beside it. Skins that are not in the binary live in a directory of your own.
 
-Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme panel in the right sidebar. It lists the themes, previews one the moment you click it (or walk them with the arrows), and **Save** remembers it and closes the panel. The choice lives in the browser (localStorage), so a reload comes back to the theme you saved, and closing the panel without saving drops the preview. Nothing about it reaches the command line or the address bar.
+Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme menu over the city. The left sidebar hides, and the city is framed between two diagonal lines, 15% in from each side. The number in the top left is this theme's place in the list, as in 6/10. `←` and `→` preview the previous and next theme: the city recolours in place, and each side band shows that neighbour's colour under a haze when there is one. Letters do the same by name: `d` lands on the first theme whose name starts with d, after a short pause so another letter can narrow it. The viewer's other keys do nothing while the menu is open. **Enter** applies the preview: the diagonal lines move out to the edges of the screen, the new theme between them and the old theme outside, until the new one covers the view. **Change** after `esc` applies it the same way. Closing without applying drops the preview, and `esc` asks first when a preview would be lost. The choice lives in the browser (localStorage). Nothing about it reaches the command line or the address bar.
 
 The fields, the skybox shapes, and how to point the viewer at a skins directory are in [SKINS.md](SKINS.md).
 
@@ -361,7 +376,7 @@ On a `v*` tag it also publishes a GitHub Release with
 | `lib/git/` | git source: reads trees at refs via go-git |
 | `lib/files/` | filesystem source |
 | `view/` | embedded browser viewer (three.js) |
-| `skins/` | built-in viewer skins, `dark` and `light` |
+| `skins/` | built-in viewer skins: `dark`, `light`, and the Omarchy themes |
 | `SKINS.md` | how to write a viewer skin |
 | `lib/tour/` | tour scripts: schema, name resolution, validation, call paths, code snippets |
 | `cmd/cli/tour.go` | the `nodes` and `tour` subcommands and the tour HTTP endpoints |
