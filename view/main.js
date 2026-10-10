@@ -2266,9 +2266,18 @@ function hasDirection(found) {
 // functions calling those methods are added when the direction is reversed.
 function subjectLinks(found) {
   if (!found) return [];
-  if (isType(found)) return callInbound ? typeCallerLinks(found) : entityLinks(found);
+  if (isType(found)) return callInbound ? typeCallersOutside(found) : [];
   if (callInbound && isCallable(found)) return callerLinks(found);
   return entityLinks(found);
+}
+
+// A type does not call anything: its methods are towers on its own base, not
+// calls it makes, so there is nothing to list in that direction. What reaches
+// into a type is worth listing, and that is the callers of its methods — the
+// ones from outside it, because a method calling a sibling is the same
+// building talking to itself.
+function typeCallersOutside(found) {
+  return typeCallerLinks(found).filter((link) => link.target.entity.parent !== found.entity.id);
 }
 
 function litForEntity(found) {
@@ -2471,6 +2480,9 @@ function selectExternal(id, inbound = true) {
 function selectEntity(id) {
   const found = byEntity.get(id);
   if (!found || !found.box) return;
+  // A type's useful direction is who reaches into it: it has no calls of its
+  // own, so opening on that side would show an empty list.
+  if (isType(found)) callInbound = true;
   // A function is here for its calls: selecting one opens the call diff
   // straight away, on the side calls or callers is set to, instead of asking
   // for a second click.
@@ -3360,7 +3372,7 @@ function hasRefs(subject) {
   if (subject.kind === "entity") {
     const found = byEntity.get(subject.id);
     if (!found) return false;
-    if (isType(found)) return entityLinks(found).length > 0 || typeCallerLinks(found).length > 0;
+    if (isType(found)) return typeCallersOutside(found).length > 0;
     return true;
   }
   const pkg = byPackage.get(subject.id);
@@ -3375,7 +3387,11 @@ function refsControl() {
   wrap.className = "modes refs";
   wrap.setAttribute("role", "radiogroup");
   wrap.setAttribute("aria-label", "Show calls or callers");
-  for (const [inbound, label] of [[false, "Calls"], [true, "Callers"]]) {
+  // A type has no calls of its own to show, so it gets the one direction.
+  const subject = subjectNode();
+  const found = subject && subject.kind === "entity" ? byEntity.get(subject.id) : null;
+  const directions = found && isType(found) ? [[true, "Callers"]] : [[false, "Calls"], [true, "Callers"]];
+  for (const [inbound, label] of directions) {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("role", "radio");
