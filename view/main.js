@@ -1433,6 +1433,7 @@ function changedCallLinks() {
   for (const found of byEntity.values()) {
     if (!found.box) continue;
     for (const link of entityLinks(found)) {
+      if (link.attached) continue;
       const change = link.step && link.step.change;
       if (!change || change === "same") continue;
       links.push({ from: found, target: link.target, far: link.target, change, step: link.step });
@@ -2106,10 +2107,14 @@ function packageEdges(id, inbound) {
 function entityLinks(found) {
   if (!found) return [];
   if (found.entity.kind === "type") {
+    // A type does not call its methods: they are drawn on top of it, as towers
+    // on its own base. The links are kept for the list — a method is one click
+    // away there — and marked so the city does not also draw a curve to a
+    // tower the eye can already see standing on the type.
     const links = [];
     for (const other of byEntity.values()) {
       if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
-      links.push({ target: other, change: other.entity.change || "same", step: null });
+      links.push({ target: other, change: other.entity.change || "same", step: null, attached: true });
     }
     return links;
   }
@@ -2207,6 +2212,8 @@ function packageCallLinks(id) {
   for (const found of byEntity.values()) {
     if (!found.box || !found.pkg || found.pkg.id !== id) continue;
     for (const link of entityLinks(found)) {
+      // A method attached to a type is already a tower on that type: no curve.
+      if (link.attached) continue;
       links.push({ from: found, target: link.target, far: link.target, change: link.change, step: link.step });
     }
   }
@@ -2287,7 +2294,7 @@ function drawEntityLinks(group, found) {
   // arc is drawn from the caller to this tower, so the particle walk, which
   // always runs from the first end to the second, comes back in.
   const inbound = callInbound && hasDirection(found);
-  const links = subjectLinks(found).map((link) => (inbound
+  const links = subjectLinks(found).filter((link) => !link.attached).map((link) => (inbound
     ? { from: link.target, target: found, far: link.target, change: link.change, step: link.step }
     : { from: found, target: link.target, far: link.target, change: link.change, step: link.step }));
   drawCallLinks(group, links);
