@@ -8,8 +8,8 @@ description: Write a guided "tour" of a commit range's changes that the citydiff
 A tour is a JSON script over the citydiff scene of one commit range. The
 viewer plays it: each step moves the camera, lights nodes or a call path,
 and shows a markdown note in the tour sidebar on the right. The sidebar
-holds the tour title and range, the note and code, a roadmap of every step,
-and play/pause, prev/next and a step counter at the bottom.
+holds the tour title and range, the note and code, and play/pause,
+prev/next and a step counter at the bottom.
 
 ## Workflow
 
@@ -81,7 +81,7 @@ nothing carries over from the step before except the mode.
 
 | field | type | effect |
 | --- | --- | --- |
-| `title` | string | Roadmap entry and note heading. |
+| `title` | string | Note heading. |
 | `note` | markdown | Note panel text: paragraphs, `**bold**`, `*italic*`, `` `code` ``, fenced code, `-`/`1.` lists, `#` headings, http(s) links. No raw HTML. |
 | `duration` | seconds | How long autoplay stays on the step. Default 8. |
 | `mode` | `"changes"` \| `"full"` | `changes` colours the diff and draws dependency arcs; `full` is the plain city. Sticks until a later step changes it. |
@@ -124,9 +124,9 @@ https://github.com/naqerl/citydiff/blob/main/examples/barse-flashcard-versions.t
 | `t` | hide / show the tour sidebar (`b` does the left one) |
 | `?` | the legend, with every key the viewer answers to |
 
-Clicking a roadmap entry jumps to it. Dragging or clicking in the city
-pauses autoplay. The × in the sidebar header closes the tour. Loading a
-tour switches the viewer to the tour's range, so the left sidebar shows
+Dragging or clicking in the city pauses autoplay. The × in the sidebar
+header closes the tour. Loading a tour switches the viewer to the tour's
+range, so the left sidebar shows
 that range's changes; a range that does not resolve is reported in the
 tour sidebar.
 

@@ -62,7 +62,7 @@
     },
     {
       "title": "Back to the plain city",
-      "note": "That is the whole change. Press **space** to replay, or use the roadmap to jump back.",
+      "note": "That is the whole change. Press **space** to replay, or step back with **,**.",
       "mode": "full",
       "camera": "overview",
       "duration": 6
