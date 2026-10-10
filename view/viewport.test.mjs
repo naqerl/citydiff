@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
+import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf } from "./viewport.js";
 
 const DIR = [0.32, 0.48, 0.78];
 const VIEW = { fov: 50, width: 1600, height: 900 };
@@ -85,4 +85,18 @@ test("the target is the box centre and the camera sits along dir", () => {
   const l = Math.hypot(...v);
   const dl = Math.hypot(...DIR);
   v.forEach((c, i) => assert.ok(Math.abs(c / l - DIR[i] / dl) < 1e-9));
+});
+
+test("a bottom sheet lifts the look-at point to the middle of the area above it", () => {
+  assert.equal(viewOffsetY(0), 0);
+  assert.equal(viewOffsetY(400), 200);
+  assert.equal(viewOffsetY(-5), 0);
+});
+
+test("the free area above a sheet has a narrower vertical field of view", () => {
+  assert.equal(freeFov(42, 800, 0), 42);
+  assert.equal(freeFov(42, 800, 900), 42);
+  const fov = freeFov(42, 800, 400);
+  // Half the height: tan of the half angle halves.
+  assert.ok(Math.abs(Math.tan((fov * Math.PI) / 360) - Math.tan((42 * Math.PI) / 360) / 2) < 1e-9);
 });

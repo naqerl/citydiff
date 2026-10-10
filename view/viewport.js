@@ -22,6 +22,20 @@ export function viewOffsetX(left, right) {
   return (right - left) / 2;
 }
 
+// On a phone the sidebars are one sheet along the bottom. viewOffsetY lifts
+// the look-at point into the middle of the area above it, and freeFov is the
+// vertical field of view of that area, so a fit lands in it.
+export function viewOffsetY(bottom) {
+  return Math.max(0, bottom || 0) / 2;
+}
+
+export function freeFov(fov, height, bottom) {
+  const b = Math.max(0, bottom || 0);
+  if (!b || height <= b) return fov;
+  const half = (fov * Math.PI) / 360;
+  return (Math.atan(Math.tan(half) * (height - b) / height) * 360) / Math.PI;
+}
+
 // fitPose places the camera along dir so every corner of box lands inside
 // the free area, with fill of it used (0.86 leaves a margin on each side).
 // box is {min: [x, y, z], max: [x, y, z]}. The vertical FOV is the camera's;
