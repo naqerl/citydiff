@@ -204,9 +204,14 @@
       background: transparent;
       color: var(--muted);
       border: 1px solid var(--line);
+      /* Each tab draws its own left edge and none of its right, so the line
+         between two of them belongs to the tab on the right. That way the
+         active tab is outlined in full on both sides, instead of borrowing a
+         quiet edge from the tab next to it. */
+      border-right: 0;
       padding: 6px 8px;
     }
-    .modes button + button { border-left: 0; }
+    .modes button:last-child { border-right: 1px solid var(--line); }
     .modes button.on { color: var(--fg); background: var(--on); border-color: var(--line-strong); }
     #stage { position: absolute; inset: 0; background: var(--bg); }
     #view { position: absolute; inset: 0; }
