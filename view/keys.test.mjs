@@ -24,14 +24,17 @@ test("typing, modifiers and repeats are not tour actions", () => {
   assert.equal(tourAction(key(" ", { repeat: true })), null);
 });
 
-test("every key is listed once, and the README lists them all", () => {
+// The keys are documented in the skill, which is what ships with the binary and
+// is installed for the reader. The README is a showcase and no longer lists
+// them, so the check follows the documentation rather than the other way round.
+test("every key is listed once, and the skill lists them all", () => {
   const all = KEYBINDS.flatMap((b) => b.keys);
-  for (const k of ["E", "b", "t", ",", ".", "space", "/", "?", "o", "i", "m", "0", "esc"]) assert.ok(all.includes(k), k);
-  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  for (const k of ["E", "D", "b", "t", ",", ".", "space", "/", "?", "o", "i", "m", "0", "esc"]) assert.ok(all.includes(k), k);
+  const skill = readFileSync(new URL("../skills/citydiff/SKILL.md", import.meta.url), "utf8");
   for (const b of KEYBINDS) {
     for (const k of b.keys) {
       if (k === "wasd" || k === "arrows" || k === "drag" || k === "scroll" || k === "click") continue;
-      assert.ok(readme.includes("`" + k + "`"), "README lacks " + k);
+      assert.ok(skill.includes("`" + k + "`"), "the skill lacks " + k);
     }
   }
 });
