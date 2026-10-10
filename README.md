@@ -54,9 +54,9 @@ the scene from `GET /scene.json`; the viewer assets are embedded in the binary.
 ## Command line
 
 ```
-citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]
+citydiff [-json | -scene | -view [-tour file] [-skin name-or-path] [-skins dir]] -path file-or-directory [-range A..B]
 citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]
-citydiff tour validate|serve [-path dir] [-range A..B] [-json] [-addr host:port] tour.json
+citydiff tour validate|serve [-path dir] [-range A..B] [-json] [-addr host:port] [-skin name-or-path] [-skins dir] tour.json
 citydiff tour schema
 ```
 
@@ -69,6 +69,8 @@ citydiff tour schema
 | `-view` | serve the 3D viewer over HTTP (long-running). |
 | `-addr` | listen address for `-view` (default `127.0.0.1:8787`). |
 | `-tour` | with `-view`, a [tour](#tours) script the viewer loads and plays. |
+| `-skin` | with `-view`, the skin to open on. `dark` (the default), `light`, a name from `-skins`, or a path to a skin file or directory. |
+| `-skins` | with `-view`, a directory of extra skins. The default is `~/.config/citydiff/skins`. A missing directory is left uncreated. |
 
 Notes:
 
@@ -126,6 +128,16 @@ entry.
 | `space` | tour: play / pause |
 | `,` `.` | tour: previous / next step |
 | `?` | legend |
+
+## Skins
+
+A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) is the built-in light skin. The brush button at the bottom-right lists the built-in skins and the skins loaded with the viewer.
+
+The fields, the skybox shapes, and how to load a skin from outside this repository are in [SKINS.md](SKINS.md).
+
+```sh
+citydiff -path . -view -skin light
+```
 
 ## Tours
 
@@ -308,6 +320,8 @@ On a `v*` tag it also publishes a GitHub Release with
 | `lib/git/` | git source: reads trees at refs via go-git |
 | `lib/files/` | filesystem source |
 | `view/` | embedded browser viewer (three.js) |
+| `skins/` | built-in viewer skins, `dark` and `light` |
+| `SKINS.md` | how to write a viewer skin |
 | `lib/tour/` | tour scripts: schema, name resolution, validation, call paths, code snippets |
 | `cmd/cli/tour.go` | the `nodes` and `tour` subcommands and the tour HTTP endpoints |
 | `skills/citydiff-tour/` | the agent skill for writing tours |

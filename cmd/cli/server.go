@@ -23,10 +23,11 @@ type viewer struct {
 	payload []byte
 	tour    []byte
 	build   func(path, commitRange string) (*snapshot, error)
+	skin    skinPick
 }
 
 func newViewer(snap *snapshot, tourRaw []byte) (*viewer, error) {
-	v := &viewer{path: snap.path, build: buildSnapshot}
+	v := &viewer{path: snap.path, build: buildSnapshot, skin: skinPick{embedName: "dark"}}
 	if err := v.setSnapshot(snap); err != nil {
 		return nil, err
 	}
@@ -144,6 +145,7 @@ func (v *viewer) handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, view)
 	})
+	mountSkins(mux, v.skin)
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	return mux
 }

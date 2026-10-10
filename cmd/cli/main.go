@@ -87,6 +87,8 @@ func legacy() {
 	asView := flag.Bool("view", false, "serve the 3D scene")
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address for -view")
 	tourFile := flag.String("tour", "", "tour script for -view to load and play")
+	skinName := flag.String("skin", "", "viewer skin to open: dark, light, a name from -skins, or a path to skin.json or a skin directory")
+	skinsDir := flag.String("skins", defaultSkinsDir, "directory of extra skins; a missing directory is left uncreated")
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), usageText())
 		flag.PrintDefaults()
@@ -110,7 +112,7 @@ func legacy() {
 				fail(err)
 			}
 		}
-		if err := serve(*addr, snap, raw); err != nil {
+		if err := serve(*addr, snap, raw, *skinName, *skinsDir); err != nil {
 			fail(err)
 		}
 		return
@@ -154,11 +156,16 @@ func printScene(sc scene.Scene) error {
 	return enc.Encode(sc)
 }
 
-func serve(addr string, snap *snapshot, tourRaw []byte) error {
+func serve(addr string, snap *snapshot, tourRaw []byte, skinSpec, skinsDir string) error {
 	v, err := newViewer(snap, tourRaw)
 	if err != nil {
 		return err
 	}
+	pick, err := pickSkin(skinSpec, skinsDir)
+	if err != nil {
+		return err
+	}
+	v.skin = pick
 	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
 	return http.ListenAndServe(addr, v.handler())
 }
@@ -284,7 +291,7 @@ func formatEntity(entry lib.Entity) string {
 }
 
 func usageText() string {
-	return "Usage: citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]\n" +
+	return "Usage: citydiff [-json | -scene | -view [-tour file] [-skin name-or-path] [-skins dir]] -path file-or-directory [-range A..B]\n" +
 		"       citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]\n" +
 		"       citydiff tour validate|serve|schema ...\n\n"
 }

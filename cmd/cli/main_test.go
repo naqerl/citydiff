@@ -25,7 +25,7 @@ func TestFormatEntityIncludesMethodCalls(t *testing.T) {
 }
 
 func TestUsageSaysFileOrDirectory(t *testing.T) {
-	if !strings.HasPrefix(usageText(), "Usage: citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]\n") {
+	if !strings.HasPrefix(usageText(), "Usage: citydiff [-json | -scene | -view [-tour file] [-skin name-or-path] [-skins dir]] -path file-or-directory [-range A..B]\n") {
 		t.Fatalf("usage = %q", usageText())
 	}
 }

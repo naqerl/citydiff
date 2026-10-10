@@ -209,7 +209,7 @@ func runNodes(args []string, stdout io.Writer) error {
 
 const tourUsage = `Usage:
   citydiff tour validate [-path dir] [-range A..B] [-json] tour.json
-  citydiff tour serve    [-path dir] [-range A..B] [-addr host:port] tour.json
+  citydiff tour serve    [-path dir] [-range A..B] [-addr host:port] [-skin name-or-path] [-skins dir] tour.json
   citydiff tour schema
 
 -range defaults to the script's own "range".
@@ -237,6 +237,8 @@ func runTour(args []string, stdout, stderr io.Writer) error {
 	path, commitRange := commonFlags(fs)
 	asJSON := fs.Bool("json", false, "print the resolved script as JSON")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address for serve")
+	skinName := fs.String("skin", "", "viewer skin to open: dark, light, a name from -skins, or a path to skin.json or a skin directory")
+	skinsDir := fs.String("skins", defaultSkinsDir, "directory of extra skins; a missing directory is left uncreated")
 	fs.Usage = func() { fmt.Fprint(stderr, tourUsage) }
 	rest, err := parseArgs(fs, args[1:])
 	if err != nil {
@@ -271,7 +273,7 @@ func runTour(args []string, stdout, stderr io.Writer) error {
 	}
 	if args[0] == "serve" {
 		fmt.Fprintf(stderr, "citydiff: tour %q, %d steps\n", script.Title, len(script.Steps))
-		return serve(*addr, snap, raw)
+		return serve(*addr, snap, raw, *skinName, *skinsDir)
 	}
 	if *asJSON {
 		enc := json.NewEncoder(stdout)
