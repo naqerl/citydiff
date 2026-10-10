@@ -253,7 +253,7 @@ The material shared by every tower. The kind colour, or the change colour, tints
 
 ### [`change`](view/skin.js#L19)
 
-These colours paint marked packages and declarations, and changed call arcs. The legend swatches use the same colours ([added](view/skin.js#L90), [removed](view/skin.js#L91), [modified](view/skin.js#L92), [body](view/skin.js#L93), [both](view/skin.js#L94), [moved](view/skin.js#L95)). The words in the sidebar are the `hud` text colours below, so a light object colour and a dark word can differ. The sidebar still says "changed". On a function or a method that word takes the yellow of the tower.
+These colours paint marked packages and declarations, and changed call arcs. The legend swatches use the same colours ([added](view/skin.js#L90), [removed](view/skin.js#L91), [modified](view/skin.js#L92), [body](view/skin.js#L93), [both](view/skin.js#L94), [moved](view/skin.js#L95)). The words in the sidebar are the `hud` text colours below, so a light object colour and a dark word can differ. The changes list says "changed". On a function or a method that word takes the yellow of the tower. When that function or method is selected, the word names the part: "signature changed", "body changed", or "signature and body changed".
 
 | Field | Default | What it paints |
 | --- | --- | --- |

@@ -3086,14 +3086,13 @@ function entityDetail(entity) {
   const titleClip = clipText(entityLabel(entity));
   title.append(titleClip);
   attachMarquee(title, titleClip);
-  const mark = changeMark(entity.change, entity.part);
+  const named = entity.kind === "function" || entity.kind === "method";
+  const mark = changeMark(entity.change, entity.part, named);
   if (mark) title.append(mark);
   wrap.append(title);
   const meta = document.createElement("p");
   meta.textContent = [entity.kind, entity.file].filter(Boolean).join(" · ");
   wrap.append(meta);
-  const kind = changeKind(entity);
-  if (kind) wrap.append(kind);
   if (entity.kind === "function" || entity.kind === "method") {
     const size = document.createElement("p");
     size.textContent = sizeText(entity);
@@ -3119,9 +3118,9 @@ function focusDetail(entity) {
   const titleClip = clipText(entityLabel(entity));
   title.append(titleClip);
   attachMarquee(title, titleClip);
+  const mark = changeMark(entity.change, entity.part, true);
+  if (mark) title.append(mark);
   wrap.append(title);
-  const kind = changeKind(entity);
-  if (kind) wrap.append(kind);
   appendRefs(wrap);
   if (callInbound) {
     wrap.append(callerDetail(entity));
@@ -3231,22 +3230,15 @@ function modifiedClass(part) {
   return "modified";
 }
 
-function changeKind(entity) {
-  if (mode !== "overlay" || !entity || entity.change !== "modified") return null;
-  if (entity.kind !== "function" && entity.kind !== "method") return null;
-  const text = {
-    signature: "Signature changed.",
-    body: "Body changed.",
-    both: "Signature and body changed.",
-  }[entity.part];
-  if (!text) return null;
-  const line = document.createElement("p");
-  line.className = modifiedClass(entity.part);
-  line.textContent = text;
-  return line;
+function modifiedWord(part, named) {
+  if (!named) return "changed";
+  if (part === "body") return "body changed";
+  if (part === "signature") return "signature changed";
+  if (part === "both") return "signature and body changed";
+  return "changed";
 }
 
-function changeMark(change, part) {
+function changeMark(change, part, named) {
   if (!change || change === "same" || mode !== "overlay") return null;
   const span = document.createElement("span");
   if (change === "added") {
@@ -3257,7 +3249,7 @@ function changeMark(change, part) {
     span.textContent = "deleted";
   } else if (change === "modified") {
     span.className = modifiedClass(part);
-    span.textContent = "changed";
+    span.textContent = modifiedWord(part, named);
   } else if (change === "moved") {
     span.className = "moved";
     span.textContent = "moved";
