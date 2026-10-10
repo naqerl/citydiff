@@ -13,6 +13,7 @@ import (
 	"citydiff/lib"
 	golang "citydiff/lib/parser/go"
 	"citydiff/lib/parser/rust"
+	"citydiff/lib/parser/swift"
 )
 
 // Language is one supported language: the files it reads and its parser.
@@ -33,6 +34,11 @@ var Languages = []Language{
 		Name:    "rust",
 		Include: func(base string) bool { return base == "Cargo.toml" || strings.HasSuffix(base, ".rs") },
 		Parser:  rust.New(),
+	},
+	{
+		Name:    "swift",
+		Include: func(base string) bool { return base == "Package.swift" || strings.HasSuffix(base, ".swift") },
+		Parser:  swift.New(),
 	},
 }
 

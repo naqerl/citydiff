@@ -16,13 +16,32 @@ func Snippet(src []byte, n Node, recv string) string {
 	if segs := split(n.Name); len(segs) > 0 {
 		name = segs[len(segs)-1]
 	}
-	re := declPattern(n.Kind, name, recv, strings.HasSuffix(n.File, ".rs"))
+	lines := strings.Split(string(src), "\n")
+	from := 0
+	var re *regexp.Regexp
+	if strings.HasSuffix(n.File, ".swift") {
+		re = swiftPattern(n.Kind, name)
+		// A member is looked for after its type or extension opens, since
+		// init and other names repeat across the types of a file.
+		if owner := bareRecv(recv); owner != "" {
+			segs := split(owner)
+			open := regexp.MustCompile(`\b(class|struct|enum|actor|protocol|extension)\s+(\w+\.)*` + regexp.QuoteMeta(segs[len(segs)-1]) + `\b`)
+			for i, line := range lines {
+				if open.MatchString(line) {
+					from = i + 1
+					break
+				}
+			}
+		}
+	} else {
+		re = declPattern(n.Kind, name, recv, strings.HasSuffix(n.File, ".rs"))
+	}
 	if re == nil {
 		return ""
 	}
-	lines := strings.Split(string(src), "\n")
 	start := -1
-	for i, line := range lines {
+	for i := from; i < len(lines); i++ {
+		line := lines[i]
 		if re.MatchString(line) {
 			start = i
 			break
@@ -34,7 +53,7 @@ func Snippet(src []byte, n Node, recv string) string {
 	first := start
 	for first > 0 {
 		prev := strings.TrimSpace(lines[first-1])
-		if !strings.HasPrefix(prev, "//") && !strings.HasPrefix(prev, "#[") {
+		if !strings.HasPrefix(prev, "//") && !strings.HasPrefix(prev, "#[") && !strings.HasPrefix(prev, "@") && !strings.HasPrefix(prev, "///") {
 			break
 		}
 		first--
@@ -50,6 +69,29 @@ func Snippet(src []byte, n Node, recv string) string {
 		out += "\n…"
 	}
 	return out
+}
+
+func swiftPattern(kind, name string) *regexp.Regexp {
+	q := regexp.QuoteMeta(name)
+	switch {
+	case name == "init":
+		return regexp.MustCompile(`\binit\s*[?!]?\s*[(<]`)
+	case name == "deinit":
+		return regexp.MustCompile(`\bdeinit\s*\{`)
+	case name == "subscript":
+		return regexp.MustCompile(`\bsubscript\s*[(<]`)
+	}
+	switch kind {
+	case KindFunction:
+		return regexp.MustCompile(`\bfunc\s+` + q + `\s*[(<]`)
+	case KindMethod:
+		return regexp.MustCompile(`(\bfunc\s+` + q + `\s*[(<]|\b(var|let)\s+` + q + `\b)`)
+	case KindType:
+		return regexp.MustCompile(`\b(class|struct|enum|protocol|actor|typealias)\s+` + q + `\b`)
+	case KindVariable:
+		return regexp.MustCompile(`^\s*(public\s+|private\s+|internal\s+|fileprivate\s+)?(let|var)\s+.*\b` + q + `\b`)
+	}
+	return nil
 }
 
 func declPattern(kind, name, recv string, rust bool) *regexp.Regexp {

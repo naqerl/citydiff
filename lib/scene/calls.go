@@ -42,7 +42,7 @@ func callStep(call lib.Call, change string) CallStep {
 	if call.Ref != nil {
 		step.Path = call.Ref.Path
 		step.Name = call.Ref.Name
-		step.Recv = call.Ref.Recv
+		step.Recv = normRecv(call.Ref.Recv)
 		step.Resolved = true
 	}
 	return step

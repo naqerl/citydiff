@@ -343,7 +343,7 @@ func listFiles(commit *object.Commit, prefix string, exact bool) ([]lib.File, bo
 			return nil, ok, err
 		}
 		if !files.Include(prefix) {
-			return nil, false, fmt.Errorf("%s is not a Go or Rust file", prefix)
+			return nil, false, fmt.Errorf("%s is not a Go, Rust or Swift file", prefix)
 		}
 		return []lib.File{{Path: path.Base(prefix), Src: src}}, true, nil
 	}
