@@ -2749,7 +2749,7 @@ function updateHUD() {
   if (sceneDoc && !sceneDoc.diff) {
     if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
   } else if (mode === "overlay") {
-    note = "Added is green, deleted is red, changed is yellow.";
+    note = "Added is green (+), deleted is red (\u2212), changed is yellow (~).";
   }
   if (jumps.length > 1 && !jumpDetached) {
     const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
@@ -2892,16 +2892,17 @@ function changeTally(entities) {
   const added = entities.filter((entity) => entity.change === "added").length;
   const removed = entities.filter((entity) => entity.change === "removed").length;
   const modified = entities.filter((entity) => entity.change === "modified").length;
-  if (added) line.append(tallySpan("added", added + " added"));
-  if (removed) line.append(tallySpan("removed", removed + " deleted"));
-  if (modified) line.append(tallySpan("modified", modified + " changed"));
+  if (added) line.append(tallySpan("added", "+" + added, added + " added"));
+  if (removed) line.append(tallySpan("removed", "\u2212" + removed, removed + " deleted"));
+  if (modified) line.append(tallySpan("modified", "~" + modified, modified + " changed"));
   return line;
 }
 
-function tallySpan(kind, text) {
+function tallySpan(kind, text, title) {
   const span = document.createElement("span");
   span.className = kind;
   span.textContent = text;
+  if (title) span.title = title;
   return span;
 }
 
@@ -3321,24 +3322,35 @@ function modifiedWord(part, named) {
   return "changed";
 }
 
+// The word a mark stands for, for the hover text.
+function changeWord(change, part, named) {
+  if (change === "added") return "added";
+  if (change === "removed") return "deleted";
+  if (change === "moved") return "moved";
+  return modifiedWord(part, named);
+}
+
+// A mark is one glyph: + added, ~ changed, − deleted, → moved. The colour
+// carries the rest of it — three yellows for a changed declaration — and the
+// words are on hover, where they do not have to fit beside a name.
+const CHANGE_GLYPH = { added: "+", modified: "~", removed: "\u2212", moved: "\u2192" };
+
 function changeMark(change, part, named) {
   if (!change || change === "same" || mode !== "overlay") return null;
   const span = document.createElement("span");
   if (change === "added") {
     span.className = "added";
-    span.textContent = "added";
   } else if (change === "removed") {
     span.className = "removed";
-    span.textContent = "deleted";
   } else if (change === "modified") {
     span.className = modifiedClass(part);
-    span.textContent = modifiedWord(part, named);
   } else if (change === "moved") {
     span.className = "moved";
-    span.textContent = "moved";
   } else {
     return null;
   }
+  span.textContent = CHANGE_GLYPH[change] || "~";
+  span.title = changeWord(change, part, named);
   return span;
 }
 
