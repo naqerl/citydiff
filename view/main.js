@@ -2389,7 +2389,10 @@ function selectExternal(id, inbound = true) {
 function selectEntity(id) {
   const found = byEntity.get(id);
   if (!found || !found.box) return;
-  if (selected && selected.kind === "entity" && selected.id === id && (found.entity.kind === "function" || found.entity.kind === "method")) {
+  // A function is here for its calls: selecting one opens the call diff
+  // straight away, on the calls side, instead of asking for a second click.
+  // Escape leaves the diff and stays on the node.
+  if (found.entity.kind === "function" || found.entity.kind === "method") {
     enterFocus(found);
     return;
   }
@@ -2944,11 +2947,78 @@ function changedInSubtree(pkg) {
 // The children of a node, grouped by kind. Each group is one collapsible
 // section with git's four numbers on its header: what the range added,
 // changed, deleted and left alone.
+// One entry per node at the other end of the arcs: the calls the selected node
+// makes, or the calls it takes, depending on the direction. Clicking an entry
+// is the same as clicking the arc — it selects that node.
+function refRow(node, change) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "row";
+  if (selected && selected.id === node.entity.id) button.classList.add("on");
+  const name = clipText(entityLabel(node.entity));
+  button.append(name);
+  attachMarquee(button, name);
+  const where = document.createElement("span");
+  where.className = "where";
+  where.textContent = node.pkg ? (node.pkg.name || node.pkg.id) : "";
+  button.append(where);
+  const mark = changeMark(change);
+  if (mark) {
+    mark.classList.add("mark");
+    button.append(mark);
+  }
+  button.addEventListener("click", () => openEntity(node.entity.id));
+  return button;
+}
+
+// The same node can be reached by several calls; the list shows it once, with
+// the strongest change among them.
+function mergeByNode(entries) {
+  const byNode = new Map();
+  for (const entry of entries) {
+    const id = entry.node.entity.id;
+    const prev = byNode.get(id);
+    if (!prev) byNode.set(id, { node: entry.node, change: entry.change });
+    else prev.change = strongerChange(prev.change, entry.change);
+  }
+  return [...byNode.values()];
+}
+
+function refsSection() {
+  const subject = subjectNode();
+  if (!subject) return null;
+  let entries = [];
+  if (subject.kind === "entity") {
+    const found = byEntity.get(subject.id);
+    if (!found || !found.box || !hasDirection(found)) return null;
+    entries = subjectLinks(found).map((link) => ({ node: link.target, change: link.change }));
+  } else {
+    const links = callInbound ? packageCallerLinks(subject.id) : packageCallLinks(subject.id);
+    entries = links.map((link) => ({ node: callInbound ? link.from : link.target, change: link.change }));
+  }
+  const merged = mergeByNode(entries);
+  if (!merged.length) return null;
+  return {
+    key: "refs",
+    label: callInbound ? "Callers" : "Calls",
+    hot: deletedFirst(merged.filter((entry) => entry.change !== "same")),
+    same: merged.filter((entry) => entry.change === "same"),
+    row: (entry) => refRow(entry.node, entry.change),
+  };
+}
+
 function roster(pkg) {
   const wrap = document.createElement("div");
   wrap.className = "sections";
-  if (!pkg) return wrap;
+  const refs = refsSection();
+  if (!pkg) {
+    if (refs) wrap.append(sectionBlock(refs, !sectionsTouched));
+    return wrap;
+  }
   const sections = rosterSections(pkg).filter((section) => section.hot.length || section.same.length);
+  // The references come first, so they sit right under the Calls / Callers
+  // buttons and are the section that is open to start from.
+  if (refs) sections.unshift(refs);
   // One section open to start from, the rest folded: the counts on the folded
   // headers say what they hold. Once the user has folded or unfolded something
   // for this node, their choice is what stands.
@@ -3267,9 +3337,6 @@ function entityDetail(entity) {
     size.textContent = sizeText(entity);
     wrap.append(size);
     appendRefs(wrap);
-    const again = document.createElement("p");
-    again.textContent = "Click again or press enter to open the call diff.";
-    wrap.append(again);
   } else if (entity.kind === "type") {
     appendRefs(wrap);
   }
