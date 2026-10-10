@@ -98,10 +98,13 @@ export async function openDiff(target, onClose) {
     if (event.target === root) closeDiff();
   });
   p.onKey = (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeDiff();
-    }
+    if (event.key !== "Escape") return;
+    // The viewer listens on the window, which sees this event after the
+    // document does: by then the overlay is gone and its own guard is stale,
+    // so Escape would close the diff and go back in the city at once.
+    event.preventDefault();
+    event.stopPropagation();
+    closeDiff();
   };
   document.addEventListener("keydown", p.onKey);
   root.focus();
