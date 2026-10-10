@@ -26,7 +26,7 @@ test("typing, modifiers and repeats are not tour actions", () => {
 
 test("every key is listed once, and the README lists them all", () => {
   const all = KEYBINDS.flatMap((b) => b.keys);
-  for (const k of ["b", "t", ",", ".", "space", "/", "?", "o", "i", "m", "0", "esc"]) assert.ok(all.includes(k), k);
+  for (const k of ["E", "b", "t", ",", ".", "space", "/", "?", "o", "i", "m", "0", "esc"]) assert.ok(all.includes(k), k);
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   for (const b of KEYBINDS) {
     for (const k of b.keys) {

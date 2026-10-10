@@ -112,16 +112,20 @@ func walk(src []byte, root *tree_sitter.Node) (pkg string, imports []importUse, 
 			}
 		case "var_declaration":
 			for _, entry := range parseVarDeclaration(src, &n) {
-				entries, calls = grow(entries, calls, entry, nil)
+				entries, calls = grow(entries, calls, at(entry, &n), nil)
 			}
 		case "type_declaration":
-			entries, calls = grow(entries, calls, parseTypeDeclaration(src, &n), nil)
+			name := &n
+			if spec := n.NamedChild(0); spec != nil {
+				name = spec
+			}
+			entries, calls = grow(entries, calls, at(parseTypeDeclaration(src, &n), name), nil)
 		case "method_declaration":
 			entry, body := parseMethodDeclaration(src, &n)
-			entries, calls = grow(entries, calls, entry, body)
+			entries, calls = grow(entries, calls, at(entry, &n), body)
 		case "function_declaration":
 			entry, body := parseFunctionDeclaration(src, &n)
-			entries, calls = grow(entries, calls, entry, body)
+			entries, calls = grow(entries, calls, at(entry, &n), body)
 		default:
 			for _, c := range n.NamedChildren(cursor) {
 				q = append(q, c)
@@ -396,4 +400,13 @@ func fieldTexts(src []byte, node *tree_sitter.Node, field string) []string {
 		texts = append(texts, child.Utf8Text(src))
 	}
 	return texts
+}
+
+// at stamps entry with the position of n's name, or of n.
+func at(entry lib.Entity, n *tree_sitter.Node) lib.Entity {
+	if name := n.ChildByFieldName("name"); name != nil {
+		n = name
+	}
+	p := n.StartPosition()
+	return lib.At(entry, int(p.Row)+1, int(p.Column)+1)
 }

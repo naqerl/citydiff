@@ -23,6 +23,8 @@ type viewer struct {
 	payload []byte
 	tour    []byte
 	build   func(path, commitRange string) (*snapshot, error)
+	// editor is the command E opens a node in; nvim when empty.
+	editor []string
 }
 
 func newViewer(snap *snapshot, tourRaw []byte) (*viewer, error) {
@@ -145,6 +147,7 @@ func (v *viewer) handler() http.Handler {
 		writeJSON(w, http.StatusOK, view)
 	})
 	mountSkins(mux, skinsDir())
+	mux.HandleFunc("GET /api/edit", v.serveEditor)
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	return mux
 }
