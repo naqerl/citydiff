@@ -87,8 +87,15 @@ Serve the 3D viewer (`-view` never exits — run it in a terminal or in the back
 citydiff -path ~/src/myrepo -range main~5..main -view -addr 0.0.0.0:8787
 ```
 
-then open `http://localhost:8787`. The page reads the scene from `GET /scene.json`; the
-viewer assets are embedded in the binary.
+The same viewer runs in Docker. From this repository, `make run-docker` builds
+the image, mounts the project at `/work`, and diffs the two latest commits:
+
+```sh
+make run-docker DOCKER_PATH=~/src/myrepo DOCKER_RANGE=main~5..main
+```
+
+then open `http://localhost:8787` (`PORT` changes the host port). The page reads
+the scene from `GET /scene.json`; the viewer assets are embedded in the binary.
 
 ## Command line
 
