@@ -374,6 +374,7 @@
       font-size: 16px;
       pointer-events: none;
     }
+    #detail .refs { margin: 8px 0 6px; }
   </style>
   <script type="importmap">
   {
@@ -514,7 +515,7 @@
             <rect x="70" y="46" width="8" height="16" fill="#fafafa"/>
           </svg>
         </div>
-        <div><b>Call</b><p>One smooth arc from the top of the caller to the top of the function it calls. Cyan means the call stayed. Several calls to the same function share that one arc.</p></div>
+        <div><b>Call</b><p>One smooth arc from the top of the caller to the top of the function it calls. Cyan means the call stayed. Several calls to the same function share that one arc. The Calls / Callers buttons under the selected node, or the <kbd>c</kbd> key, draw the other direction: the functions that call the selected node. The arcs are the same, and the particles run the other way, back toward it.</p></div>
       </button>
       <h3 class="keys-title">Keys</h3>
       <ul class="keys" id="keys"></ul>

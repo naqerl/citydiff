@@ -13,6 +13,7 @@ export const KEYBINDS = [
   { keys: ["m"], does: "overview / changes" },
   { keys: ["1"], does: "overview" },
   { keys: ["2"], does: "changes" },
+  { keys: ["c"], does: "calls / callers" },
   { keys: ["drag"], does: "orbit" },
   { keys: ["scroll"], does: "zoom" },
   { keys: ["click"], does: "enters" },

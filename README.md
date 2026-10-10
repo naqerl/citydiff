@@ -119,6 +119,14 @@ Two modes, toggled by the `Overview` / `Changes` buttons, `m`, or keys `1` and `
 
 Selecting a package descends into it; selecting a tower opens its call path. The sidebar
 shows the change for whatever is selected, with the resolved calls in source order.
+Under the selected node the sidebar offers **Calls** / **Callers** — a node with nothing to show
+(a package with no declarations, a type with no methods) gets neither — and the `c` key flips
+them, picking which way the arcs run for any node: **Calls** draws the functions a tower
+calls (particles leaving it) or the
+packages a package depends on, **Callers** draws the functions that call it or the packages
+that depend on it. Callers use the same arcs, with the particles running back toward the
+node. Only one of the two is on at a time, and it applies to a type through the methods it
+declares.
 
 The viewer keeps a **vim-style jump list** of every node you select. Press `o` to step to
 an older selection and `i` to step to a newer one — the same directions as vim's `<C-o>`
@@ -134,6 +142,7 @@ entry.
 | `-` `+` | zoom |
 | `drag` / `scroll` | orbit / zoom with the mouse |
 | `click` | enter a package, open a tower |
+| `c` | show calls or callers |
 | `enter` | open a function |
 | `esc` | go back |
 | `o` `i` | jump back / forward through the selection history |
