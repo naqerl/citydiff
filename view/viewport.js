@@ -40,10 +40,12 @@ export function freeFov(fov, height, bottom) {
 // the free area, with fill of it used (0.86 leaves a margin on each side).
 // box is {min: [x, y, z], max: [x, y, z]}. The vertical FOV is the camera's;
 // the horizontal one is narrowed to the free width. minDist keeps a tiny
-// object from filling the screen.
-export function fitPose(box, dir, { fov, width, height, left = 0, right = 0, fill = 0.86, minDist = 14 }) {
+// object from filling the screen. minAspect fits a tall, narrow view as if it
+// were that wide, so on a phone held upright the city is drawn larger and
+// may run past the sides instead of shrinking to the screen's width.
+export function fitPose(box, dir, { fov, width, height, left = 0, right = 0, fill = 0.86, minDist = 14, minAspect = 0 }) {
   const free = insets(width, left, right);
-  const aspect = (width / Math.max(1, height)) * (free.free / Math.max(1, width));
+  const aspect = Math.max(minAspect, (width / Math.max(1, height)) * (free.free / Math.max(1, width)));
   const [x0, y0, z0] = box.min;
   const [x1, y1, z1] = box.max;
   const look = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2 };

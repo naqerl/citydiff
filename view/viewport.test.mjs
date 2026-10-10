@@ -100,3 +100,14 @@ test("the free area above a sheet has a narrower vertical field of view", () => 
   // Half the height: tan of the half angle halves.
   assert.ok(Math.abs(Math.tan((fov * Math.PI) / 360) - Math.tan((42 * Math.PI) / 360) / 2) < 1e-9);
 });
+
+test("minAspect draws a box in a tall view as if the view were that wide", () => {
+  const box = { min: [-20, 0, -20], max: [20, 10, 20] };
+  const tall = { fov: 42, width: 390, height: 800 };
+  const plain = fitPose(box, DIR, tall);
+  const wide = fitPose(box, DIR, { ...tall, minAspect: 1.25 });
+  assert.equal(wide.aspect, 1.25);
+  assert.ok(wide.dist < plain.dist);
+  // A view already wider than minAspect is left alone.
+  assert.equal(fitPose(box, DIR, { ...VIEW, minAspect: 1.25 }).dist, fitPose(box, DIR, VIEW).dist);
+});

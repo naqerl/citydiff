@@ -547,32 +547,35 @@ function setSide(open) {
   syncURL();
 }
 
-// A phone gets one sheet along the bottom in place of the two sidebars.
-const narrow = window.matchMedia("(max-width: 720px)");
+// A touch screen (a phone or a tablet) gets its own layout; desktop never
+// matches. Held upright, the two sidebars are one bottom sheet. Held
+// sideways they stay sidebars.
+const touchUI = window.matchMedia("(hover: none) and (pointer: coarse)");
+const sheetMode = window.matchMedia("(hover: none) and (pointer: coarse) and (orientation: portrait)");
 
-// The phone's sheet shows one sidebar at a time, picked by the tabs under it:
-// the city's own panel, the tour, and the theme menu. A sidebar that opens
-// takes the sheet; tapping the tab that is showing folds it away.
+// The sheet shows one sidebar at a time. With a tour, the tabs under it pick
+// which: the city's own panel or the tour. A sidebar that opens takes the
+// sheet. Folded, the sheet keeps its title row; the grip on top drags it.
 const sheetTabs = {
   side: document.querySelector("#tab-side"),
   tour: document.querySelector("#tab-tour"),
-  theme: document.querySelector("#tab-theme"),
 };
+const tourSideEl = document.querySelector("#tour-side");
 let sheetPane = "side";
 let tourWasOpen = false;
 
 function tourOpen() {
-  const tour = document.querySelector("#tour-side");
-  return !tour.hidden && !tour.classList.contains("is-collapsed");
+  return !tourSideEl.hidden && !tourSideEl.classList.contains("is-collapsed");
 }
 
 function syncSheet() {
-  const hasTour = !document.querySelector("#tour-side").hidden;
+  const hasTour = !tourSideEl.hidden;
   const open = tourOpen();
   if (open && !tourWasOpen) sheetPane = "tour";
   tourWasOpen = open;
   if (!hasTour && sheetPane === "tour") sheetPane = "side";
   document.body.classList.toggle("sheet-tour", sheetPane === "tour");
+  document.body.classList.toggle("has-tour", hasTour);
   sheetTabs.tour.hidden = !hasTour;
   const sideShown = sheetPane === "side" && !hud.side.classList.contains("is-collapsed");
   const tourShown = sheetPane === "tour" && open;
@@ -582,25 +585,109 @@ function syncSheet() {
   sheetTabs.tour.setAttribute("aria-pressed", String(tourShown));
 }
 
+function paneOpen() {
+  return sheetPane === "tour" ? tourOpen() : !hud.side.classList.contains("is-collapsed");
+}
+
+function setPaneOpen(open) {
+  if (sheetPane === "tour") {
+    if (tourUI) tourUI.setOpen(open);
+  } else setSide(open);
+}
+
+function showTourPane() {
+  if (!tourUI) return;
+  sheetPane = "tour";
+  tourWasOpen = true;
+  tourUI.setOpen(true);
+}
+
 sheetTabs.side.addEventListener("click", () => {
   setSide(sheetPane !== "side" || hud.side.classList.contains("is-collapsed"));
 });
 sheetTabs.tour.addEventListener("click", () => {
-  if (!tourUI) return;
-  if (sheetPane === "tour" && tourOpen()) {
-    tourUI.setOpen(false);
-    return;
-  }
-  sheetPane = "tour";
-  tourWasOpen = true;
-  tourUI.setOpen(true);
+  if (sheetPane === "tour" && tourOpen()) tourUI.setOpen(false);
+  else showTourPane();
 });
-sheetTabs.theme.addEventListener("click", () => openSkinPanel());
-narrow.addEventListener("change", () => {
-  closeSearch();
-  syncSheet();
-  requestAnimationFrame(resizeView);
-});
+
+// Folded, the title row is the handle: a tap on it (not on its buttons)
+// opens the sheet again.
+for (const row of [document.querySelector("#title-row"), document.querySelector("#tour-title-row")]) {
+  row.addEventListener("click", (event) => {
+    if (!sheetMode.matches || paneOpen() || event.target.closest("button")) return;
+    setPaneOpen(true);
+  });
+}
+
+// The grip: a tap folds or opens the sheet, a drag sets its height. Let go
+// low enough and it folds; the height it had stays for the next time.
+const SHEET_FOLD_PX = 140;
+let sheetHeight = 0;
+let sheetDrag = null;
+
+function sheetMax() {
+  const tabs = document.querySelector("#sheet-tabs").getBoundingClientRect().height || 0;
+  return Math.max(SHEET_FOLD_PX, window.innerHeight - tabs - 24);
+}
+
+function setSheetHeight(px) {
+  document.body.style.setProperty("--sheet-h", Math.round(px) + "px");
+}
+
+for (const grip of document.querySelectorAll(".sheet-grip")) {
+  grip.addEventListener("pointerdown", (event) => {
+    if (!sheetMode.matches) return;
+    event.preventDefault();
+    grip.setPointerCapture(event.pointerId);
+    const pane = grip.parentElement.getBoundingClientRect();
+    sheetDrag = { id: event.pointerId, y: event.clientY, from: pane.height, open: paneOpen(), moved: false, height: pane.height };
+  });
+  grip.addEventListener("pointermove", (event) => {
+    const drag = sheetDrag;
+    if (!drag || drag.id !== event.pointerId) return;
+    const dy = drag.y - event.clientY;
+    if (!drag.moved && Math.abs(dy) < 6) return;
+    drag.moved = true;
+    drag.height = Math.min(sheetMax(), Math.max(40, drag.from + dy));
+    setSheetHeight(drag.height);
+    if (!paneOpen()) setPaneOpen(true);
+    else requestAnimationFrame(resizeView);
+  });
+  const end = (event) => {
+    const drag = sheetDrag;
+    if (!drag || drag.id !== event.pointerId) return;
+    sheetDrag = null;
+    if (!drag.moved) {
+      setPaneOpen(!drag.open);
+      return;
+    }
+    if (drag.height < SHEET_FOLD_PX) {
+      if (sheetHeight) setSheetHeight(sheetHeight);
+      else document.body.style.removeProperty("--sheet-h");
+      setPaneOpen(false);
+      return;
+    }
+    sheetHeight = drag.height;
+    requestAnimationFrame(resizeView);
+  };
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+}
+
+document.querySelector("#side-theme").addEventListener("click", () => openSkinPanel());
+// The list under the search box is placed on the page, not in the sidebar,
+// so it follows the sidebar when that scrolls.
+hud.side.addEventListener("scroll", placeResults, { passive: true });
+// iOS zooms the page on a pinch whatever the viewport says. The city has its
+// own pinch, and the page itself never zooms.
+if (touchUI.matches) document.addEventListener("gesturestart", (event) => event.preventDefault());
+for (const query of [touchUI, sheetMode]) {
+  query.addEventListener("change", () => {
+    closeSearch();
+    syncSheet();
+    requestAnimationFrame(resizeView);
+  });
+}
 syncSheet();
 let arcSubject = null;
 let entitySubject = null;
@@ -692,7 +779,14 @@ const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
 // resize hook is assigned there; until then resizing has nothing to rescale.
 let updatePointScale = () => {};
 
-let viewInsets = { left: 0, right: 0, bottom: 0, free: 1, width: 1, height: 1, fov: 42 };
+let viewInsets = { left: 0, right: 0, bottom: 0, free: 1, width: 1, height: 1, fov: 42, minAspect: 0 };
+// Upright, a fit draws the city as if the screen were this wide: larger, and
+// running past the sides rather than shrunk to a phone's width.
+const UPRIGHT_ASPECT = 1.25;
+const UPRIGHT_SKIN_ASPECT = 0.7;
+// The shape the theme menu last framed the city for, so turning the phone
+// while it is open frames the city again.
+let skinFitShape = "";
 // The theme menu frames the city in the middle 70% and takes the keys.
 let skinPicking = false;
 // Applying a preview walks the lines outward. The camera and the sidebars stay
@@ -705,9 +799,9 @@ function coverOf(selector) {
   return el.getBoundingClientRect().width;
 }
 
-// How much of the view the bottom sheet and its tabs cover, on a phone.
+// How much of the view the bottom sheet and its tabs cover, held upright.
 function coverBelow() {
-  if (!narrow.matches || skinPicking) return 0;
+  if (!sheetMode.matches || skinPicking) return 0;
   const view = viewEl.getBoundingClientRect();
   let edge = view.bottom;
   for (const selector of ["#sheet-tabs", "#side", "#tour-side"]) {
@@ -727,6 +821,7 @@ function fitTo(points, dir = FIT_DIR) {
     height: viewInsets.height,
     left: viewInsets.left,
     right: viewInsets.right,
+    minAspect: viewInsets.minAspect,
   });
   return { pos: new THREE.Vector3(...pose.pos), target: new THREE.Vector3(...pose.target) };
 }
@@ -744,8 +839,8 @@ function resizeView() {
   // the middle of the free area, and fits use only its width.
   // The theme menu uses the middle 70%. Otherwise the tour takes the right edge.
   const band = skinPicking ? w * 0.15 : 0;
-  // On a phone the sheet covers the bottom instead, and the city sits above it.
-  const side = !skinPicking && !narrow.matches;
+  // Upright, the sheet covers the bottom instead, and the city sits above it.
+  const side = !skinPicking && !sheetMode.matches;
   const right = skinPicking ? band : side ? coverOf("#tour-side") : 0;
   const left = skinPicking ? band : side ? coverOf("#side") : 0;
   const bottom = Math.min(coverBelow(), Math.max(0, h - 160));
@@ -754,6 +849,8 @@ function resizeView() {
   viewInsets.height = h - bottom;
   viewInsets.bottom = bottom;
   viewInsets.fov = freeFov(camera.fov, h, bottom);
+  // The theme menu frames the city in its middle band: a smaller boost there.
+  viewInsets.minAspect = !sheetMode.matches ? 0 : skinPicking ? UPRIGHT_SKIN_ASPECT : UPRIGHT_ASPECT;
   // The loading bar centres in the same free area the camera frames: the full
   // stage spans the window, and the sidebars (or the bottom sheet) cover its edges.
   loadUI.root.style.paddingLeft = viewInsets.left + "px";
@@ -768,6 +865,9 @@ function resizeView() {
   updatePointScale();
   placeResults();
   layoutSkinFrame();
+  // Turned while the theme menu is open: frame the whole city for the new shape.
+  const shape = w > h ? "wide" : "tall";
+  if (skinPicking && laid && skinFitShape && skinFitShape !== shape) frameSkinCity();
   viewDirty = true;
   requestFrame();
 }
@@ -1385,7 +1485,7 @@ function frameCity(margin = 0.92) {
   for (const ext of laid.externals) {
     points.push({ x: ext.x, y: ext.y + ext.h, z: ext.z });
   }
-  const aspect = (viewInsets.width / Math.max(1, viewInsets.height)) * (viewInsets.free / Math.max(1, viewInsets.width));
+  const aspect = Math.max(viewInsets.minAspect, (viewInsets.width / Math.max(1, viewInsets.height)) * (viewInsets.free / Math.max(1, viewInsets.width)));
   const dist = fitDistance(points, look, dir, viewInsets.fov, aspect, margin);
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   return {
@@ -4365,10 +4465,15 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   if (tourUI) tourUI.userTookOver();
   tween = null;
 });
-renderer.domElement.addEventListener("pointermove", (event) => {
+function aimPointer(x, y) {
   const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  pointer.x = ((x - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((y - rect.top) / rect.height) * 2 + 1;
+}
+// Hover names follow a mouse. A finger has no hover: it only aims taps.
+renderer.domElement.addEventListener("pointermove", (event) => {
+  aimPointer(event.clientX, event.clientY);
+  if (event.pointerType !== "mouse") return;
   pointerDirty = true;
   requestFrame();
 });
@@ -4386,8 +4491,75 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   // A fingertip wobbles more than a mouse does.
   if (moved > (start.touch ? 10 : 5) || start.button !== 0) return;
   if (bird.on) return;
+  if (start.touch) {
+    countTap(event.clientX, event.clientY);
+    return;
+  }
   activate(describeHit(hitTest()));
 });
+
+// Touch taps are counted before they act. One tap does what a click does,
+// and a tap on the ground or the sky is Escape. Two taps zoom in toward the
+// spot, three zoom out. A tap waits out the pause in which the next one
+// could arrive, so the second tap of a zoom never also selects.
+const TAP_GAP_MS = 260;
+const TAP_SLOP_PX = 40;
+let taps = null;
+
+function countTap(x, y) {
+  if (taps && Math.hypot(x - taps.x, y - taps.y) <= TAP_SLOP_PX) {
+    taps.count++;
+    clearTimeout(taps.timer);
+  } else {
+    if (taps) {
+      clearTimeout(taps.timer);
+      runTaps(taps);
+    }
+    taps = { x, y, count: 1, timer: 0 };
+  }
+  const now = taps;
+  now.timer = setTimeout(() => {
+    if (taps === now) taps = null;
+    runTaps(now);
+  }, TAP_GAP_MS);
+}
+
+function runTaps({ x, y, count }) {
+  if (skinPicking || !laid) return;
+  aimPointer(x, y);
+  noteActivity();
+  endIntro();
+  if (count === 1) {
+    const found = describeHit(hitTest());
+    if (found) activate(found);
+    else goBack();
+  } else if (count === 2) zoomToward(0.5, true);
+  else zoomToward(2, false);
+  requestFrame();
+}
+
+const tapGround = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const tapSpot = new THREE.Vector3();
+
+// Move the camera k times its distance from the look-at point. Zooming in
+// also slides the look-at point halfway to where the finger landed.
+function zoomToward(k, toSpot) {
+  const target = (tween ? tween.toTarget : controls.target).clone();
+  const pos = (tween ? tween.toPos : camera.position).clone();
+  if (toSpot) {
+    raycaster.setFromCamera(pointer, camera);
+    tapGround.constant = -target.y;
+    if (raycaster.ray.intersectPlane(tapGround, tapSpot)) {
+      const shift = tapSpot.sub(target).multiplyScalar(0.5);
+      target.add(shift);
+      pos.add(shift);
+    }
+  }
+  const away = pos.sub(target);
+  const dist = Math.min(controls.maxDistance, Math.max(controls.minDistance, away.length() * k));
+  away.setLength(dist);
+  flyTo(target.clone().add(away), target);
+}
 
 function closeSearch() {
   searchHits = [];
@@ -4558,6 +4730,19 @@ window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFram
 // own keys and before the tour. While the menu is open those keys do nothing.
 window.addEventListener("keydown", (event) => {
   if (event.target === hud.search) return;
+  // The theme menu's own find box types freely; Enter and Escape are its.
+  if (event.target === skinSearch) {
+    event.stopImmediatePropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      skinSearch.blur();
+      void acceptSkin();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeSkinSearch();
+    }
+    return;
+  }
   if (!skinPicking && !skinRevealing) return;
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -4773,7 +4958,7 @@ function setLegend(open) {
 
 // The arrow hides the panel on click, not on the way past it: pointing at it
 // used to collapse the sidebar out from under the pointer.
-hud.collapse.addEventListener("click", () => setSide(false));
+hud.collapse.addEventListener("click", () => setSide(sheetMode.matches && hud.side.classList.contains("is-collapsed")));
 hud.help.addEventListener("click", () => setLegend(hud.legend.hidden));
 hud.logo.addEventListener("click", () => setSide(true));
 document.querySelector("#legend-close").addEventListener("click", () => setLegend(false));
@@ -4824,6 +5009,7 @@ const skinName = document.querySelector("#skin-name");
 const skinCount = document.querySelector("#skin-count");
 const skinLinePrev = document.querySelector("#skin-line-prev");
 const skinLineNext = document.querySelector("#skin-line-next");
+const skinSearch = document.querySelector("#skin-search");
 let skinChoices = null;
 let skinPreview = null;
 let skinPose = null;
@@ -5218,14 +5404,17 @@ async function openSkinPanel() {
     introSpin = false;
     onHover(null);
     resizeView();
-    if (laid) {
-      const pose = frameCity(0.84);
-      applyFitLimits(pose);
-      flyTo(pose.pos, pose.target);
-    }
+    if (laid) frameSkinCity();
   }
   paintSkinMenu();
   skinMenu.focus({ preventScroll: true });
+}
+
+function frameSkinCity() {
+  skinFitShape = viewEl.clientWidth > viewEl.clientHeight ? "wide" : "tall";
+  const pose = frameCity(0.84);
+  applyFitLimits(pose);
+  flyTo(pose.pos, pose.target);
 }
 
 async function closeSkinPanel() {
@@ -5234,6 +5423,8 @@ async function closeSkinPanel() {
   const preview = skinPreview;
   skinPreview = null;
   skinPicking = false;
+  skinFitShape = "";
+  closeSkinSearch();
   skinMenu.hidden = true;
   document.body.classList.remove("skin-open");
   controls.enabled = true;
@@ -5306,7 +5497,7 @@ const SKIN_SWIPE_PX = 40;
 
 window.addEventListener("pointerdown", (event) => {
   if (!skinPicking || skinRevealing || event.pointerType === "mouse" || !confirmEl.hidden) return;
-  if (event.target.closest && event.target.closest("#skin-actions")) return;
+  if (event.target.closest && event.target.closest("#skin-actions, #skin-find")) return;
   skinSwipe = { id: event.pointerId, x: event.clientX, y: event.clientY };
 }, true);
 window.addEventListener("pointercancel", () => { skinSwipe = null; }, true);
@@ -5330,6 +5521,34 @@ function swipedJustNow() {
 
 skinPrev.addEventListener("click", () => { if (!swipedJustNow()) moveSkinCursor(-1); });
 skinNext.addEventListener("click", () => { if (!swipedJustNow()) moveSkinCursor(1); });
+// Without a keyboard there are no letters to find a theme by: the magnifier
+// opens a box (and the phone's keyboard) that finds the same way they do.
+function openSkinSearch() {
+  skinSearch.hidden = false;
+  skinSearch.value = "";
+  skinSearch.focus({ preventScroll: true });
+}
+
+function closeSkinSearch() {
+  skinSearch.value = "";
+  skinSearch.hidden = true;
+  if (document.activeElement === skinSearch) skinSearch.blur();
+  if (skinPicking) skinMenu.focus({ preventScroll: true });
+}
+
+document.querySelector("#skin-find-open").addEventListener("click", () => {
+  if (skinSearch.hidden) openSkinSearch();
+  else closeSkinSearch();
+});
+skinSearch.addEventListener("input", () => {
+  const query = skinSearch.value.trim().toLowerCase();
+  if (query) queueSkinFind(query);
+  else clearSkinFind();
+});
+skinSearch.addEventListener("blur", () => {
+  if (!skinSearch.value) skinSearch.hidden = true;
+});
+
 // Without a keyboard there is no Enter or Escape: these two stand in for them.
 document.querySelector("#skin-apply").addEventListener("click", () => { void acceptSkin(); });
 document.querySelector("#skin-cancel").addEventListener("click", () => closeSkinPanel());
