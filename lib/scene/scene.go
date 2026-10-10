@@ -24,12 +24,17 @@ const (
 )
 
 // Scene is one city. Root is the module package the others sit inside.
+// A range whose two sides name different modules — a rename — has no single
+// root package, and then Module and Root stay empty while ModuleBefore and
+// ModuleAfter carry the two names, so the viewer can say why there is no root.
 // Diff is false when the scene is a single snapshot.
 type Scene struct {
-	Module   string    `json:"module,omitempty"`
-	Root     string    `json:"root,omitempty"`
-	Diff     bool      `json:"diff"`
-	Packages []Package `json:"packages"`
+	Module       string    `json:"module,omitempty"`
+	Root         string    `json:"root,omitempty"`
+	ModuleBefore string    `json:"moduleBefore,omitempty"`
+	ModuleAfter  string    `json:"moduleAfter,omitempty"`
+	Diff         bool      `json:"diff"`
+	Packages     []Package `json:"packages"`
 }
 
 // Package is one Go package, or a synthetic module root that only holds
@@ -120,6 +125,9 @@ func Build(left, right []lib.ParsedFile) Scene {
 			out.Module = mod
 			out.Root = mod
 		}
+	} else {
+		out.ModuleBefore = strings.Join(moduleNames(left), ", ")
+		out.ModuleAfter = strings.Join(moduleNames(right), ", ")
 	}
 
 	var pkgs []Package
@@ -133,6 +141,22 @@ func Build(left, right []lib.ParsedFile) Scene {
 	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].ID < pkgs[j].ID })
 	out.Packages = pkgs
 	return out
+}
+
+// moduleNames lists the module paths one side of a range names, deduplicated
+// and sorted. One parse names one module, unless the side is empty.
+func moduleNames(files []lib.ParsedFile) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, file := range files {
+		if file.Module == "" || seen[file.Module] {
+			continue
+		}
+		seen[file.Module] = true
+		names = append(names, file.Module)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func addFiles(groups map[string]*group, files []lib.ParsedFile, left bool) {

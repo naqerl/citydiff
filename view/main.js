@@ -4,7 +4,6 @@ import { deletedFirst } from "./changes.js";
 import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
-import { packageCallEdges } from "./edges.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, fitPose, boxOf } from "./viewport.js";
 import { KEYBINDS } from "./keys.js";
@@ -1362,8 +1361,13 @@ function vary(id, color) {
 // The overview draws an arc for every import that was added or deleted, and
 // for every pair of modules whose calls changed while the import stayed.
 function buildArcs() {
-  // An edge runs from the centre of the top of the package the calls come
-  // from to the centre of the top of the package they go to.
+  // The calls the diff changed are drawn between the towers that make them:
+  // the same arcs a selection draws, for the whole range at once. The frame
+  // the selection would use is left alone — the overview is not a selection.
+  // This comes first because it starts from an empty group.
+  drawCallLinks(arcGroup, mergePairLinks(changedCallLinks()), false);
+  // Added and removed package dependencies stay module-level: they are edges
+  // between modules, not calls, and there is no tower to hang them on.
   const drawn = new Set();
   const draw = (from, to, change) => {
     const start = packageAnchor(from);
@@ -1381,21 +1385,20 @@ function buildArcs() {
       draw(pkg.id, dep.to, dep.change);
     }
   }
-  for (const edge of packageCallEdges(changedCalls())) {
-    if (!drawn.has(edge.from + "\0" + edge.to)) draw(edge.from, edge.to, edge.change);
-  }
 }
 
-function changedCalls() {
-  const calls = [];
+// Every call the diff changed, as a link between the two towers involved.
+function changedCallLinks() {
+  const links = [];
   for (const found of byEntity.values()) {
-    if (!found.box || !found.pkg) continue;
+    if (!found.box) continue;
     for (const link of entityLinks(found)) {
-      if (!link.step || !link.target.pkg) continue;
-      calls.push({ from: found.pkg.id, to: link.target.pkg.id, change: link.change });
+      const change = link.step && link.step.change;
+      if (!change || change === "same") continue;
+      links.push({ from: found, target: link.target, far: link.target, change, step: link.step });
     }
   }
-  return calls;
+  return links;
 }
 
 // The arc starts a little above the roof, so it is plainly leaving the
@@ -2156,61 +2159,76 @@ function litForEntity(found) {
   return { entities, packages: null };
 }
 
-function rawPackageCalls(id) {
-  if (mode !== "overlay") return [];
+// The calls that leave a package are the calls its towers make. A package is
+// not one caller: the arc starts at the function or method that writes the
+// call, so the city shows which declaration reaches where.
+function packageCallLinks(id) {
   const links = [];
   for (const found of byEntity.values()) {
     if (!found.box || !found.pkg || found.pkg.id !== id) continue;
-    const kind = found.entity.kind;
-    if (kind !== "function" && kind !== "method") continue;
     for (const link of entityLinks(found)) {
-      if (!link.change || link.change === "same") continue;
-      links.push({ from: found, target: link.target, change: link.change, step: link.step });
+      links.push({ from: found, target: link.target, far: link.target, change: link.change, step: link.step });
     }
   }
   return links;
 }
 
-// Several callers of one function share a single arc.
-// Added and deleted together read as changed.
-function mergeCallLinks(links) {
-  const byTarget = new Map();
+// The calls that enter a package land on the towers that are called, and they
+// start at the tower that makes the call.
+function packageCallerLinks(id) {
+  const links = [];
+  for (const found of byEntity.values()) {
+    if (!found.box || !found.pkg || found.pkg.id !== id) continue;
+    for (const link of callerLinks(found)) {
+      links.push({ from: link.target, target: found, far: link.target, change: link.change, step: link.step });
+    }
+  }
+  return links;
+}
+
+// One arc per pair of towers. Several calls from one function to another share
+// it, and the stronger change is the one the arc keeps. Added and deleted
+// together read as changed.
+function mergePairLinks(links) {
+  const byPair = new Map();
   const rank = { same: 0, modified: 1, removed: 2, added: 3 };
   for (const link of links) {
-    const key = link.target.entity.id;
-    const prev = byTarget.get(key);
+    const key = link.from.entity.id + "\u0000" + link.target.entity.id;
+    const prev = byPair.get(key);
     if (!prev) {
-      byTarget.set(key, { from: link.from, target: link.target, change: link.change, step: link.step, changes: new Set([link.change]) });
+      byPair.set(key, { from: link.from, target: link.target, far: link.far || link.target, change: link.change, step: link.step, changes: new Set([link.change]) });
       continue;
     }
     prev.changes.add(link.change);
     if ((rank[link.change] || 0) >= (rank[prev.change] || 0)) {
-      prev.from = link.from;
       prev.step = link.step;
       prev.change = link.change;
     }
   }
-  for (const link of byTarget.values()) {
+  for (const link of byPair.values()) {
     if (link.changes.has("added") && link.changes.has("removed")) link.change = "modified";
   }
-  return [...byTarget.values()];
+  return [...byPair.values()];
 }
 
 function litForPackage(id, inbound) {
   const packages = new Set([id]);
-  if (inbound) {
-    for (const edge of packageEdges(id, true)) packages.add(edge.from);
-    return { packages, entities: null, browse: null, links: null };
-  }
-  const raw = rawPackageCalls(id);
-  if (raw.length) {
+  const links = inbound ? packageCallerLinks(id) : packageCallLinks(id);
+  if (links.length) {
     const entities = new Set();
-    for (const link of raw) {
+    for (const link of links) {
       entities.add(link.from.entity.id);
       entities.add(link.target.entity.id);
       if (link.target.pkg) packages.add(link.target.pkg.id);
+      if (link.from.pkg) packages.add(link.from.pkg.id);
     }
-    return { packages, entities, browse: null, links: mergeCallLinks(raw) };
+    return { packages, entities, browse: null, links: mergePairLinks(links) };
+  }
+  // No tower here makes a call, or is called: a package outside the tree has
+  // no declarations at all, so its dependency fan is all there is to draw.
+  if (inbound) {
+    for (const edge of packageEdges(id, true)) packages.add(edge.from);
+    return { packages, entities: null, browse: null, links: null };
   }
   for (const edge of packageEdges(id, false)) packages.add(edge.to);
   return { packages, entities: null, browse: id, links: null };
@@ -2239,7 +2257,7 @@ function drawEntityLinks(group, found) {
   }
 }
 
-function drawCallLinks(group, links) {
+function drawCallLinks(group, links, publish = true) {
   clearGroup(group);
   const points = [];
   const frame = [];
@@ -2258,8 +2276,10 @@ function drawCallLinks(group, links) {
     frame.push(...entityExtent(link.from), ...entityExtent(link.target));
     frame.push([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + lift * 0.75, (from[2] + to[2]) / 2]);
   }
-  linkPoints = points;
-  linkFrame = frame;
+  if (publish) {
+    linkPoints = points;
+    linkFrame = frame;
+  }
 }
 
 function changeColor(change) {
@@ -2773,6 +2793,30 @@ function renderDetail() {
   const id = (selected && selected.id) || (sceneDoc && sceneDoc.root);
   const pkg = id ? byPackage.get(id) : null;
   if (pkg) hud.detail.append(packageDetail(pkg));
+  else hud.detail.append(noRootDetail());
+}
+
+// A range whose two sides name different modules — a rename — has no single
+// module, so the scene carries no root and there is no package to describe.
+// Without this the sidebar came up empty and said nothing about why.
+function noRootDetail() {
+  const wrap = document.createElement("div");
+  const title = document.createElement("h2");
+  title.textContent = "no root package";
+  wrap.append(title);
+  const before = (sceneDoc && sceneDoc.moduleBefore) || "";
+  const after = (sceneDoc && sceneDoc.moduleAfter) || "";
+  const line = document.createElement("p");
+  if (before && after && before !== after) {
+    line.textContent = "This range changes the module path: " + before + " \u2192 " + after + ". There is no single module, so there is no root package to show.";
+  } else {
+    line.textContent = "This range has no single module, so there is no root package to show.";
+  }
+  wrap.append(line);
+  const hint = document.createElement("p");
+  hint.textContent = "Press / and search for a package or a function.";
+  wrap.append(hint);
+  return wrap;
 }
 
 function packageDetail(pkg) {
