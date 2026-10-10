@@ -1,6 +1,6 @@
 // A skin is a JSON object. Each key is one thing the viewer draws.
 // A file may set any subset. Omitted keys keep the dark skin.
-// Built-ins and skins from the -skins directory are served at /skins/<name>/skin.json.
+// Built-ins and skins from $CITYDIFF_SKINS_DIR are served at /skins/<name>/skin.json.
 // A directory may ship skin.js. The page runs it once and keeps the JSON it returns.
 // The page address takes a skin name. A path or a URL there is refused.
 
@@ -29,10 +29,12 @@ const DARK_URL = "/skins/dark/skin.json";
 
 const SKIN_NAME = /^[A-Za-z0-9_-]+$/;
 
+// The page owns the choice: an empty spec is the built-in dark skin, a name
+// is a skin the server serves. A path or a URL is not a name.
 export function skinURL(spec) {
   const name = String(spec ?? "").trim();
-  if (!name) return "/skins/active/skin.json";
-  if (name === "active" || !SKIN_NAME.test(name)) return "";
+  if (!name) return DARK_URL;
+  if (!SKIN_NAME.test(name)) return "";
   return "/skins/" + name + "/skin.json";
 }
 

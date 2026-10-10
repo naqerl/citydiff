@@ -2,7 +2,7 @@
 
 A skin recolours the citydiff viewer. It is one JSON file. Each top-level key is one drawn element: the sky, the floor, a kind of block, a call arc, the name on a building, or the page around the city.
 
-A file may set any subset of those keys. A key you leave out keeps the value from [dark](skins/dark/skin.json). [light](skins/light/skin.json) is the other built-in skin, the same city on a light ground. Both are always available. Custom skins stay outside this repository. Put them in the skins directory, or pass one path with `-skin`.
+A file may set any subset of those keys. A key you leave out keeps the value from [dark](skins/dark/skin.json). [light](skins/light/skin.json) is the other built-in skin, the same city on a light ground. Both are always available. Custom skins stay outside this repository: put them in the skins directory and the viewer finds them.
 
 The default column in the tables below is the dark skin. The link on each field opens the line that reads it.
 
@@ -20,22 +20,52 @@ The default column in the tables below is the dark skin. The link on each field 
 ## Choose a skin
 
 ```sh
-citydiff -path . -view
-citydiff -path . -view -skin light
-citydiff -path . -view -skin paper
-citydiff -path . -view -skin ~/skins/paper
-citydiff -path . -view -skins ~/skins
+citydiff -path . -view                      # dark, then /skin in the page
+CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 ```
 
-`-skin` and `-skins` also work on `citydiff tour serve`. An empty `-skin` selects dark.
+Choosing a skin is the page's job. The viewer process only learns where the extra skins
+live, and it learns that from the environment, not from a flag.
+
+### The theme panel
+
+Type `/` in the search box: it lists the commands, and `/skin` is the one that opens the
+theme panel in the right sidebar, where the tour plays. `↑` / `↓` and `tab` / `shift-tab`
+walk the completions. The panel lists every skin the viewer serves — the built-ins first,
+then the skins directory.
+
+- **Click a theme** to preview it, or walk the list with `↑` / `↓` once the panel has the
+  keyboard (it takes it when it opens). The city recolours in place, in a 450 ms fade: the
+  camera, the selection, the focus, the mode and an open tour all stay where they are. While
+  the panel is open the arrows belong to it, not to the camera.
+- **Save** remembers it for this browser and closes the panel. Until you press Save, nothing
+  is remembered.
+- **Close** the panel (the ×, or `esc`) and an unsaved preview is dropped: the saved theme
+  comes back. That way the theme you see is always the theme that is stored.
+
+`/skin` also works while the viewer serves a tour (`citydiff tour serve`): the panel and the
+tour sidebar share the right edge, and the theme outlives the tour.
+
+### Where the choice is kept
+
+The saved theme lives in the browser, under the `citydiff.skin` key in localStorage. It is
+not in the address bar and not on the command line: nothing the process was started with can
+override what the browser saved, and opening the same viewer in another browser starts from
+`dark`. A stored name that no longer resolves (the skins directory moved, say) falls back to
+`dark` with a note in the sidebar.
 
 ### Built-in skins
 
-`dark` and `light` ship inside the program. `dark` is the skin the page opens on. A folder of the same name in the skins directory does not replace a built-in. To open that folder, pass its path to `-skin`.
+`dark` and `light` ship inside the program. `dark` is what a browser opens with until
+something else is saved. A folder of the same name in the skins directory does not replace a
+built-in.
 
 ### The skins directory
 
-`-skins` is a directory of extra skins. Its default is `~/.config/citydiff/skins`. When that directory is missing, it is left uncreated and the only skins are the built-in ones.
+`CITYDIFF_SKINS_DIR` is a directory of extra skins. The default is `~/.config/citydiff/skins`.
+When that directory is missing, it is left uncreated and the only skins are the built-in ones.
+A path that is not a directory is reported on stderr and the viewer starts anyway, with the
+built-ins.
 
 Each entry in the directory is one skin:
 
@@ -45,35 +75,16 @@ Each entry in the directory is one skin:
 | `paper/skin.js` | `paper`, when the directory has no `skin.json`. The page runs the script once and uses the JSON object it returns. |
 | `ink.json` | `ink`. The file is the whole skin. |
 
-A name is letters, digits, `_`, and `-`. Other files in the directory are ignored. When both `paper/skin.json` and `paper.json` exist, the directory is the skin.
+A name is letters, digits, `_`, and `-`. Other files in the directory are ignored. When both
+`paper/skin.json` and `paper.json` exist, the directory is the skin. A name that is built in
+(`dark`, `light`) is never taken from this directory.
 
-### `-skin`
+### What the page asks the server for
 
-`-skin` chooses the skin the page opens on.
-
-| `-skin` value | What opens |
-| --- | --- |
-| empty | `dark` |
-| a built-in name | That skin. `dark` and `light` are built in. |
-| A name from the skins directory | That skin. The other skins in the directory stay available. |
-| A path to a directory | `skin.json` in that directory, or `skin.js` when there is no `skin.json`. Files next to it are served with the skin. |
-| A path to a file | That file. A `.js` file is run the same way as `skin.js`. |
-
-A path that exists is used as the skin. A bare name selects a built-in, then a skin from the skins directory. An unknown name, or a directory with no `skin.json` or `skin.js`, is an error and the viewer does not start. A path passed to `-skin` is the skin the page opens on. It is not added to the skins directory.
-
-### On the page
-
-`?skin=` takes a skin name. A path or a URL in that parameter is refused, and the page opens dark.
-
-| Query | What loads |
-| --- | --- |
-| no `skin` parameter, or `?skin=` | The skin selected with `-skin`. |
-| `?skin=light` | The built-in light skin. |
-| `?skin=paper` | The skin of that name from the skins directory. |
-
-The name may contain letters, digits, `_`, and `-`. Every skin is filled in from dark. If the name cannot be read, the page uses dark and says so in the sidebar note.
-
-The brush button in the bottom-right corner lists the built-in skins and the skins loaded from the skins directory. A path passed to `-skin` is on that list too. Choosing a named skin sets `?skin=` and recolours the open city. The camera, the selection, and the tour stay where they are. Choosing the path skin clears `?skin=`.
+The page reads `GET /skins.json` for the menu, and `GET /skins/<name>/skin.json` for a skin.
+A skin served from the skins directory may also fetch the files beside it
+(`GET /skins/<name>/<file>`), which is how a shader or a texture loads. There is no
+server-side "current" skin: every request names what it wants.
 
 ## A script
 
@@ -367,16 +378,14 @@ paper/
 }
 ```
 
-Put that directory at `~/.config/citydiff/skins/paper` and open `http://127.0.0.1:8787/?skin=paper`. The page opens on dark until the query names the skin. To open paper immediately:
+Put that directory at `~/.config/citydiff/skins/paper` (the default skins directory) and open
+the viewer: `/skin` in the page lists `paper` beside `dark` and `light`. Click it to preview
+it and Save to keep it.
+
+A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 
 ```sh
-citydiff -path . -view -skin paper
+CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 ```
 
-A skin that lives somewhere else is passed by path. That path is the skin the page opens on, and `?skin=` still switches among `dark`, `light`, and the skins directory.
-
-```sh
-citydiff -path . -view -skin ~/skins/paper
-```
-
-`?skin=light` compares it with the built-in light skin. `?skin=` with no value returns to the skin `-skin` selected.
+Picking the built-in `light` in the theme panel compares it with the built-in light skin.

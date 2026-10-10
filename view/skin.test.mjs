@@ -113,16 +113,16 @@ test("the page address takes a skin name", async () => {
 });
 
 test("skin addresses", () => {
-  assert.equal(skinURL(""), "/skins/active/skin.json");
-  assert.equal(skinURL(null), "/skins/active/skin.json");
+  assert.equal(skinURL(""), "/skins/dark/skin.json");
+  assert.equal(skinURL(null), "/skins/dark/skin.json");
+  assert.equal(skinURL("active"), "/skins/active/skin.json");
   assert.equal(skinURL("light"), "/skins/light/skin.json");
   assert.equal(skinURL("paper"), "/skins/paper/skin.json");
   assert.equal(skinURL(" https://example.com/a.json "), "");
   assert.equal(skinURL("../paper"), "");
   assert.equal(skinURL("/tmp/paper/skin.json"), "");
-  assert.equal(skinURL("active"), "");
-  assert.equal(assetURL("http://citydiff.local/skins/active/skin.json", "sky.webp"), "http://citydiff.local/skins/active/sky.webp");
-  assert.equal(assetURL("http://citydiff.local/skins/active/skin.json", "/skins/dark/sky.webp"), "/skins/dark/sky.webp");
+  assert.equal(assetURL("http://citydiff.local/skins/paper/skin.json", "sky.webp"), "http://citydiff.local/skins/paper/sky.webp");
+  assert.equal(assetURL("http://citydiff.local/skins/paper/skin.json", "/skins/dark/sky.webp"), "/skins/dark/sky.webp");
   assert.equal(skyboxKind(dark.background.skybox), "gradient");
   assert.equal(skyboxKind("sky.webp"), "equirect");
   assert.equal(skyboxKind(["px", "nx", "py", "ny", "pz", "nz"]), "cube");

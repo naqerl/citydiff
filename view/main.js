@@ -60,15 +60,17 @@ function useTheme(next) {
   document.documentElement.classList.add("theme-ready");
 }
 
+// The theme is a browser preference: it is remembered in localStorage, never
+// in the address, and the process has no say in it.
 async function readTheme() {
-  const spec = new URLSearchParams(location.search).get("skin");
+  const spec = storedSkin();
   try {
     const skin = await loadSkin(spec);
     await loadShade(skin);
     if (skin.shadeWarning) skinWarning = skin.shadeWarning;
     return skin;
   } catch (err) {
-    if (spec && spec !== "dark") {
+    if (spec !== "dark") {
       try {
         skinWarning = "Could not read skin " + spec + ". " + err.message;
         const skin = await loadSkin("dark");
@@ -440,6 +442,7 @@ const byDecl = new Map();
 const callersOf = new Map();
 const catalog = [];
 let searchHits = [];
+let commandHits = [];
 let searchCursor = 0;
 let showUnchanged = false;
 const marchStops = new Set();
@@ -603,7 +606,9 @@ function resizeView() {
   camera.aspect = w / h;
   // The city is drawn between the two sidebars: the look-at point sits in
   // the middle of the free area, and fits use only its width.
-  viewInsets = insets(w, coverOf("#side"), coverOf("#tour-side"));
+  // The theme panel and the tour sidebar share the right edge.
+  const right = Math.max(coverOf("#tour-side"), coverOf("#skin-side"));
+  viewInsets = insets(w, coverOf("#side"), right);
   viewInsets.width = w;
   viewInsets.height = h;
   const offset = viewOffsetX(viewInsets.left, viewInsets.right);
@@ -3510,6 +3515,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
 
 function closeSearch() {
   searchHits = [];
+  commandHits = [];
   searchCursor = 0;
   hud.results.hidden = true;
   hud.results.replaceChildren();
@@ -3571,10 +3577,67 @@ function placeResults() {
   list.style.width = box.width + "px";
 }
 
+// The box finds nodes. A value that starts with a slash is a command: the
+// list shows what the viewer can do, and Enter runs the highlighted one.
 function onSearch() {
-  searchHits = rankMatches(catalog, hud.search.value, 12);
   searchCursor = 0;
+  if (hud.search.value.startsWith("/")) {
+    searchHits = [];
+    commandHits = matchCommands(hud.search.value);
+    renderCommands();
+    return;
+  }
+  commandHits = [];
+  searchHits = rankMatches(catalog, hud.search.value, 12);
   renderSearch();
+}
+
+const COMMANDS = [
+  { name: "/skin", does: "choose a theme", run: () => openSkinPanel() },
+];
+
+function matchCommands(value) {
+  const q = value.trim().toLowerCase();
+  if (q === "/") return COMMANDS;
+  return COMMANDS.filter((cmd) => cmd.name.startsWith(q));
+}
+
+function renderCommands() {
+  stopMarches();
+  hud.results.replaceChildren();
+  if (!commandHits.length) {
+    hud.results.hidden = true;
+    return;
+  }
+  hud.results.hidden = false;
+  placeResults();
+  commandHits.forEach((cmd, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    if (index === searchCursor) button.className = "on";
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    kind.textContent = "cmd";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = cmd.name;
+    const where = document.createElement("span");
+    where.className = "where";
+    where.textContent = cmd.does;
+    button.append(kind, name, where);
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => runCommand(cmd));
+    hud.results.append(button);
+  });
+  revealSearchCursor();
+}
+
+function runCommand(cmd) {
+  if (!cmd) return;
+  hud.search.value = "";
+  closeSearch();
+  hud.search.blur();
+  cmd.run();
 }
 
 function goToResult(item) {
@@ -3639,14 +3702,21 @@ window.addEventListener("keydown", (event) => {
     setLegend(hud.legend.hidden);
     return;
   }
-  if (!typing && event.key === "Escape" && !skinMenu.hidden) {
-    event.preventDefault();
-    closeSkinMenu();
-    return;
-  }
   if (!typing && event.key === "Escape" && !hud.legend.hidden) {
     event.preventDefault();
     setLegend(false);
+    return;
+  }
+  if (!typing && event.key === "Escape" && !skinSide.hidden) {
+    event.preventDefault();
+    closeSkinPanel();
+    return;
+  }
+  // The theme panel takes the arrows while it is open: a theme is walked
+  // through and previewed without the mouse. Closed, the arrows fly again.
+  if (!typing && !skinSide.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
+    moveSkinCursor(event.key === "ArrowDown" ? 1 : -1);
     return;
   }
   const flyKey = flyToken(event.key);
@@ -3655,17 +3725,27 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   }
   if (typing) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    // Arrows, Tab and Shift-Tab walk the completions. Tab only takes the key
+    // when there is something to complete; with an empty list it moves focus
+    // the way it always does.
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
+      const list = commandHits.length ? commandHits : searchHits;
+      if (!list.length) {
+        if (event.key === "Tab") return;
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
-      if (!searchHits.length) return;
-      const step = event.key === "ArrowDown" ? 1 : -1;
-      searchCursor = (searchCursor + step + searchHits.length) % searchHits.length;
-      renderSearch();
+      const back = event.key === "ArrowUp" || event.shiftKey;
+      searchCursor = (searchCursor + (back ? -1 : 1) + list.length) % list.length;
+      if (commandHits.length) renderCommands();
+      else renderSearch();
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (searchHits[searchCursor]) goToResult(searchHits[searchCursor]);
+      if (commandHits.length) runCommand(commandHits[searchCursor]);
+      else if (searchHits[searchCursor]) goToResult(searchHits[searchCursor]);
       return;
     }
     if (event.key === "Escape") {
@@ -3749,89 +3829,168 @@ for (const row of document.querySelectorAll("#legend .ex")) {
 
 window.addEventListener("resize", resizeView);
 
-const skinMenu = document.querySelector("#skin-menu");
-const skinToggle = document.querySelector("#skin-toggle");
-let skinCatalog = { opened: "dark", skins: [] };
-let skinGen = 0;
+// Themes: what the /skin command opens. The panel previews on click and
+// remembers only on Save, so what the browser opens with next time is what
+// was saved, and closing without saving drops the preview.
 
-function closeSkinMenu() {
-  skinMenu.hidden = true;
-  skinToggle.setAttribute("aria-expanded", "false");
+const SKIN_KEY = "citydiff.skin";
+
+function storedSkin() {
+  try {
+    return localStorage.getItem(SKIN_KEY) || "dark";
+  } catch {
+    return "dark"; // storage can be off; the viewer still works
+  }
 }
 
-function currentSkinID() {
-  const spec = new URLSearchParams(location.search).get("skin");
-  if (spec) return spec;
-  return skinCatalog.opened || "";
+function storeSkin(id) {
+  try {
+    if (!id || id === "dark") localStorage.removeItem(SKIN_KEY);
+    else localStorage.setItem(SKIN_KEY, id);
+  } catch { /* the preview still holds for this session */ }
+}
+
+const skinSide = document.querySelector("#skin-side");
+const skinList = document.querySelector("#skin-list");
+const skinNote = document.querySelector("#skin-note");
+const skinSave = document.querySelector("#skin-save");
+let skinChoices = null;
+let skinPreview = null;
+let skinGen = 0;
+let skinError = "";
+
+async function loadSkinChoices() {
+  if (skinChoices) return skinChoices;
+  skinChoices = [];
+  try {
+    const res = await fetch("/skins.json");
+    if (res.ok) {
+      const catalog = await res.json();
+      skinChoices = (catalog.skins || []).map((skin) => skin.id).filter(Boolean);
+    }
+  } catch { /* the panel shows nothing to choose */ }
+  return skinChoices;
 }
 
 function markSkin() {
-  const current = currentSkinID();
-  for (const button of skinMenu.querySelectorAll("button")) {
-    button.classList.toggle("on", (button.dataset.skin || "") === current);
+  const saved = storedSkin();
+  const current = skinPreview || saved;
+  for (const button of skinList.querySelectorAll("button")) {
+    button.classList.toggle("on", button.dataset.skin === current);
   }
+  skinSave.disabled = !skinPreview || skinPreview === saved;
+  if (skinError) skinNote.textContent = skinError;
+  else if (skinPreview && skinPreview !== saved) skinNote.textContent = "Previewing " + skinPreview + ". Save keeps it.";
+  else skinNote.textContent = "Click a theme to preview it. Save keeps it.";
 }
 
-async function chooseSkin(id) {
-  const url = new URL(location.href);
-  if (id) url.searchParams.set("skin", id);
-  else url.searchParams.delete("skin");
-  closeSkinMenu();
-  if (!themeReady || !laid) {
-    location.assign(url);
-    return;
+function renderSkinList() {
+  skinList.replaceChildren();
+  const saved = storedSkin();
+  for (const id of skinChoices) {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.skin = id;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = id;
+    button.append(name);
+    if (id === saved) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "saved";
+      button.append(tag);
+    }
+    button.addEventListener("click", () => previewSkin(id));
+    li.append(button);
+    skinList.append(li);
   }
+  markSkin();
+}
+
+// A theme change never reloads: the city keeps its camera, selection, focus,
+// mode and tour, and the colours cross over in the fade.
+async function showTheme(id) {
+  const skin = await loadSkin(id);
+  await loadShade(skin);
+  fadeToTheme(skin);
+}
+
+async function previewSkin(id) {
   const gen = ++skinGen;
+  skinError = "";
   try {
     const skin = await loadSkin(id);
     await loadShade(skin);
     if (gen !== skinGen) return;
-    history.replaceState(null, "", url);
-    markSkin();
+    skinPreview = id;
     fadeToTheme(skin);
   } catch (err) {
     if (gen !== skinGen) return;
-    skinWarning = "Could not read skin " + (id || "dark") + ". " + err.message;
-    updateHUD();
-    requestFrame();
+    skinError = "Could not read theme " + id + ". " + err.message;
   }
+  markSkin();
 }
 
-async function mountSkinSwitch() {
+function saveSkin() {
+  if (!skinPreview) return;
+  const id = skinPreview;
+  storeSkin(id);
+  skinPreview = null;
+  markSkin();
+  closeSkinPanel(); // saved: there is nothing to put back
+  skinWarning = "Theme " + id + " saved.";
+  updateHUD();
+}
+
+// The arrows walk the themes from wherever the preview is, which starts at
+// the saved one, and each step previews what it lands on.
+function moveSkinCursor(step) {
+  if (!skinChoices.length) return;
+  const at = skinChoices.indexOf(skinPreview || storedSkin());
+  const next = ((at < 0 ? 0 : at + step) + skinChoices.length) % skinChoices.length;
+  previewSkin(skinChoices[next]);
+  scrollSkinChoice(next);
+}
+
+function scrollSkinChoice(index) {
+  const button = skinList.querySelectorAll("button")[index];
+  if (button) button.scrollIntoView({ block: "nearest" });
+}
+
+async function openSkinPanel() {
+  closeSearch();
+  hud.search.blur();
+  skinError = "";
+  await loadSkinChoices();
+  renderSkinList();
+  skinSide.hidden = false;
+  // The panel is the thing the keyboard is talking to now: the arrows walk
+  // the themes, and Tab reaches Save.
+  skinSide.focus({ preventScroll: true });
+  scrollSkinChoice(skinChoices.indexOf(storedSkin()));
+  requestAnimationFrame(resizeView);
+}
+
+async function closeSkinPanel() {
+  if (skinSide.hidden) return;
+  const preview = skinPreview;
+  skinPreview = null;
+  skinSide.hidden = true;
+  requestAnimationFrame(resizeView);
+  if (!preview || preview === storedSkin()) return;
+  // Closing without saving drops the preview and puts the saved theme back.
+  const gen = ++skinGen;
   try {
-    const res = await fetch("/skins.json");
-    if (res.ok) skinCatalog = await res.json();
-  } catch { /* the menu stays empty */ }
-  const current = currentSkinID();
-  skinMenu.replaceChildren();
-  for (const skin of skinCatalog.skins || []) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.skin = skin.id || "";
-    button.textContent = skin.label || skin.id || "opened";
-    if ((skin.id || "") === current) button.classList.add("on");
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (button.classList.contains("on")) {
-        closeSkinMenu();
-        return;
-      }
-      chooseSkin(skin.id || "");
-    });
-    skinMenu.append(button);
-  }
-  skinToggle.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const open = skinMenu.hidden;
-    skinMenu.hidden = !open;
-    skinToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  });
-  document.addEventListener("pointerdown", (event) => {
-    if (!document.querySelector("#skin-switch").contains(event.target)) closeSkinMenu();
-  });
+    const skin = await loadSkin(storedSkin());
+    await loadShade(skin);
+    if (gen === skinGen) fadeToTheme(skin);
+  } catch { /* the saved theme is gone; keep what is on screen */ }
 }
 
-mountSkinSwitch();
+document.querySelector("#skin-close").addEventListener("click", closeSkinPanel);
+skinSave.addEventListener("click", saveSkin);
 
 main();
 

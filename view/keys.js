@@ -3,7 +3,7 @@
 // are dispatched by tourAction below.
 
 export const KEYBINDS = [
-  { keys: ["/"], does: "search" },
+  { keys: ["/"], does: "search / commands" },
   { keys: ["wasd", "arrows"], does: "move" },
   { keys: ["q", "e"], does: "orbit" },
   { keys: ["-", "+"], does: "zoom" },

@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-func skinMux(pick skinPick) *httptest.Server {
+func skinMux(dir string) *httptest.Server {
 	mux := http.NewServeMux()
-	mountSkins(mux, pick)
+	mountSkins(mux, dir)
 	return httptest.NewServer(mux)
 }
 
@@ -42,16 +42,15 @@ func missingSkins(t *testing.T) string {
 
 func TestBuiltinSkins(t *testing.T) {
 	none := missingSkins(t)
-	pick, err := pickSkin("", none)
-	if err != nil {
+	if _, err := resolveSkinsDir(none); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(none); !os.IsNotExist(err) {
 		t.Fatal("a missing skins directory was created")
 	}
-	srv := skinMux(pick)
+	srv := skinMux("")
 	defer srv.Close()
-	for _, path := range []string{"/skins/dark/skin.json", "/skins/light/skin.json", "/skins/active/skin.json"} {
+	for _, path := range []string{"/skins/dark/skin.json", "/skins/light/skin.json"} {
 		code, body := getBody(t, srv, path)
 		if code != http.StatusOK {
 			t.Fatalf("%s: %d", path, code)
@@ -60,76 +59,12 @@ func TestBuiltinSkins(t *testing.T) {
 			t.Fatalf("%s: %s", path, body)
 		}
 	}
-	_, active := getBody(t, srv, "/skins/active/skin.json")
-	_, dark := getBody(t, srv, "/skins/dark/skin.json")
-	if active != dark {
-		t.Fatal("the default active skin is dark")
-	}
 	code, _ := getBody(t, srv, "/skins/missing/skin.json")
 	if code != http.StatusNotFound {
 		t.Fatalf("missing skin: %d", code)
 	}
-}
-
-func TestPickSkin(t *testing.T) {
-	none := missingSkins(t)
-	if _, err := pickSkin("light", none); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pickSkin("nope", none); err == nil {
-		t.Fatal("unknown name accepted")
-	}
-	dir := t.TempDir()
-	if _, err := pickSkin(dir, none); err == nil {
-		t.Fatal("directory without skin.json accepted")
-	}
-	raw := []byte(`{"name":"paper","plane":{"color":"#ffffff"}}`)
-	file := filepath.Join(dir, "paper.json")
-	if err := os.WriteFile(file, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pick, err := pickSkin(file, none)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := skinMux(pick)
-	defer srv.Close()
-	code, body := getBody(t, srv, "/skins/active/skin.json")
-	if code != http.StatusOK || !strings.Contains(body, `"paper"`) {
-		t.Fatalf("file skin: %d %s", code, body)
-	}
-	code, _ = getBody(t, srv, "/skins/active/other.png")
-	if code != http.StatusNotFound {
-		t.Fatalf("file skin extra: %d", code)
-	}
-
-	skinDir := filepath.Join(dir, "folder")
-	if err := os.Mkdir(skinDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skinDir, "skin.json"), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skinDir, "sky.webp"), []byte("webp"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pick, err = pickSkin(skinDir, none)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv2 := skinMux(pick)
-	defer srv2.Close()
-	code, body = getBody(t, srv2, "/skins/active/skin.json")
-	if code != http.StatusOK || !strings.Contains(body, `"paper"`) {
-		t.Fatalf("dir skin: %d %s", code, body)
-	}
-	code, body = getBody(t, srv2, "/skins/active/sky.webp")
-	if code != http.StatusOK || body != "webp" {
-		t.Fatalf("dir asset: %d %q", code, body)
-	}
-	code, _ = getBody(t, srv2, "/skins/active/../../skin_test.go")
-	if code != http.StatusNotFound {
-		t.Fatalf("escape: %d", code)
+	if code, _ = getBody(t, srv, "/skins/active/skin.json"); code != http.StatusNotFound {
+		t.Fatalf("the process no longer picks a skin, so there is no active one: %d", code)
 	}
 }
 
@@ -139,167 +74,93 @@ func TestSkinsDirectory(t *testing.T) {
 	if err := os.Mkdir(paper, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	paperJSON := []byte(`{"name":"paper","plane":{"color":"#abcdef"}}`)
-	if err := os.WriteFile(filepath.Join(paper, "skin.json"), paperJSON, 0o644); err != nil {
+	raw := []byte(`{"name":"paper","plane":{"color":"#ffffff"}}`)
+	if err := os.WriteFile(filepath.Join(paper, "skin.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(paper, "sky.webp"), []byte("webp"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ink := []byte(`{"name":"ink","plane":{"color":"#111111"}}`)
-	if err := os.WriteFile(filepath.Join(root, "ink.json"), ink, 0o644); err != nil {
+	// A file skin beside the folder, and a folder without a skin file.
+	if err := os.WriteFile(filepath.Join(root, "ink.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(root, "light"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "empty"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "light", "skin.json"), []byte(`{"name":"not-light"}`), 0o644); err != nil {
+	// dark is embedded, so a folder of that name is not taken from here.
+	if err := os.Mkdir(filepath.Join(root, "dark"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("nope"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "dark", "skin.json"), []byte(`{"name":"dark-here"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	pick, err := pickSkin("", root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pick.embedName != "dark" {
-		t.Fatalf("default skin %q", pick.embedName)
-	}
-	srv := skinMux(pick)
+	srv := skinMux(root)
 	defer srv.Close()
 
 	code, body := getBody(t, srv, "/skins/paper/skin.json")
-	if code != http.StatusOK || !strings.Contains(body, `"paper"`) {
-		t.Fatalf("paper: %d %s", code, body)
+	if code != http.StatusOK || !strings.Contains(body, "paper") {
+		t.Fatalf("folder skin: %d %s", code, body)
 	}
 	code, body = getBody(t, srv, "/skins/paper/sky.webp")
 	if code != http.StatusOK || body != "webp" {
-		t.Fatalf("paper asset: %d %q", code, body)
+		t.Fatalf("folder asset: %d %q", code, body)
+	}
+	code, body = getBody(t, srv, "/skins/paper/")
+	if code != http.StatusOK || !strings.Contains(body, "paper") {
+		t.Fatalf("folder entry redirect lands on the skin file: %d %s", code, body)
 	}
 	code, body = getBody(t, srv, "/skins/ink/skin.json")
-	if code != http.StatusOK || !strings.Contains(body, `"ink"`) {
-		t.Fatalf("ink: %d %s", code, body)
+	if code != http.StatusOK || !strings.Contains(body, "paper") {
+		t.Fatalf("file skin: %d %s", code, body)
 	}
-	code, _ = getBody(t, srv, "/skins/ink/other.png")
-	if code != http.StatusNotFound {
-		t.Fatalf("ink extra: %d", code)
+	if code, _ = getBody(t, srv, "/skins/ink/other.png"); code != http.StatusNotFound {
+		t.Fatalf("file skin extra: %d", code)
 	}
-	code, body = getBody(t, srv, "/skins/light/skin.json")
-	if code != http.StatusOK || strings.Contains(body, "not-light") || !strings.Contains(body, `"name": "light"`) {
-		t.Fatalf("builtin light shadowed: %d %s", code, body)
+	if code, _ = getBody(t, srv, "/skins/empty/skin.json"); code != http.StatusNotFound {
+		t.Fatalf("folder without a skin file: %d", code)
 	}
-	code, _ = getBody(t, srv, "/skins/paper/../../skin_test.go")
-	if code != http.StatusNotFound {
-		t.Fatalf("catalog escape: %d", code)
+	code, body = getBody(t, srv, "/skins/dark/skin.json")
+	if code != http.StatusOK || strings.Contains(body, "dark-here") {
+		t.Fatalf("the embedded dark skin wins: %d %s", code, body)
 	}
-	_, active := getBody(t, srv, "/skins/active/skin.json")
-	_, dark := getBody(t, srv, "/skins/dark/skin.json")
-	if active != dark {
-		t.Fatal("an extra directory still opens on dark")
-	}
-
-	pick, err = pickSkin("paper", root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv2 := skinMux(pick)
-	defer srv2.Close()
-	_, active = getBody(t, srv2, "/skins/active/skin.json")
-	if !strings.Contains(active, `"paper"`) {
-		t.Fatalf("named extra skin: %s", active)
-	}
-	code, body = getBody(t, srv2, "/skins/ink/skin.json")
-	if code != http.StatusOK || !strings.Contains(body, `"ink"`) {
-		t.Fatalf("other extra skin: %d %s", code, body)
-	}
-
-	pick, err = pickSkin("light", root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pick.embedName != "light" || pick.dir != "" || pick.file != "" {
-		t.Fatalf("light resolved to %+v", pick)
-	}
-
-	file := filepath.Join(t.TempDir(), "not-a-dir")
-	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pickSkin("", file); err == nil {
-		t.Fatal("a file was accepted as the skins directory")
+	if code, _ = getBody(t, srv, "/skins/paper/../../skin_test.go"); code != http.StatusNotFound {
+		t.Fatalf("escape: %d", code)
 	}
 }
 
 func TestSkinCatalog(t *testing.T) {
-	none := missingSkins(t)
-	pick, err := pickSkin("", none)
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog := getCatalog(t, pick)
-	if catalog.Opened != "dark" {
-		t.Fatalf("opened %q", catalog.Opened)
-	}
-	if ids := choiceIDs(catalog.Skins); strings.Join(ids, ",") != "dark,light" {
-		t.Fatalf("builtins %v", ids)
-	}
-
 	root := t.TempDir()
-	ink := filepath.Join(root, "ink")
-	if err := os.Mkdir(ink, 0o755); err != nil {
+	paper := filepath.Join(root, "paper")
+	if err := os.Mkdir(paper, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ink, "skin.js"), []byte("export default { name: \"ink\" };\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(paper, "skin.json"), []byte(`{"name":"paper"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "paper.json"), []byte(`{"name":"paper"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "ink.json"), []byte(`{"name":"ink"}`), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "paper.js"), []byte("export default {}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	shadow := filepath.Join(root, "dark")
-	if err := os.Mkdir(shadow, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(shadow, "skin.json"), []byte(`{"name":"dark"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pick, err = pickSkin("ink", root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog = getCatalog(t, pick)
-	if catalog.Opened != "ink" {
-		t.Fatalf("opened %q", catalog.Opened)
-	}
-	if ids := choiceIDs(catalog.Skins); strings.Join(ids, ",") != "dark,light,ink,paper" {
-		t.Fatalf("catalog %v", ids)
 	}
 
-	one := t.TempDir()
-	if err := os.WriteFile(filepath.Join(one, "skin.json"), []byte(`{"name":"custom"}`), 0o644); err != nil {
-		t.Fatal(err)
+	ids := choiceIDs(getCatalog(t, "").Skins)
+	if len(ids) < 2 || ids[0] != "dark" || ids[1] != "light" {
+		t.Fatalf("built-ins first: %v", ids)
 	}
-	pick, err = pickSkin(one, none)
-	if err != nil {
-		t.Fatal(err)
+	if strings.Contains(strings.Join(ids, ","), "paper") {
+		t.Fatalf("a missing directory contributed skins: %v", ids)
 	}
-	catalog = getCatalog(t, pick)
-	if catalog.Opened != "" {
-		t.Fatalf("path skin opened as %q", catalog.Opened)
-	}
-	last := catalog.Skins[len(catalog.Skins)-1]
-	if last.ID != "" || last.Label != filepath.Base(one) {
-		t.Fatalf("path row %+v", last)
+
+	ids = choiceIDs(getCatalog(t, root).Skins)
+	want := []string{"dark", "light", "ink", "paper"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Fatalf("catalog = %v want %v", ids, want)
 	}
 }
 
-func getCatalog(t *testing.T, pick skinPick) skinCatalog {
+func getCatalog(t *testing.T, dir string) skinCatalog {
 	t.Helper()
-	srv := skinMux(pick)
+	srv := skinMux(dir)
 	defer srv.Close()
 	code, body := getBody(t, srv, "/skins.json")
 	if code != http.StatusOK {
@@ -330,23 +191,45 @@ func TestScriptSkin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "skin.js"), script, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pick, err := pickSkin("ink", root)
+	srv := skinMux(root)
+	defer srv.Close()
+	code, body := getBody(t, srv, "/skins/ink/skin.js")
+	if code != http.StatusOK || !strings.Contains(body, "112233") {
+		t.Fatalf("script skin: %d %s", code, body)
+	}
+	if code, _ = getBody(t, srv, "/skins/ink/skin.json"); code != http.StatusNotFound {
+		t.Fatalf("a folder with only skin.js has no skin.json: %d", code)
+	}
+}
+
+func TestSkinsDirFromEnv(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(skinsEnv, root)
+	if got := skinsDir(); got == "" {
+		t.Fatalf("%s=%s resolved to nothing", skinsEnv, root)
+	}
+	abs, err := filepath.Abs(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := skinMux(pick)
-	defer srv.Close()
-	code, body := getBody(t, srv, "/skins/active/skin.js")
-	if code != http.StatusOK || !strings.Contains(body, "export default") {
-		t.Fatalf("script skin: %d %s", code, body)
+	if got := skinsDir(); got != abs {
+		t.Fatalf("got %q want %q", got, abs)
 	}
-	code, _ = getBody(t, srv, "/skins/active/skin.json")
-	if code != http.StatusNotFound {
-		t.Fatalf("script served as json: %d", code)
+
+	// A missing directory is not created and contributes nothing.
+	t.Setenv(skinsEnv, missingSkins(t))
+	if got := skinsDir(); got != "" {
+		t.Fatalf("missing directory resolved to %q", got)
 	}
-	code, body = getBody(t, srv, "/skins/ink/skin.js")
-	if code != http.StatusOK || !strings.Contains(body, "112233") {
-		t.Fatalf("named script: %d %s", code, body)
+
+	// A file where a directory belongs is reported, not fatal.
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(skinsEnv, file)
+	if got := skinsDir(); got != "" {
+		t.Fatalf("a file resolved to %q", got)
 	}
 }
 

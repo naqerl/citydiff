@@ -54,9 +54,9 @@ the scene from `GET /scene.json`; the viewer assets are embedded in the binary.
 ## Command line
 
 ```
-citydiff [-json | -scene | -view [-tour file] [-skin name-or-path] [-skins dir]] -path file-or-directory [-range A..B]
+citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]
 citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]
-citydiff tour validate|serve [-path dir] [-range A..B] [-json] [-addr host:port] [-skin name-or-path] [-skins dir] tour.json
+citydiff tour validate|serve [-path dir] [-range A..B] [-json] [-addr host:port] tour.json
 citydiff tour schema
 ```
 
@@ -69,8 +69,11 @@ citydiff tour schema
 | `-view` | serve the 3D viewer over HTTP (long-running). |
 | `-addr` | listen address for `-view` (default `127.0.0.1:8787`). |
 | `-tour` | with `-view`, a [tour](#tours) script the viewer loads and plays. |
-| `-skin` | with `-view`, the skin to open on. `dark` (the default), `light`, a name from `-skins`, or a path to a skin file or directory. |
-| `-skins` | with `-view`, a directory of extra skins. The default is `~/.config/citydiff/skins`. A missing directory is left uncreated. |
+
+The command line stays this small on purpose: every flag is context a model has to read
+before it can use the tool, and a long flag list costs more than it explains. View state
+belongs to the page, and paths belong to the environment — `CITYDIFF_SKINS_DIR` for the
+[skins](#skins) directory, not a flag. See [AGENTS.md](AGENTS.md).
 
 Notes:
 
@@ -131,12 +134,14 @@ entry.
 
 ## Skins
 
-A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) is the built-in light skin. The brush button at the bottom-right lists the built-in skins and the skins loaded with the viewer.
+A skin is a JSON file that recolours the viewer. Each key is one drawn element. A file may set any subset, and omitted keys keep the [dark](skins/dark/skin.json) skin. [light](skins/light/skin.json) is the built-in light skin. Skins that are not in the binary live in a directory of your own.
 
-The fields, the skybox shapes, and how to load a skin from outside this repository are in [SKINS.md](SKINS.md).
+Type `/` in the search box to see the commands — `↑` / `↓` and `tab` / `shift-tab` walk the completions — and `/skin` to open the theme panel in the right sidebar. It lists the themes, previews one the moment you click it (or walk them with the arrows), and **Save** remembers it and closes the panel. The choice lives in the browser (localStorage), so a reload comes back to the theme you saved, and closing the panel without saving drops the preview. Nothing about it reaches the command line or the address bar.
+
+The fields, the skybox shapes, and how to point the viewer at a skins directory are in [SKINS.md](SKINS.md).
 
 ```sh
-citydiff -path . -view -skin light
+CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
 ```
 
 ## Tours
