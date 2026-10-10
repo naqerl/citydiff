@@ -55,6 +55,14 @@
       --scrim: rgba(9, 9, 11, 0.78);
       --on: rgba(24, 24, 27, 0.55);
       --current-bg: rgba(255, 197, 61, 0.08);
+      /* The diff's syntax colours. A skin sets these from its own palette;
+         these are what the dark skin's derivation comes out as. */
+      --syn-keyword: #7d66d9;
+      --syn-string: #fde68a;
+      --syn-comment: #71717a;
+      --syn-number: #23afd0;
+      --syn-type: #d4d4d8;
+      --syn-func: #93c5fd;
     }
     @property --bg { syntax: "<color>"; inherits: true; initial-value: #09090b; }
     @property --elev { syntax: "<color>"; inherits: true; initial-value: #18181b; }
@@ -362,6 +370,45 @@
       color: #ffb4a8;
       font: 14px ui-monospace, monospace;
     }
+    /* The diff overlay: the page's colours, not a terminal's. The two gutters
+       are the file's line numbers, the sign column says what happened, and the
+       code carries the skin's syntax colours. */
+    #diff {
+      position: fixed;
+      inset: 3vh 3vw;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      background: var(--elev);
+      color: var(--fg);
+      border: 1px solid var(--line-strong);
+      box-shadow: 0 20px 60px var(--shadow);
+      outline: none;
+    }
+    #diff-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
+    #diff .diff-title { font-size: 14px; }
+    #diff .diff-where, #diff .diff-note, #diff .diff-hint { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #diff .diff-note { color: var(--muted); }
+    #diff .diff-spacer { flex: 1; }
+    #diff-body { flex: 1; min-height: 0; overflow: auto; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    #diff .diff-error { padding: 16px; color: var(--muted); font: 13px/1.5 system-ui, sans-serif; }
+    #diff .diff-file-head { position: sticky; top: 0; margin: 0; padding: 7px 14px; background: var(--elev); border-bottom: 1px solid var(--line); color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
+    #diff .diff-hunk { border-bottom: 1px solid var(--line); }
+    #diff .diff-hunk-head { padding: 4px 14px; color: var(--faint); background: var(--code-bg); }
+    #diff .diff-line { display: grid; grid-template-columns: 3.6em 3.6em 1.4em 1fr; min-width: max-content; white-space: pre; }
+    #diff .diff-line.add { background: var(--added-bg); }
+    #diff .diff-line.del { background: var(--removed-bg); }
+    #diff .diff-no { padding-right: 10px; text-align: right; color: var(--fainter); user-select: none; }
+    #diff .diff-sign { text-align: center; color: var(--faint); user-select: none; }
+    #diff .diff-line.add .diff-sign { color: var(--added-line); }
+    #diff .diff-line.del .diff-sign { color: var(--removed-line); }
+    #diff .diff-line code { padding-right: 14px; }
+    #diff .t-keyword { color: var(--syn-keyword); }
+    #diff .t-string { color: var(--syn-string); }
+    #diff .t-comment { color: var(--syn-comment); font-style: italic; }
+    #diff .t-number { color: var(--syn-number); }
+    #diff .t-type { color: var(--syn-type); }
+    #diff .t-func { color: var(--syn-func); }
     #legend {
       position: fixed;
       inset: 0;

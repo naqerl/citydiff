@@ -130,6 +130,7 @@ entry.
 | `c` | show calls or callers |
 | `enter` | open a function |
 | `E` | open the selected node in nvim |
+| `D` | show the selected node's diff |
 | `esc` | go back |
 | `o` `i` | jump back / forward through the selection history |
 | `b` | show / hide the left sidebar |
@@ -151,6 +152,20 @@ tree, as one deleted in the range, shows a message instead (`esc` closes it).
 Paths outside the served directory are refused. The terminal is
 [ghostty-web](https://github.com/coder/ghostty-web), vendored under
 `view/vendor/ghostty` and loaded on first use, over a WebSocket to a PTY.
+
+## Show the diff
+
+With a node selected, `D` (shift-d) shows its change in the range the scene is
+showing, drawn over the city: the file's hunks with a gutter on each side, the
+added and removed lines tinted, and the code highlighted in the skin's own
+syntax colours. A function or method shows the hunks that cover it; a package
+shows every changed file under it, capped at eight. `esc` closes it.
+
+The hunks are built in-process with
+[go-git](https://github.com/go-git/go-git): the ends of the range are resolved
+and their trees patched against each other, so no `git` command runs and no
+terminal is involved. A scene without a range is one snapshot and has nothing
+to diff; the overlay says so.
 
 ## Skins
 
