@@ -3287,11 +3287,13 @@ function goBackInner() {
     exitFocus();
     return;
   }
-  if (entered || entitySubject || arcSubject) {
+  const onPackage = selected && (selected.kind === "package" || selected.kind === "external");
+  if (onPackage || entered || entitySubject || arcSubject) {
     entered = null;
     entitySubject = null;
     arcSubject = null;
-    selected = sceneDoc.root ? { kind: "package", id: sceneDoc.root } : null;
+    // The repo package does not answer a further escape, so a package backs out to the city.
+    selected = onPackage || !sceneDoc.root ? null : { kind: "package", id: sceneDoc.root };
     ring.visible = false;
     applyMode();
     cityPose = frameCity();
