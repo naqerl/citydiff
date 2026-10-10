@@ -428,10 +428,13 @@ let mode = "overview";
 let selected = null;
 // Vim-style jump list over the nodes the user has selected. `o` steps to the
 // older entry (vim's <C-o>), `i` to the newer one (<C-i>). Replaying an entry
-// must not record itself, so noteJump is a no-op while jumping.
+// must not record itself, so noteJump is a no-op while jumping. Esc back to
+// the bare city detaches the cursor instead of pushing the city, so the next
+// older step restores the node just left.
 let jumps = [];
 let jumpIndex = -1;
 let jumping = false;
+let jumpDetached = false;
 let entered = null;
 let focus = null;
 let returnPose = null;
@@ -2748,7 +2751,7 @@ function updateHUD() {
   } else if (mode === "overlay") {
     note = "Added is green, deleted is red, changed is yellow.";
   }
-  if (jumps.length > 1) {
+  if (jumps.length > 1 && !jumpDetached) {
     const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
     note = note ? note + "  ·  " + at : at;
   }
@@ -3270,6 +3273,7 @@ function resetView() {
   selected = null;
   jumps = [];
   jumpIndex = -1;
+  jumpDetached = false;
   ring.visible = false;
   applyMode();
   cityPose = frameCity();
@@ -3278,7 +3282,13 @@ function resetView() {
 }
 
 function goBack() {
+  const leftNode = !!(selected || focus);
   goBackInner();
+  if (leftNode && !selected && !focus && jumpIndex >= 0) {
+    jumpDetached = true;
+    updateHUD();
+    return;
+  }
   noteJump();
 }
 
@@ -3330,7 +3340,12 @@ function noteJump() {
   const now = subjectNow();
   if (!now.selected && !now.focus) return;
   const current = jumps[jumpIndex];
-  if (current && sameSubject(current, now)) return;
+  const wasDetached = jumpDetached;
+  jumpDetached = false;
+  if (current && sameSubject(current, now)) {
+    if (wasDetached) updateHUD();
+    return;
+  }
   jumps = jumps.slice(0, jumpIndex + 1);
   jumps.push(now);
   jumpIndex = jumps.length - 1;
@@ -3381,9 +3396,10 @@ function restoreSubject(entry) {
 // step is -1 for the older entry, +1 for the newer one.
 function jumpStep(step) {
   if (!jumps.length) return;
-  const next = jumpIndex + step;
+  const next = jumpDetached ? jumpIndex + (step < 0 ? 0 : step) : jumpIndex + step;
   if (next < 0 || next >= jumps.length) return;
   jumpIndex = next;
+  jumpDetached = false;
   jumping = true;
   try {
     restoreSubject(jumps[jumpIndex]);
