@@ -374,39 +374,7 @@
       font-size: 16px;
       pointer-events: none;
     }
-    #call-menu {
-      position: fixed;
-      z-index: 7;
-      min-width: 168px;
-      padding: 4px;
-      background: rgba(9, 9, 11, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-    }
-    #call-menu[hidden] { display: none; }
-    #call-menu button {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      text-align: left;
-      background: transparent;
-      color: #a1a1aa;
-      border: 0;
-      padding: 6px 10px;
-    }
-    #call-menu button i {
-      width: 8px;
-      height: 8px;
-      flex: none;
-      box-sizing: border-box;
-      border: 1px solid #3f3f46;
-      border-radius: 50%;
-    }
-    #call-menu button.on { color: #fafafa; background: rgba(24, 24, 27, 0.55); }
-    #call-menu button.on i { background: #23afd0; border-color: #23afd0; }
-    #call-menu button:hover { color: #fafafa; background: #18181b; }
+    #detail .refs { margin: 8px 0 6px; }
   </style>
   <script type="importmap">
   {
@@ -501,10 +469,6 @@
     </div>
   </div>
   <div id="tag"></div>
-  <div id="call-menu" hidden role="menu" aria-label="Call direction">
-    <button type="button" role="menuitemradio" data-dir="out" aria-checked="true"><i></i>Show calls</button>
-    <button type="button" role="menuitemradio" data-dir="in" aria-checked="false"><i></i>Show callers</button>
-  </div>
   <div id="legend" hidden>
     <div class="legend-card">
       <header>
@@ -551,7 +515,7 @@
             <rect x="70" y="46" width="8" height="16" fill="#fafafa"/>
           </svg>
         </div>
-        <div><b>Call</b><p>One smooth arc from the top of the caller to the top of the function it calls. Cyan means the call stayed. Several calls to the same function share that one arc. Right-click a tower and choose Show callers to draw the functions that call it. The arcs are the same, and the particles run the other way, back toward that tower.</p></div>
+        <div><b>Call</b><p>One smooth arc from the top of the caller to the top of the function it calls. Cyan means the call stayed. Several calls to the same function share that one arc. The Calls / Callers buttons under the selected node, or the <kbd>c</kbd> key, draw the other direction: the functions that call the selected node. The arcs are the same, and the particles run the other way, back toward it.</p></div>
       </button>
       <h3 class="keys-title">Keys</h3>
       <ul class="keys" id="keys"></ul>

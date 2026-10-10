@@ -129,11 +129,14 @@ function setSide(open) {
 }
 let arcSubject = null;
 let entitySubject = null;
-// Show calls draws what the tower calls, particles leaving it. Show callers
-// draws what calls the tower. The arcs are the same curve with the ends
-// swapped, so the particles run back toward the tower.
+// Show calls draws what the node calls, particles leaving it. Show callers
+// draws what calls it. The arcs are the same curve with the ends swapped, so
+// the particles run back toward the node. One direction is on at a time, and
+// it applies to every node kind: a function or method (its calls, its
+// callers), a type (the methods it declares, the functions that call them), a
+// package (what it depends on, what depends on it). The sidebar picks it, `c`
+// flips it, and the choice stays until it is flipped again or the view resets.
 let callInbound = false;
-let callMenuTarget = null;
 let lit = null;
 // A tour step's highlight: what it lights, and the call arcs it draws.
 let tourLit = null;
@@ -319,17 +322,22 @@ halo.visible = false;
 halo.frustumCulled = false;
 scene.add(halo);
 
+// The halo travels on the node the user is on: the focused entity while the
+// call diff is open, otherwise the selection. It stays on that node whichever
+// way the call arcs run, so watching its callers does not move the animation
+// onto a caller.
 function updateHalo() {
-  if (!selected || focus) {
+  const subject = focus ? { kind: "entity", id: focus.entity.id } : selected;
+  if (!subject) {
     halo.visible = false;
     return;
   }
   let box = null;
-  if (selected.kind === "entity") {
-    const slot = slotById.get(selected.id);
+  if (subject.kind === "entity") {
+    const slot = slotById.get(subject.id);
     if (slot) box = visualBox(slot, slotOpen(slot));
-  } else if (selected.kind === "package") {
-    box = laid.packages.find((item) => item.id === selected.id) || null;
+  } else if (subject.kind === "package") {
+    box = laid.packages.find((item) => item.id === subject.id) || null;
   }
   if (!box) {
     halo.visible = false;
@@ -340,7 +348,7 @@ function updateHalo() {
   halo.geometry = new THREE.BoxGeometry(box.w + pad, box.h + pad, box.d + pad);
   halo.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
   haloMaterial.uniforms.uHeight.value = box.h;
-  const change = (byPackage.get(selected.kind === "package" ? selected.id : "") || {}).change;
+  const change = (byPackage.get(subject.kind === "package" ? subject.id : "") || {}).change;
   haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : ARC);
   halo.visible = true;
 }
@@ -426,7 +434,6 @@ function applyTourStep(step) {
   clearTourMarks();
   // A tour step draws the calls it names. Callers mode would reverse them.
   callInbound = false;
-  closeCallMenu();
   if (focus) dropFocus();
   selected = null;
   entered = null;
@@ -1507,7 +1514,7 @@ function applyMode() {
     if (entered && laid && !(lit && lit.entities)) placeRing(entered);
     else ring.visible = false;
     if (arcSubject && lit && lit.links && lit.links.length) drawCallLinks(selectArcs, lit.links);
-    else if (arcSubject) drawSelectionArcs(arcSubject.id, arcSubject.inbound);
+    else if (arcSubject) drawSelectionArcs(arcSubject.id, callInbound);
     else if (tourLinks) drawCallLinks(selectArcs, tourLinks);
     else {
       clearGroup(selectArcs);
@@ -1620,8 +1627,36 @@ function callerLinks(found) {
   return byCaller ? [...byCaller.values()] : [];
 }
 
-// Types keep their methods either way. Only a function or method has a call list to reverse.
+function isType(found) {
+  return !!found && found.entity.kind === "type";
+}
+
+// A type has no call list of its own: it is called through its methods. Its
+// callers are the functions that call any method it declares.
+function typeCallerLinks(found) {
+  const byCaller = new Map();
+  for (const other of byEntity.values()) {
+    if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
+    for (const link of callerLinks(other)) {
+      const prev = byCaller.get(link.target.entity.id);
+      if (!prev) byCaller.set(link.target.entity.id, { target: link.target, change: link.change, step: link.step });
+      else prev.change = strongerChange(prev.change, link.change);
+    }
+  }
+  return [...byCaller.values()];
+}
+
+// The directions a node has: a function or method reverses its calls, a type
+// the methods it declares, a package its dependency edges (see packageEdges).
+function hasDirection(found) {
+  return isCallable(found) || isType(found);
+}
+
+// What the subject draws. A type keeps its methods either way: only the
+// functions calling those methods are added when the direction is reversed.
 function subjectLinks(found) {
+  if (!found) return [];
+  if (isType(found)) return callInbound ? typeCallerLinks(found) : entityLinks(found);
   if (callInbound && isCallable(found)) return callerLinks(found);
   return entityLinks(found);
 }
@@ -1697,7 +1732,7 @@ function syncLit() {
   if (tourLit) lit = tourLit;
   else if (focus) lit = litForEntity(focus);
   else if (entitySubject) lit = litForEntity(byEntity.get(entitySubject));
-  else if (arcSubject) lit = litForPackage(arcSubject.id, arcSubject.inbound);
+  else if (arcSubject) lit = litForPackage(arcSubject.id, callInbound);
   else lit = null;
 }
 
@@ -1705,7 +1740,7 @@ function drawEntityLinks(group, found) {
   // Callers are stored as the link target, the same shape as a callee. The
   // arc is drawn from the caller to this tower, so the particle walk, which
   // always runs from the first end to the second, comes back in.
-  const inbound = callInbound && isCallable(found);
+  const inbound = callInbound && hasDirection(found);
   const links = subjectLinks(found).map((link) => (inbound
     ? { from: link.target, target: found, far: link.target, change: link.change, step: link.step }
     : { from: found, target: link.target, far: link.target, change: link.change, step: link.step }));
@@ -1780,17 +1815,20 @@ function selectPackage(id, fly) {
   selected = { kind: "package", id };
   entered = fly ? id : entered;
   entitySubject = null;
-  arcSubject = { id, inbound: false };
+  arcSubject = { id };
   applyMode();
   if (fly) flyToPackage(id);
   noteJump();
 }
 
-function selectExternal(id) {
+// A package outside the tree has no dependencies of its own to show, so it
+// opens on the packages that depend on it. `c` flips it afterwards.
+function selectExternal(id, inbound = true) {
+  callInbound = inbound;
   selected = { kind: "external", id };
   entered = null;
   entitySubject = null;
-  arcSubject = { id, inbound: true };
+  arcSubject = { id };
   applyMode();
   const ext = laid.externals.find((item) => item.id === id);
   if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
@@ -2281,6 +2319,7 @@ function packageDetail(pkg) {
     line.textContent = deps.length + " dependencies";
     wrap.append(line);
   }
+  appendRefs(wrap);
   wrap.append(roster(pkg));
   return wrap;
 }
@@ -2456,6 +2495,48 @@ function openEntity(id) {
   selectEntity(id);
 }
 
+// The buttons are pointless when there is nothing behind them: a package with
+// no declarations has nothing to call, and a type with no methods is never
+// called through one. The panel says "0 declarations" in the package case.
+function hasRefs(subject) {
+  if (!subject) return false;
+  if (subject.kind === "entity") {
+    const found = byEntity.get(subject.id);
+    if (!found) return false;
+    if (isType(found)) return entityLinks(found).length > 0 || typeCallerLinks(found).length > 0;
+    return true;
+  }
+  const pkg = byPackage.get(subject.id);
+  return !!pkg && declaredEntities(pkg).length > 0;
+}
+
+// The direction control. It sits with the subject's own details and acts on
+// whatever the panel is showing, so there is one control and one state.
+function refsControl() {
+  if (!hasRefs(subjectNode())) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "modes refs";
+  wrap.setAttribute("role", "radiogroup");
+  wrap.setAttribute("aria-label", "Show calls or callers");
+  for (const [inbound, label] of [[false, "Calls"], [true, "Callers"]]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "radio");
+    const on = callInbound === inbound;
+    if (on) button.className = "on";
+    button.setAttribute("aria-checked", on ? "true" : "false");
+    button.textContent = label;
+    button.addEventListener("click", () => setCallDirection(inbound, null));
+    wrap.append(button);
+  }
+  return wrap;
+}
+
+function appendRefs(wrap) {
+  const control = refsControl();
+  if (control) wrap.append(control);
+}
+
 function entityDetail(entity) {
   const wrap = document.createElement("div");
   const title = document.createElement("h2");
@@ -2472,14 +2553,12 @@ function entityDetail(entity) {
     const size = document.createElement("p");
     size.textContent = sizeText(entity);
     wrap.append(size);
-    const hint = document.createElement("p");
-    hint.textContent = callInbound
-      ? "Showing callers. Right-click the tower to show calls."
-      : "Showing calls. Right-click the tower to show callers.";
-    wrap.append(hint);
+    appendRefs(wrap);
     const again = document.createElement("p");
     again.textContent = "Click again or press enter to open the call diff.";
     wrap.append(again);
+  } else if (entity.kind === "type") {
+    appendRefs(wrap);
   }
   if (entity.fields && entity.fields.length) {
     const line = document.createElement("p");
@@ -2496,6 +2575,7 @@ function focusDetail(entity) {
   title.append(titleClip);
   attachMarquee(title, titleClip);
   wrap.append(title);
+  appendRefs(wrap);
   if (callInbound) {
     wrap.append(callerDetail(entity));
     return wrap;
@@ -2628,7 +2708,6 @@ function resetView() {
   entitySubject = null;
   arcSubject = null;
   callInbound = false;
-  closeCallMenu();
   selected = null;
   jumps = [];
   jumpIndex = -1;
@@ -2674,7 +2753,8 @@ function subjectNow() {
     selected: selected ? { kind: selected.kind, id: selected.id } : null,
     entered: entered || null,
     entity: entitySubject || null,
-    arc: arcSubject ? { id: arcSubject.id, inbound: arcSubject.inbound } : null,
+    arc: arcSubject ? { id: arcSubject.id } : null,
+    inbound: callInbound,
     focus: focus ? focus.entity.id : null,
   };
 }
@@ -2684,7 +2764,8 @@ function sameSubject(a, b) {
   if (a.selected && (a.selected.kind !== b.selected.kind || a.selected.id !== b.selected.id)) return false;
   if (a.entered !== b.entered || a.entity !== b.entity || a.focus !== b.focus) return false;
   if (!!a.arc !== !!b.arc) return false;
-  if (a.arc && (a.arc.id !== b.arc.id || a.arc.inbound !== b.arc.inbound)) return false;
+  if (a.arc && a.arc.id !== b.arc.id) return false;
+  if (!!a.inbound !== !!b.inbound) return false;
   return true;
 }
 
@@ -2711,7 +2792,8 @@ function restoreSubject(entry) {
   selected = entry.selected ? { kind: entry.selected.kind, id: entry.selected.id } : null;
   entered = entry.entered;
   entitySubject = entry.entity;
-  arcSubject = entry.arc ? { id: entry.arc.id, inbound: entry.arc.inbound } : null;
+  arcSubject = entry.arc ? { id: entry.arc.id } : null;
+  callInbound = !!entry.inbound;
   ring.visible = false;
   applyMode();
   if (entry.focus) {
@@ -2839,8 +2921,7 @@ function animate(now) {
     if (pointerDirty) onHover(null);
     pointerDirty = false;
   } else if (pointerDirty && !pointerDown) {
-    if (callMenu.hidden) onHover(hitTest());
-    else onHover(null);
+    onHover(hitTest());
     hovered = pointerDirty;
     pointerDirty = false;
   }
@@ -2858,79 +2939,67 @@ function animate(now) {
 hud.overview.addEventListener("click", () => { mode = "overview"; applyMode(); });
 hud.changes.addEventListener("click", () => { mode = "overlay"; applyMode(); });
 
-const callMenu = document.querySelector("#call-menu");
+// The sidebar's calls / callers control lives in the detail panel, next to the
+// subject it acts on (see refsControl). The direction is a mode, like
+// Overview / Changes: it stays while the user moves between nodes.
 
-function closeCallMenu() {
-  callMenu.hidden = true;
-  callMenuTarget = null;
+// The node the toggle acts on: the focused entity, or whatever is selected.
+function subjectNode() {
+  if (focus) return { kind: "entity", id: focus.entity.id };
+  return selected ? { kind: selected.kind, id: selected.id } : null;
 }
 
-function syncCallMenu() {
-  for (const button of callMenu.querySelectorAll("button")) {
-    const on = (button.dataset.dir === "in") === callInbound;
-    button.classList.toggle("on", on);
-    button.setAttribute("aria-checked", on ? "true" : "false");
-  }
-}
-
-function openCallMenu(event) {
-  const hit = describeHit(hitTest());
-  const found = hit && hit.kind === "entity" ? byEntity.get(hit.id) : null;
-  if (!found || !found.box || !isCallable(found)) {
-    closeCallMenu();
-    return;
-  }
-  callMenuTarget = found.entity.id;
-  syncCallMenu();
-  callMenu.hidden = false;
-  hud.tag.style.display = "none";
-  const pad = 8;
-  callMenu.style.left = "0px";
-  callMenu.style.top = "0px";
-  const rect = callMenu.getBoundingClientRect();
-  let x = event.clientX;
-  let y = event.clientY;
-  if (x + rect.width + pad > window.innerWidth) x = window.innerWidth - rect.width - pad;
-  if (y + rect.height + pad > window.innerHeight) y = window.innerHeight - rect.height - pad;
-  callMenu.style.left = Math.max(pad, x) + "px";
-  callMenu.style.top = Math.max(pad, y) + "px";
-}
-
-// Pick a direction for the tower under the menu. The choice stays on until
-// the other option is picked, or the view is reset.
-function setCallDirection(inbound, id) {
+// Flip the direction and re-apply it to the node on screen. The buttons and
+// `c` pass no node, which means the current subject; a click on a node passes
+// the node it landed on.
+function setCallDirection(inbound, node) {
   callInbound = inbound;
-  closeCallMenu();
-  const found = byEntity.get(id);
-  if (!found || !found.box || !isCallable(found)) return;
-  if (focus && focus.entity.id === id) {
+  const subject = node || subjectNode();
+  if (!subject) {
     applyMode();
-    const cam = focusCamera();
-    flyTo(cam.pos, cam.target);
     return;
   }
-  if (selected && selected.kind === "entity" && selected.id === id) {
+  if (subject.kind === "entity") {
+    const found = byEntity.get(subject.id);
+    if (!found || !found.box) {
+      applyMode();
+      return;
+    }
+    if (focus && focus.entity.id === subject.id) {
+      applyMode();
+      const cam = focusCamera();
+      flyTo(cam.pos, cam.target);
+      return;
+    }
+    if (selected && selected.kind === "entity" && selected.id === subject.id) {
+      if (focus) dropFocus();
+      applyMode();
+      const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
+      const pose = framePose(points);
+      flyTo(pose.pos, pose.target);
+      return;
+    }
+    if (focus) dropFocus();
+    selectEntity(subject.id);
+    return;
+  }
+  // A package: the same fan, drawn from packageEdges the other way round.
+  if (selected && selected.kind === subject.kind && selected.id === subject.id) {
     if (focus) dropFocus();
     applyMode();
-    const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
-    const pose = framePose(points);
-    flyTo(pose.pos, pose.target);
+    flyToPackage(subject.id);
     return;
   }
   if (focus) dropFocus();
-  selectEntity(id);
+  if (subject.kind === "external") selectExternal(subject.id, inbound);
+  else selectPackage(subject.id, true);
 }
 
-callMenu.addEventListener("mousedown", (event) => event.preventDefault());
-callMenu.addEventListener("contextmenu", (event) => event.preventDefault());
-callMenu.addEventListener("click", (event) => {
-  const button = event.target.closest("button");
-  if (!button || !callMenuTarget) return;
-  setCallDirection(button.dataset.dir === "in", callMenuTarget);
-});
-
+// Right-click has no menu of its own: the Calls / Callers buttons pick the
+// direction. The canvas still swallows the browser's context menu.
+renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
 renderer.domElement.addEventListener("pointerdown", (event) => {
-  pointerDown = { x: event.clientX, y: event.clientY, button: event.button, menu: !callMenu.hidden };
+  pointerDown = { x: event.clientX, y: event.clientY, button: event.button };
   if (tourUI) tourUI.userTookOver();
   tween = null;
 });
@@ -2946,16 +3015,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   const start = pointerDown;
   const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   pointerDown = null;
-  if (start.button === 2) {
-    if (moved <= 5) openCallMenu(event);
-    return;
-  }
   if (moved > 5 || start.button !== 0) return;
-  // The press that dismisses the menu should not also select a tower.
-  if (start.menu) {
-    closeCallMenu();
-    return;
-  }
   activate(describeHit(hitTest()));
 });
 
@@ -3059,8 +3119,6 @@ window.addEventListener("pointerdown", (event) => {
   noteActivity();
   endIntro();
   requestFrame();
-  if (callMenu.hidden || callMenu.contains(event.target)) return;
-  closeCallMenu();
 });
 // A moving cursor is not activity: it redraws the hover it is over, but it must
 // not reset the idle clock, or the orbit and the animations would never settle.
@@ -3095,11 +3153,6 @@ window.addEventListener("keydown", (event) => {
   if (!typing && event.key === "Escape" && !hud.legend.hidden) {
     event.preventDefault();
     setLegend(false);
-    return;
-  }
-  if (!typing && event.key === "Escape" && !callMenu.hidden) {
-    event.preventDefault();
-    closeCallMenu();
     return;
   }
   const flyKey = flyToken(event.key);
@@ -3143,6 +3196,11 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     mode = mode === "overlay" ? "overview" : "overlay";
     applyMode();
+    return;
+  }
+  if (event.key === "c" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    setCallDirection(!callInbound, null);
     return;
   }
   if (event.key === "o" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
