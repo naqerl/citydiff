@@ -3084,28 +3084,86 @@ function renderDetail() {
     return;
   }
   hud.detailHead.append(noRootDetail());
+  hud.detailBody.append(noRootRoster());
 }
 
-// A range whose two sides name different modules — a rename — has no single
-// module, so the scene carries no root and there is no package to describe.
-// Without this the sidebar came up empty and said nothing about why.
+// A range whose two sides name different modules — a rename, or several
+// modules — has no single root package. The diff is still there to read, so
+// the sidebar opens on the whole of it: the range's modules, what changed
+// under each, and the same drill-down the root package would have given.
 function noRootDetail() {
   const wrap = document.createElement("div");
-  const title = document.createElement("h2");
-  title.textContent = "no root package";
-  wrap.append(title);
   const before = (sceneDoc && sceneDoc.moduleBefore) || "";
   const after = (sceneDoc && sceneDoc.moduleAfter) || "";
-  const line = document.createElement("p");
-  if (before && after && before !== after) {
-    line.textContent = "This range changes the module path: " + before + " \u2192 " + after + ". There is no single module, so there is no root package to show.";
-  } else {
-    line.textContent = "This range has no single module, so there is no root package to show.";
+  const modules = [...new Set([...splitModules(before), ...splitModules(after)])];
+  const label = before && after && before !== after ? before + " \u2192 " + after : (after || before || "this range");
+  const title = document.createElement("h2");
+  const titleClip = clipText(label);
+  title.append(titleClip);
+  attachMarquee(title, titleClip);
+  wrap.append(title);
+  const meta = document.createElement("p");
+  meta.textContent = modules.length + (modules.length === 1 ? " module" : " modules");
+  wrap.append(meta);
+  wrap.append(changeTally(allDeclaredEntities()));
+  return wrap;
+}
+
+function splitModules(names) {
+  return String(names || "").split(",").map((name) => name.trim()).filter(Boolean);
+}
+
+function allDeclaredEntities() {
+  const out = [];
+  for (const pkg of sceneDoc.packages || []) {
+    if (pkg.external) continue;
+    out.push(...declaredEntities(pkg));
   }
-  wrap.append(line);
-  const hint = document.createElement("p");
-  hint.textContent = "Press / and search for a package or a function.";
-  wrap.append(hint);
+  return out;
+}
+
+// Every internal package at the top of the city: a module root, or a package
+// whose parent is not in the snapshot.
+function topPackages() {
+  const internals = (sceneDoc.packages || []).filter((pkg) => !pkg.external);
+  const ids = new Set(internals.map((pkg) => pkg.id));
+  return internals.filter((pkg) => !pkg.parent || !ids.has(pkg.parent));
+}
+
+// The tally the whole range carries, counted like a package's own: every
+// declaration and every call to a declaration in the snapshot.
+function cityTally() {
+  const tally = { added: 0, modified: 0, removed: 0 };
+  for (const pkg of topPackages()) {
+    const below = subtreeStats(pkg);
+    tally.added += below.added;
+    tally.modified += below.modified;
+    tally.removed += below.removed;
+  }
+  return tally;
+}
+
+// The body of the no-root view: one Packages expander over the whole city. The
+// changed packages come first at any depth, the unchanged modules fold under
+// them, so the range can be read from the top and walked into.
+function noRootRoster() {
+  const wrap = document.createElement("div");
+  wrap.className = "sections";
+  const roots = topPackages();
+  if (!roots.length) return wrap;
+  const byName = (a, b) => packageLabel(a).localeCompare(packageLabel(b));
+  const direct = splitChanges(roots, (pkg) => pkg.change);
+  const nested = changedInSubtree({ id: undefined }).filter((pkg) => pkg.parent && !roots.some((root) => root.id === pkg.id));
+  const changed = [...direct.hot, ...nested].sort(byName);
+  const section = {
+    key: "packages",
+    label: "Packages",
+    hot: mode === "overlay" ? deletedFirst(changed) : roots.slice().sort(byName),
+    same: mode === "overlay" ? direct.same.slice().sort(byName) : [],
+    row: (pkg) => packageRow(pkg, ""),
+    totals: () => cityTally(),
+  };
+  wrap.append(sectionBlock(section, !sectionsTouched));
   return wrap;
 }
 
