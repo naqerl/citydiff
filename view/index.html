@@ -198,9 +198,6 @@
       border: 1px solid var(--line);
     }
     #side-toggle:hover, #side-help:hover { color: var(--fg); border-color: var(--line-strong); }
-    #crumb { color: var(--muted); min-height: 1.2em; overflow: hidden; white-space: nowrap; }
-    #crumb button { background: transparent; color: var(--muted); border: 0; padding: 0; }
-    #crumb button:hover { color: var(--fg); }
     .modes { display: flex; gap: 0; }
     .modes button {
       flex: 1;
@@ -286,6 +283,7 @@
     .clip { display: block; min-width: 0; flex: 1; overflow: hidden; }
     .marquee { display: inline-block; white-space: nowrap; }
     #detail button.row .mark { margin-left: auto; flex: none; }
+    #detail button.row .mark.stats { display: flex; gap: 7px; }
     #detail button.row:hover, #detail button.row.on { background: var(--elev); }
     .added { color: var(--added-text); }
     .removed { color: var(--removed-text); }
@@ -656,7 +654,6 @@
           <div id="search-wrap">
             <input id="search" type="search" placeholder="Find, or / for commands" autocomplete="off" spellcheck="false" />
           </div>
-          <div id="crumb"></div>
           <div id="note"></div>
         </div>
         <div id="detail">

@@ -416,7 +416,6 @@ const scratch = {
 
 const hud = {
   title: document.querySelector("#title"),
-  crumb: document.querySelector("#crumb"),
   note: document.querySelector("#note"),
   detailHead: document.querySelector("#detail-head"),
   detailBody: document.querySelector("#detail-body"),
@@ -2788,32 +2787,7 @@ function updateHUD() {
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   hud.note.textContent = note;
-  renderCrumb();
   renderDetail();
-}
-
-function renderCrumb() {
-  const parts = [];
-  const root = sceneDoc && sceneDoc.root;
-  if (root) parts.push({ id: root, label: byPackage.get(root)?.name || root, kind: "package" });
-  if (entered && entered !== root) {
-    const pkg = byPackage.get(entered);
-    parts.push({ id: entered, label: pkg ? pkg.name : entered, kind: "package" });
-  }
-  if (focus) parts.push({ id: focus.entity.id, label: entityLabel(focus.entity), kind: "entity" });
-  hud.crumb.replaceChildren();
-  parts.forEach((part, index) => {
-    if (index) hud.crumb.append("  /  ");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = part.label;
-    button.addEventListener("click", () => {
-      if (part.kind === "entity") return;
-      if (focus) exitFocus();
-      selectPackage(part.id, true);
-    });
-    hud.crumb.append(button);
-  });
 }
 
 function renderDetail() {
@@ -3107,6 +3081,26 @@ function rowLabel(pkg, ownerId) {
   return packageLabel(pkg);
 }
 
+// What changed inside a package: its own declarations, and the calls they make
+// to declarations this codebase has — the ones the viewer can draw and name.
+// Counted per call step, not per target: a function that lost a call to a
+// target and gained another has both, and folding them by target (which is what
+// the arcs do) hid the loss behind the gain.
+function packageStats(pkg) {
+  const tally = { added: 0, modified: 0, removed: 0 };
+  const bump = (change) => {
+    if (tally[change] != null) tally[change] += 1;
+  };
+  for (const entity of declaredEntities(pkg)) {
+    bump(entity.change);
+    for (const step of entity.calls || []) {
+      if (!declaredTarget(step)) continue;
+      bump(step.change);
+    }
+  }
+  return tally;
+}
+
 function packageRow(pkg, ownerId) {
   const button = document.createElement("button");
   button.type = "button";
@@ -3115,9 +3109,22 @@ function packageRow(pkg, ownerId) {
   const name = clipText(rowLabel(pkg, ownerId));
   button.append(name);
   attachMarquee(button, name);
-  const mark = changeMark(pkg.change);
-  if (mark) {
-    mark.classList.add("mark");
+  const tally = packageStats(pkg);
+  const parts = [
+    ["added", "+", tally.added, "added"],
+    ["modified", "~", tally.modified, "changed"],
+    ["removed", "\u2212", tally.removed, "deleted"],
+  ].filter(([, , count]) => count > 0);
+  if (parts.length) {
+    const mark = document.createElement("span");
+    mark.className = "mark stats";
+    mark.title = parts.map(([, , count, word]) => count + " " + word).join(", ");
+    for (const [kind, glyph, count] of parts) {
+      const span = document.createElement("span");
+      span.className = kind;
+      span.textContent = glyph + count;
+      mark.append(span);
+    }
     button.append(mark);
   }
   button.addEventListener("click", () => openPackage(pkg.id));
