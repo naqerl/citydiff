@@ -2776,6 +2776,12 @@ function renderCrumb() {
 
 function renderDetail() {
   stopMarches();
+  const subject = subjectKey();
+  if (subject !== detailSubject) {
+    detailSubject = subject;
+    sectionsTouched = false;
+    openSections.clear();
+  }
   hud.detailHead.replaceChildren();
   hud.detailBody.replaceChildren();
   if (focus) {
@@ -2925,9 +2931,14 @@ function roster(pkg) {
   const wrap = document.createElement("div");
   wrap.className = "sections";
   if (!pkg) return wrap;
-  for (const section of rosterSections(pkg)) {
-    if (!section.hot.length && !section.same.length) continue;
-    wrap.append(sectionBlock(section));
+  const sections = rosterSections(pkg).filter((section) => section.hot.length || section.same.length);
+  // One section open to start from, the rest folded: the counts on the folded
+  // headers say what they hold. Once the user has folded or unfolded something
+  // for this node, their choice is what stands.
+  const first = sections.length ? sections[0].key : "";
+  for (const section of sections) {
+    const open = sectionsTouched ? openSections.has(section.key) : section.key === first;
+    wrap.append(sectionBlock(section, open));
   }
   return wrap;
 }
@@ -2960,14 +2971,22 @@ function rosterSections(pkg) {
   return sections;
 }
 
-// Which sections are open follows the user from node to node, the way a
-// sidebar does in an editor. They start open: the rows were the whole view
-// before this, and collapsing is the new thing.
-const openSections = new Set(["packages", "types", "functions", "methods"]);
+// What the user has folded for the node on screen. Selecting another node
+// starts from the default again: the first section open, the rest folded.
+const openSections = new Set();
+let sectionsTouched = false;
+let detailSubject = "";
 
-function sectionBlock(section) {
+// The node the panel is showing, so a change of node resets the folds.
+function subjectKey() {
+  if (focus) return "focus:" + focus.entity.id;
+  if (selected) return selected.kind + ":" + selected.id;
+  return "root";
+}
+
+function sectionBlock(section, open) {
   const wrap = document.createElement("section");
-  wrap.className = openSections.has(section.key) ? "section open" : "section";
+  wrap.className = open ? "section open" : "section";
   const head = document.createElement("button");
   head.type = "button";
   head.className = "section-head";
@@ -2988,17 +3007,27 @@ function sectionBlock(section) {
   }
   head.append(caret, label, counts);
   head.addEventListener("click", () => {
-    const open = !wrap.classList.contains("open");
-    wrap.classList.toggle("open", open);
-    head.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) openSections.add(section.key);
-    else openSections.delete(section.key);
+    const next = !wrap.classList.contains("open");
+    setSectionOpen(wrap, head, section.key, next);
   });
   const body = document.createElement("div");
   body.className = "section-body";
+  body.inert = !open;
   for (const item of [...section.hot, ...section.same]) body.append(section.row(item));
   wrap.append(head, body);
   return wrap;
+}
+
+// A folded section is out of the tab order: its rows are clipped, and Tab
+// should reach the next section's header, not walk through rows nobody can see.
+function setSectionOpen(wrap, head, key, open) {
+  wrap.classList.toggle("open", open);
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+  const body = wrap.querySelector(".section-body");
+  if (body) body.inert = !open;
+  sectionsTouched = true;
+  if (open) openSections.add(key);
+  else openSections.delete(key);
 }
 
 // added, changed, deleted, untouched — the untouched count is the quiet one.
