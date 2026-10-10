@@ -479,34 +479,54 @@ function stopMarches() {
 function clipText(label) {
   const clip = document.createElement("span");
   clip.className = "clip";
+  const track = document.createElement("span");
+  track.className = "marquee-track";
   const text = document.createElement("span");
   text.className = "marquee";
   text.textContent = label;
-  clip.append(text);
+  track.append(text);
+  clip.append(track);
   return clip;
 }
 
+// A name that does not fit its clip marches right to left while the pointer is
+// on the row. A second copy follows a gap behind the first, and the track moves
+// left by exactly one copy plus that gap before it wraps — at that point the
+// copy sits where the first began, so the loop has no jump and there is always
+// a space to read between the end of the name and its next pass.
+const MARQUEE_GAP = 24;   // px of daylight between the name and the next copy
+const MARQUEE_SPEED = 45; // px per second
+
 function attachMarquee(host, clip) {
-  const text = clip.querySelector(".marquee");
-  let timer = 0;
+  const track = clip.querySelector(".marquee-track");
+  if (!track) return;
+  let frame = 0;
   const stop = () => {
-    if (timer) clearInterval(timer);
-    timer = 0;
-    text.style.transform = "";
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    for (const copy of track.querySelectorAll(".marquee.copy")) copy.remove();
+    track.style.transform = "";
     marchStops.delete(stop);
   };
   host.addEventListener("mouseenter", () => {
     stop();
-    const extra = text.scrollWidth - clip.clientWidth;
-    if (extra <= 1) return;
-    const chars = Math.max((text.textContent || "").length, 1);
-    const ch = text.scrollWidth / chars;
-    const steps = Math.max(1, Math.ceil(extra / ch));
-    let i = 0;
-    timer = setInterval(() => {
-      i = i >= steps ? 0 : i + 1;
-      text.style.transform = i ? "translateX(" + (-i * ch) + "px)" : "";
-    }, 140);
+    const first = track.querySelector(".marquee");
+    if (!first) return;
+    const nameWidth = Math.ceil(first.getBoundingClientRect().width);
+    if (nameWidth <= clip.clientWidth) return;
+    const copy = first.cloneNode(true);
+    copy.classList.add("copy");
+    copy.setAttribute("aria-hidden", "true");
+    copy.style.marginLeft = MARQUEE_GAP + "px";
+    first.after(copy);
+    const span = nameWidth + MARQUEE_GAP;
+    const started = performance.now();
+    const step = (now) => {
+      const x = (((now - started) / 1000) * MARQUEE_SPEED) % span;
+      track.style.transform = "translateX(" + -x + "px)";
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
     marchStops.add(stop);
   });
   host.addEventListener("mouseleave", stop);
@@ -3593,29 +3613,6 @@ function entityDetail(entity) {
   return wrap;
 }
 
-// One line of the calls or callers list in the head. A line whose node is in
-// the snapshot is a button that opens it, exactly as clicking the node does;
-// one that is not stays the plain text it always was. The change colour stays
-// on the <li>, so the mark and the tint are the same either way.
-function callItem(label, change, open) {
-  const li = document.createElement("li");
-  li.className = mode === "overlay" ? change : "";
-  const clip = clipText(label);
-  if (!open) {
-    li.append(clip);
-    attachMarquee(li, clip);
-    return li;
-  }
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "call-row";
-  button.append(clip);
-  attachMarquee(button, clip);
-  button.addEventListener("click", open);
-  li.append(button);
-  return li;
-}
-
 function focusDetail(entity) {
   const wrap = document.createElement("div");
   const title = document.createElement("h2");
@@ -3626,91 +3623,12 @@ function focusDetail(entity) {
   if (mark) title.append(mark);
   wrap.append(title);
   appendRefs(wrap);
-  if (callInbound) {
-    wrap.append(callerDetail(entity));
-    return wrap;
-  }
-  const meta = document.createElement("p");
-  const steps = (entity.calls || []).filter((step) => declaredTarget(step));
-  const added = steps.filter((step) => step.change === "added").length;
-  const removed = steps.filter((step) => step.change === "removed").length;
-  meta.append(sizeText(entity));
-  if (mode === "overlay") {
-    meta.append("  ");
-    const plus = document.createElement("span");
-    plus.className = "added";
-    plus.textContent = "+" + added;
-    const minus = document.createElement("span");
-    minus.className = "removed";
-    minus.textContent = " −" + removed;
-    meta.append(plus, minus, " calls");
-  } else {
-    meta.append("   " + steps.length + " calls");
-  }
-  wrap.append(meta);
-  const list = document.createElement("ul");
-  const show = mode === "overlay" ? steps.filter((step) => step.change !== "same") : steps.slice(0, 40);
-  if (!show.length) {
-    const empty = document.createElement("p");
-    empty.textContent = steps.length ? "The call list is unchanged." : "No calls to a declaration in this codebase.";
-    wrap.append(empty);
-  }
-  for (const step of show) {
-    const mark = step.change === "added" ? "+ " : step.change === "removed" ? "− " : "";
-    const line = (mode === "overlay" ? mark : "") + (step.expr || step.name || "call");
-    const target = declaredTarget(step);
-    list.append(callItem(line, step.change, target ? () => openEntity(target.entity.id) : null));
-  }
-  if (mode !== "overlay" && steps.length > 40) {
-    const more = document.createElement("p");
-    more.textContent = steps.length - 40 + " more calls continue along the path.";
-    wrap.append(more);
-  }
-  wrap.append(list);
-  return wrap;
-}
-
-function callerDetail(entity) {
-  const wrap = document.createDocumentFragment();
-  const found = byEntity.get(entity.id);
-  const links = callerLinks(found).slice().sort((a, b) => entityLabel(a.target.entity).localeCompare(entityLabel(b.target.entity)));
+  // The calls or the callers are the References section in the body, behind
+  // its own header: the head keeps what the node is and how big it is, and
+  // nothing is listed or counted twice.
   const meta = document.createElement("p");
   meta.append(sizeText(entity));
-  if (mode === "overlay") {
-    const added = links.filter((link) => link.change === "added").length;
-    const removed = links.filter((link) => link.change === "removed").length;
-    meta.append("  ");
-    const plus = document.createElement("span");
-    plus.className = "added";
-    plus.textContent = "+" + added;
-    const minus = document.createElement("span");
-    minus.className = "removed";
-    minus.textContent = " −" + removed;
-    meta.append(plus, minus, " callers");
-  } else {
-    meta.append("   " + links.length + " caller" + (links.length === 1 ? "" : "s"));
-  }
   wrap.append(meta);
-  const show = mode === "overlay" ? links.filter((link) => link.change !== "same") : links.slice(0, 40);
-  if (!show.length) {
-    const empty = document.createElement("p");
-    empty.textContent = links.length ? "The caller list is unchanged." : "No function in this codebase calls this one.";
-    wrap.append(empty);
-    return wrap;
-  }
-  const list = document.createElement("ul");
-  for (const link of show) {
-    const mark = link.change === "added" ? "+ " : link.change === "removed" ? "− " : "";
-    const line = (mode === "overlay" ? mark : "") + entityLabel(link.target.entity);
-    const target = link.target;
-    list.append(callItem(line, link.change, target && target.box ? () => openEntity(target.entity.id) : null));
-  }
-  wrap.append(list);
-  if (mode !== "overlay" && links.length > 40) {
-    const more = document.createElement("p");
-    more.textContent = links.length - 40 + " more callers.";
-    wrap.append(more);
-  }
   return wrap;
 }
 
