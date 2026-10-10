@@ -2156,61 +2156,76 @@ function litForEntity(found) {
   return { entities, packages: null };
 }
 
-function rawPackageCalls(id) {
-  if (mode !== "overlay") return [];
+// The calls that leave a package are the calls its towers make. A package is
+// not one caller: the arc starts at the function or method that writes the
+// call, so the city shows which declaration reaches where.
+function packageCallLinks(id) {
   const links = [];
   for (const found of byEntity.values()) {
     if (!found.box || !found.pkg || found.pkg.id !== id) continue;
-    const kind = found.entity.kind;
-    if (kind !== "function" && kind !== "method") continue;
     for (const link of entityLinks(found)) {
-      if (!link.change || link.change === "same") continue;
-      links.push({ from: found, target: link.target, change: link.change, step: link.step });
+      links.push({ from: found, target: link.target, far: link.target, change: link.change, step: link.step });
     }
   }
   return links;
 }
 
-// Several callers of one function share a single arc.
-// Added and deleted together read as changed.
-function mergeCallLinks(links) {
-  const byTarget = new Map();
+// The calls that enter a package land on the towers that are called, and they
+// start at the tower that makes the call.
+function packageCallerLinks(id) {
+  const links = [];
+  for (const found of byEntity.values()) {
+    if (!found.box || !found.pkg || found.pkg.id !== id) continue;
+    for (const link of callerLinks(found)) {
+      links.push({ from: link.target, target: found, far: link.target, change: link.change, step: link.step });
+    }
+  }
+  return links;
+}
+
+// One arc per pair of towers. Several calls from one function to another share
+// it, and the stronger change is the one the arc keeps. Added and deleted
+// together read as changed.
+function mergePairLinks(links) {
+  const byPair = new Map();
   const rank = { same: 0, modified: 1, removed: 2, added: 3 };
   for (const link of links) {
-    const key = link.target.entity.id;
-    const prev = byTarget.get(key);
+    const key = link.from.entity.id + "\u0000" + link.target.entity.id;
+    const prev = byPair.get(key);
     if (!prev) {
-      byTarget.set(key, { from: link.from, target: link.target, change: link.change, step: link.step, changes: new Set([link.change]) });
+      byPair.set(key, { from: link.from, target: link.target, far: link.far || link.target, change: link.change, step: link.step, changes: new Set([link.change]) });
       continue;
     }
     prev.changes.add(link.change);
     if ((rank[link.change] || 0) >= (rank[prev.change] || 0)) {
-      prev.from = link.from;
       prev.step = link.step;
       prev.change = link.change;
     }
   }
-  for (const link of byTarget.values()) {
+  for (const link of byPair.values()) {
     if (link.changes.has("added") && link.changes.has("removed")) link.change = "modified";
   }
-  return [...byTarget.values()];
+  return [...byPair.values()];
 }
 
 function litForPackage(id, inbound) {
   const packages = new Set([id]);
-  if (inbound) {
-    for (const edge of packageEdges(id, true)) packages.add(edge.from);
-    return { packages, entities: null, browse: null, links: null };
-  }
-  const raw = rawPackageCalls(id);
-  if (raw.length) {
+  const links = inbound ? packageCallerLinks(id) : packageCallLinks(id);
+  if (links.length) {
     const entities = new Set();
-    for (const link of raw) {
+    for (const link of links) {
       entities.add(link.from.entity.id);
       entities.add(link.target.entity.id);
       if (link.target.pkg) packages.add(link.target.pkg.id);
+      if (link.from.pkg) packages.add(link.from.pkg.id);
     }
-    return { packages, entities, browse: null, links: mergeCallLinks(raw) };
+    return { packages, entities, browse: null, links: mergePairLinks(links) };
+  }
+  // No tower here makes a call, or is called: a package outside the tree has
+  // no declarations at all, so its dependency fan is all there is to draw.
+  if (inbound) {
+    for (const edge of packageEdges(id, true)) packages.add(edge.from);
+    return { packages, entities: null, browse: null, links: null };
   }
   for (const edge of packageEdges(id, false)) packages.add(edge.to);
   return { packages, entities: null, browse: id, links: null };

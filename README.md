@@ -99,12 +99,15 @@ Selecting a package descends into it; selecting a tower opens its call path. The
 shows the change for whatever is selected, with the resolved calls in source order.
 Under the selected node the sidebar offers **Calls** / **Callers** — a node with nothing to show
 (a package with no declarations, a type with no methods) gets neither — and the `c` key flips
-them, picking which way the arcs run for any node: **Calls** draws the functions a tower
-calls (particles leaving it) or the
-packages a package depends on, **Callers** draws the functions that call it or the packages
-that depend on it. Callers use the same arcs, with the particles running back toward the
-node. Only one of the two is on at a time, and it applies to a type through the methods it
-declares.
+them, picking which way the arcs run: **Calls** draws the functions a tower calls, with the
+particles leaving it, **Callers** draws the functions that call it. Callers use the same arcs,
+with the particles running back toward the node. Only one of the two is on at a time.
+
+A package is shown the same way, from the towers: **Calls** draws the arcs its own declarations
+make, each one starting at the function or method that writes the call, and **Callers** draws
+the calls that land on those declarations, each one starting at the tower that makes it. A
+package outside the tree has no declarations to draw from, so it keeps the dependency fan
+between package blocks. A type is read through the methods it declares.
 
 The viewer keeps a **vim-style jump list** of every node you select. Press `o` to step to
 an older selection and `i` to step to a newer one — the same directions as vim's `<C-o>`
