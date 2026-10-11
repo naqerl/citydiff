@@ -408,7 +408,9 @@
       border: 1px solid var(--line-strong);
       padding: 7px 10px;
     }
-    #search:focus { outline: 1px solid var(--fg); outline-offset: 1px; }
+    /* Focus recolours the border. An outline sits a pixel outside it and
+       reads as a second ring. */
+    #search:focus { outline: none; border-color: var(--fg); }
     #results {
       position: fixed;
       z-index: 6;
