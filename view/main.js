@@ -16,6 +16,7 @@ import { isLaunch, LAUNCH_SKIN } from "./launch.js";
 import { createRocket } from "./rocket.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
+import { buildSigns, hasPlate, signText } from "./signs.js";
 
 let theme = null;
 let themeReady = false;
@@ -185,17 +186,8 @@ function adoptShaders(next) {
     const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true });
     return dress(mat, next.horizon, next);
   });
-  for (const plinth of plinths) {
-    if (plinth.external) {
-      plinth.material = swapMaterial(plinth.mesh, next.external, next, () => dress(new THREE.MeshStandardMaterial(), next.external, next));
-    } else {
-      plinth.material = swapMaterial(plinth.mesh, next.package, next, () => {
-        const mat = new THREE.MeshLambertMaterial();
-        tintEmissive(mat);
-        return dress(mat, next.package, next);
-      });
-    }
-  }
+  swapMaterial(pkgMesh, next.package, next, () => packageMaterial(next));
+  swapMaterial(extMesh, next.external, next, () => externalMaterial(next));
   if (solidMesh && next.entity.vertexSource && next.entity.vertexSource.includes("aHouse") && !solidMesh.geometry.getAttribute("aHouse")) {
     solidMesh.geometry.setAttribute("aHouse", houseAttribute(solidMesh.userData.slots));
   }
@@ -207,6 +199,10 @@ function adoptShaders(next) {
     });
   }
 }
+
+// The per-vertex and per-instance colours a theme fade blends: the particle
+// colours and the glow of each package.
+const FADE_ATTRIBUTES = ["aColor", "aGlow"];
 
 function captureLook() {
   const mats = [];
@@ -226,8 +222,10 @@ function captureLook() {
       mats.push(rec);
     }
     if (obj.instanceColor) instances.push({ attr: obj.instanceColor, colors: Float32Array.from(obj.instanceColor.array) });
-    const painted = obj.geometry && obj.geometry.getAttribute && obj.geometry.getAttribute("aColor");
-    if (painted) attrs.push({ attr: painted, colors: Float32Array.from(painted.array) });
+    for (const name of FADE_ATTRIBUTES) {
+      const painted = obj.geometry && obj.geometry.getAttribute && obj.geometry.getAttribute(name);
+      if (painted) attrs.push({ attr: painted, colors: Float32Array.from(painted.array) });
+    }
   });
   const clear = new THREE.Color();
   renderer.getClearColor(clear);
@@ -347,7 +345,7 @@ function fadeToTheme(next) {
   const to = captureLook();
   const glideSky = fromSky && skyColors(next);
   mixLook(from, to, 0);
-  redrawPlates(fromLabel, fromBg);
+  paintSigns(fromLabel, fromBg);
   if (glideSky) applyGradient(scene, fromSky);
   else applySky(scene, next);
   skinWarning = next.shadeWarning || "";
@@ -356,7 +354,7 @@ function fadeToTheme(next) {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) {
     mixLook(from, to, 1);
-    redrawPlates(next.label.text, next.label.background);
+    paintSigns(next.label.text, next.label.background);
     if (glideSky) applyGradient(scene, glideSky);
     if (next.hud && next.hud.scheme) document.documentElement.style.colorScheme = next.hud.scheme;
     updateHalo();
@@ -388,7 +386,7 @@ function tickThemeFade(now) {
   const k = Math.min(1, (now - fade.t0) / fade.ms);
   const s = k * k * (3 - 2 * k);
   mixLook(fade.from, fade.to, s);
-  redrawPlates(mixCSS(fade.fromLabel, fade.toLabel, s), mixCSS(fade.fromBg, fade.toBg, s));
+  paintSigns(mixCSS(fade.fromLabel, fade.toLabel, s), mixCSS(fade.fromBg, fade.toBg, s));
   if (fade.fromSky) {
     applyGradient(scene, {
       top: mixCSS(fade.fromSky.top, fade.toSky.top, s),
@@ -404,7 +402,7 @@ function tickThemeFade(now) {
     if (fade.scheme) document.documentElement.style.colorScheme = fade.scheme;
     themeFade = null;
     paintPlinths();
-    redrawPlates(fade.toLabel, fade.toBg);
+    paintSigns(fade.toLabel, fade.toBg);
     updateHalo();
   }
   return true;
@@ -1177,6 +1175,9 @@ let solidMat = null;
 let planeMesh = null;
 let groundMesh = null;
 let horizonMesh = null;
+let pkgMesh = null;
+let extMesh = null;
+let signs = null;
 let hemiLight = null;
 let keyLight = null;
 let rimLight = null;
@@ -1752,45 +1753,23 @@ async function buildCity(progress = () => {}) {
   horizonMesh.position.y = 0.01;
   city.add(horizonMesh);
 
-  // A sign is a canvas texture, one per package, so this loop is the slow half
-  // of the stage. It is sliced so the bar keeps moving while it runs.
-  await sliced(laid.packages.length, (f) => progress(f * 0.5), (i) => {
-    const box = laid.packages[i];
-    const pkg = byPackage.get(box.id);
-    const geom = new THREE.BoxGeometry(box.w, box.h, box.d);
-    const material = new THREE.MeshLambertMaterial({
-      color: plinthColor(box.depth, box.synthetic),
-      emissive: new THREE.Color(theme.package.emissive),
-      emissiveIntensity: theme.package.emissiveIntensity,
-    });
-    tintEmissive(material);
-    rememberShade(dress(material, theme.package, theme), theme.package);
-    const mesh = new THREE.Mesh(geom, material);
-    mesh.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
-    mesh.userData = { kind: "package", id: box.id };
-    city.add(mesh);
-    const plate = namePlate(box);
-    if (plate) mesh.add(plate);
-    plinths.push({ id: box.id, box, mesh, material, plate, pkg });
-  });
-
-  for (const box of laid.externals) {
-    const mesh = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.9, 0),
-      new THREE.MeshStandardMaterial({
-        color: theme.external.color,
-        metalness: theme.external.metalness,
-        roughness: theme.external.roughness,
-        emissive: theme.external.emissive,
-        emissiveIntensity: theme.external.emissiveIntensity,
-      }),
-    );
-    rememberShade(dress(mesh.material, theme.external, theme), theme.external);
-    mesh.position.set(box.x, box.y + 1.2, box.z);
-    mesh.userData = { kind: "external", id: box.id };
-    city.add(mesh);
-    plinths.push({ id: box.id, box, mesh, material: mesh.material, plate: null, external: true });
+  // Every package is an instance of one unit box, and every package outside
+  // the snapshot an instance of one octahedron: two draw calls for the whole
+  // city, however many packages it has. paintPlinths writes their colours.
+  const signItems = [];
+  for (const box of laid.packages) {
+    const sign = hasPlate(box) ? signItems.push({ box, text: signText(box.name || box.id) }) - 1 : -1;
+    plinths.push({ id: box.id, box, pkg: byPackage.get(box.id), index: plinths.length, sign });
   }
+  const outside = laid.externals.map((box, index) => ({ id: box.id, box, index, sign: -1, external: true }));
+  pkgMesh = plinthMesh(new THREE.BoxGeometry(1, 1, 1), packageMaterial(theme), plinths, "package");
+  extMesh = plinthMesh(new THREE.OctahedronGeometry(0.9, 0), externalMaterial(theme), outside, "external");
+  plinths.push(...outside);
+  for (const mesh of [pkgMesh, extMesh]) if (mesh) city.add(mesh);
+  signs = buildSigns(signItems, renderer, new THREE.Color(theme.label.text));
+  city.add(signs.mesh);
+  paintSigns(theme.label.text, theme.label.background);
+  progress(0.5);
 
   const solids = [];
   await sliced(laid.packages.length, (f) => progress(0.5 + f * 0.15), (i) => {
@@ -1825,6 +1804,78 @@ async function buildCity(progress = () => {}) {
   rememberShade(dress(solidMat, theme.entity, theme), theme.entity);
   solidMesh = await makeInstances(geo, solidMat, solids, (f) => progress(0.65 + f * 0.35));
   if (solidMesh) city.add(solidMesh);
+}
+
+// A package box or an outside package. Each instance carries its own glow:
+// for a package the emissive intensity (the colour is the skin's), for an
+// outside package the emissive colour times its intensity.
+function plinthPatch(material, sized) {
+  const prev = material.onBeforeCompile;
+  const below = material.customProgramCacheKey();
+  material.onBeforeCompile = (shader, renderer) => {
+    prev.call(material, shader, renderer);
+    const size = sized ? "attribute vec3 aBoxSize;\n" : "";
+    shader.vertexShader = "attribute vec3 aGlow;\n" + size + "varying vec3 vGlow;\n" +
+      shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n\tvGlow = aGlow;");
+    shader.fragmentShader = "varying vec3 vGlow;\n" +
+      shader.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vGlow;");
+  };
+  material.customProgramCacheKey = () => below + "\nplinth" + (sized ? " sized" : "");
+  // A skin's vertex shader writes `transformed` for a box at its real size,
+  // as it did when every package was its own mesh.
+  if (sized) material.userData.vertexWrap = ["transformed *= aBoxSize;", "transformed /= aBoxSize;"];
+  return material;
+}
+
+function packageMaterial(skin) {
+  const mat = new THREE.MeshLambertMaterial({ emissive: new THREE.Color(skin.package.emissive), emissiveIntensity: 1 });
+  tintEmissive(mat);
+  plinthPatch(mat, true);
+  return rememberShade(dress(mat, skin.package, skin), skin.package);
+}
+
+function externalMaterial(skin) {
+  const mat = new THREE.MeshStandardMaterial({
+    metalness: skin.external.metalness,
+    roughness: skin.external.roughness,
+    emissive: 0xffffff,
+    emissiveIntensity: 1,
+  });
+  plinthPatch(mat, false);
+  return rememberShade(dress(mat, skin.external, skin), skin.external);
+}
+
+function plinthMesh(geo, material, list, kind) {
+  if (!list.length) return null;
+  const n = list.length;
+  const mesh = new THREE.InstancedMesh(geo, material, n);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+  geo.setAttribute("aGlow", new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3));
+  if (kind === "package") {
+    const sizes = new Float32Array(n * 3);
+    list.forEach((plinth, i) => sizes.set([plinth.box.w, plinth.box.h, plinth.box.d], i * 3));
+    geo.setAttribute("aBoxSize", new THREE.InstancedBufferAttribute(sizes, 3));
+  }
+  mesh.userData = { kind: kind + "s", pick: kind, ids: list.map((plinth) => plinth.id) };
+  mesh.frustumCulled = false;
+  for (const plinth of list) placePlinth(mesh, plinth, true);
+  mesh.instanceMatrix.needsUpdate = true;
+  // Bounds for picking, taken while every instance is shown.
+  mesh.computeBoundingSphere();
+  return mesh;
+}
+
+// A hidden plinth is an instance shrunk to nothing: it draws no pixel and no
+// ray can hit it.
+function placePlinth(mesh, plinth, shown) {
+  const box = plinth.box;
+  if (plinth.external) scratch.pos.set(box.x, box.y + 1.2, box.z);
+  else scratch.pos.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
+  if (!shown) scratch.scale.set(0, 0, 0);
+  else if (plinth.external) scratch.scale.set(1, 1, 1);
+  else scratch.scale.set(box.w, box.h, box.d);
+  scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
+  mesh.setMatrixAt(plinth.index, scratch.mat);
 }
 
 function coloredBox() {
@@ -1907,102 +1958,15 @@ function writeSlot(mesh, index, slot, open) {
   return true;
 }
 
-// A sign is painted at this size and then stretched over its plate: a bigger
-// canvas is what keeps the text sharp now that a plate grows with its building.
-const SIGN_FONT = 96;
-const SIGN_PAD = 28;
-
-function signFont() {
-  return "600 " + SIGN_FONT + "px ui-monospace, monospace";
-}
-
-function drawSign(canvas, text, textColor, background) {
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (background && background !== "transparent") {
-    ctx.fillStyle = background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.font = signFont();
-  ctx.fillStyle = textColor;
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, SIGN_PAD / 2, canvas.height / 2);
-}
-
-function redrawPlates(textColor, background) {
-  for (const plinth of plinths) {
-    const plate = plinth.plate;
-    const tex = plate && plate.userData.sign;
-    if (!tex) continue;
-    drawSign(tex.image, plate.userData.signText, textColor, background);
-    tex.needsUpdate = true;
-  }
-}
-
-function signTexture(label) {
-  const probe = document.createElement("canvas").getContext("2d");
-  probe.font = signFont();
-  const text = label.length > 22 ? label.slice(0, 21) + "…" : label;
-  const textW = Math.ceil(probe.measureText(text).width);
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(SIGN_FONT * 1.34, textW + SIGN_PAD);
-  canvas.height = Math.round(SIGN_FONT * 1.5);
-  const background = theme.label.background;
-  drawSign(canvas, text, theme.label.text, background);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  return { tex, aspect: canvas.width / canvas.height, text };
-}
-
-function setPlateOpacity(plate, opacity) {
-  if (!plate) return;
-  const mats = new Set();
-  plate.traverse((obj) => {
-    if (obj.material) mats.add(obj.material);
-  });
-  for (const mat of mats) {
-    mat.opacity = opacity;
-    mat.transparent = true;
-  }
-}
-
-// The name sits on all four faces, just under the roof, facing outward.
-// PlaneGeometry faces local +z. rotation.y turns that normal to each side:
-// 0 → +z, π → −z, +π/2 → +x, −π/2 → −x.
-// A sign is as big as its wall allows: as wide as the face it sits on, and no
-// taller than the building can carry. A tall package gets a big sign, a flat
-// one a small one, and the two pairs of faces get a geometry each because the
-// front of a building is usually wider than its side.
-function plateGeometry(span, boxHeight, aspect) {
-  const width = Math.max(0.6, span * 0.94);
-  const maxHeight = Math.max(0.5, Math.min(boxHeight * 0.62, 4));
-  const height = Math.min(width / aspect, maxHeight);
-  return new THREE.PlaneGeometry(height * aspect, height);
-}
-
-function namePlate(box) {
-  if (Math.max(box.w, box.d) < 5 || Math.min(box.w, box.d) < 2.2) return null;
-  const { tex, aspect, text } = signTexture(box.name || box.id);
-  const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
-  const group = new THREE.Group();
-  group.userData.sign = tex;
-  group.userData.signText = text;
-  const gap = 0.045;
-  const faces = [
-    [0, box.d / 2 + gap, 0, box.w],
-    [0, -box.d / 2 - gap, Math.PI, box.w],
-    [box.w / 2 + gap, 0, Math.PI / 2, box.d],
-    [-box.w / 2 - gap, 0, -Math.PI / 2, box.d],
-  ];
-  for (const [x, z, rot, span] of faces) {
-    const geo = plateGeometry(span, box.h, aspect);
-    const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(x, box.h / 2 - geo.parameters.height / 2 - 0.06, z);
-    mesh.rotation.y = rot;
-    group.add(mesh);
-  }
-  return group;
+// The ink and the plate behind every package name. Both are colours on the
+// one sign mesh, so a fade calls this every frame and uploads nothing.
+const signPlate = new THREE.Color();
+function paintSigns(textColor, background) {
+  if (!signs) return;
+  signs.material.color.set(textColor);
+  const [r, g, b, a] = parseCSSColor(background);
+  signPlate.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
+  signs.setPlate(signPlate, a);
 }
 
 function plinthColor(depth, synthetic) {
@@ -2610,43 +2574,62 @@ function paintLinks(group) {
 
 function paintPlinths() {
   const overlay = mode === "overlay";
+  const color = new THREE.Color();
+  const glow = new THREE.Color();
   for (const plinth of plinths) {
     const pkgObj = byPackage.get(plinth.id);
     const change = (pkgObj || {}).change || "same";
     const role = packageRole(plinth.id);
     const marked = overlay && change !== "same";
-    if (!plinth.material) continue;
     if (plinth.external) {
-      if (marked) plinth.material.color.copy(changeColor(change));
-      else if (role === "dep") plinth.material.color.copy(paint.call);
-      else plinth.material.color.set(theme.external.color);
-      if (role === "dep" || marked) plinth.material.emissive.copy(plinth.material.color);
-      else plinth.material.emissive.set(theme.external.emissive);
-      plinth.material.emissiveIntensity = role === "dep" ? theme.external.depEmissive : theme.external.emissiveIntensity;
-      plinth.material.metalness = theme.external.metalness;
-      plinth.material.roughness = theme.external.roughness;
+      if (!extMesh) continue;
+      if (marked) color.copy(changeColor(change));
+      else if (role === "dep") color.copy(paint.call);
+      else color.set(theme.external.color);
+      if (role === "dep" || marked) glow.copy(color);
+      else glow.set(theme.external.emissive);
+      glow.multiplyScalar(role === "dep" ? theme.external.depEmissive : theme.external.emissiveIntensity);
       if (role === "dim") {
-        plinth.material.color.multiplyScalar(theme.dim.external);
-        plinth.material.emissive.multiplyScalar(theme.dim.external);
+        color.multiplyScalar(theme.dim.external);
+        glow.multiplyScalar(theme.dim.external);
       }
+      extMesh.setColorAt(plinth.index, color);
+      extMesh.geometry.getAttribute("aGlow").setXYZ(plinth.index, glow.r, glow.g, glow.b);
       continue;
     }
+    if (!pkgMesh) continue;
     // A package whose file changed but whose declarations did not is a quiet
     // change: it keeps the modified hue, muted, instead of the bright one.
     const low = isLowLevel(pkgObj);
-    if (role === "dep" && !marked) plinth.material.color.copy(paint.call);
-    else if (marked && low) plinth.material.color.copy(lowLevelColor());
-    else plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
-    plinth.material.emissive.set(theme.package.emissive);
-    plinth.material.emissiveIntensity = role === "dep" ? theme.package.depEmissive : (marked && !low ? theme.package.markedEmissive : theme.package.emissiveIntensity);
-    if (plinth.plate) plinth.plate.visible = change !== "removed" || overlay;
+    if (role === "dep" && !marked) color.copy(paint.call);
+    else if (marked && low) color.copy(lowLevelColor());
+    else color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
+    let intensity = role === "dep" ? theme.package.depEmissive : (marked && !low ? theme.package.markedEmissive : theme.package.emissiveIntensity);
     if (role === "dim") {
-      plinth.material.color.multiplyScalar(theme.dim.package);
-      plinth.material.emissiveIntensity = theme.dim.emissive;
-      setPlateOpacity(plinth.plate, theme.dim.plate);
-    } else {
-      setPlateOpacity(plinth.plate, 1);
+      color.multiplyScalar(theme.dim.package);
+      intensity = theme.dim.emissive;
     }
+    pkgMesh.setColorAt(plinth.index, color);
+    pkgMesh.geometry.getAttribute("aGlow").setXYZ(plinth.index, intensity, intensity, intensity);
+    if (signs && plinth.sign >= 0) {
+      signs.set(plinth.sign, change === "removed" && !overlay ? 0 : role === "dim" ? theme.dim.plate : 1);
+    }
+  }
+  if (pkgMesh) {
+    pkgMesh.material.color.set(0xffffff);
+    pkgMesh.material.emissive.set(theme.package.emissive);
+    pkgMesh.material.emissiveIntensity = 1;
+    pkgMesh.instanceColor.needsUpdate = true;
+    pkgMesh.geometry.getAttribute("aGlow").needsUpdate = true;
+  }
+  if (extMesh) {
+    extMesh.material.color.set(0xffffff);
+    extMesh.material.emissive.set(0xffffff);
+    extMesh.material.emissiveIntensity = 1;
+    extMesh.material.metalness = theme.external.metalness;
+    extMesh.material.roughness = theme.external.roughness;
+    extMesh.instanceColor.needsUpdate = true;
+    extMesh.geometry.getAttribute("aGlow").needsUpdate = true;
   }
   recolor(solidMesh);
   if (solidMat) {
@@ -2665,17 +2648,16 @@ function applyMode() {
   updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
+    if (plinth.external) continue;
     const change = (byPackage.get(plinth.id) || {}).change || "same";
-    const removed = change === "removed";
-    const show = plinth.external || !removed || overlay;
-    plinth.mesh.visible = show;
-    if (plinth.plate) plinth.plate.visible = !removed || overlay;
-    if (!plinth.external && plinth.material) {
-      plinth.material.transparent = false;
-      plinth.material.opacity = 1;
-      plinth.material.depthWrite = true;
-      plinth.material.wireframe = false;
-    }
+    placePlinth(pkgMesh, plinth, change !== "removed" || overlay);
+  }
+  if (pkgMesh) {
+    pkgMesh.instanceMatrix.needsUpdate = true;
+    pkgMesh.material.transparent = false;
+    pkgMesh.material.opacity = 1;
+    pkgMesh.material.depthWrite = true;
+    pkgMesh.material.wireframe = false;
   }
   if (solidMat) {
     solidMat.transparent = false;
@@ -3454,9 +3436,8 @@ function hitTest() {
     pushLinks(arcGroup);
   }
   if (solidMesh && solidMesh.visible) objects.push(solidMesh);
-  for (const plinth of plinths) {
-    if (plinth.mesh.visible) objects.push(plinth.mesh);
-  }
+  if (pkgMesh && pkgMesh.visible) objects.push(pkgMesh);
+  if (extMesh && extMesh.visible) objects.push(extMesh);
   const hits = raycaster.intersectObjects(objects, false);
   return hits[0] || null;
 }
@@ -3473,6 +3454,11 @@ function linkPayload(obj) {
 
 function describeHit(hit) {
   if (!hit) return null;
+  const pick = hit.object.userData.pick;
+  if (pick && hit.instanceId != null) {
+    const id = hit.object.userData.ids[hit.instanceId];
+    return id ? { kind: pick, id, point: hit.point } : null;
+  }
   const data = linkPayload(hit.object);
   if (data.kind === "package" || data.kind === "external") return { kind: data.kind, id: data.id, point: hit.point };
   if (data.kind === "call") {
@@ -5615,7 +5601,7 @@ function showThemeNow(next) {
   theme = next;
   syncPaint(next);
   repaintScene();
-  redrawPlates(next.label.text, next.label.background);
+  paintSigns(next.label.text, next.label.background);
   applySky(scene, next);
   snapPage(next);
   skinWarning = next.shadeWarning || "";
