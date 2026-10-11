@@ -201,8 +201,8 @@ function adoptShaders(next) {
 }
 
 // The per-vertex and per-instance colours a theme fade blends: the particle
-// colours and the glow of each package.
-const FADE_ATTRIBUTES = ["aColor", "aGlow"];
+// colours, the arc colours and the glow of each package.
+const FADE_ATTRIBUTES = ["aColor", "aGlow", "color"];
 
 function captureLook() {
   const mats = [];
@@ -334,6 +334,7 @@ function repaintScene() {
 
 function fadeToTheme(next) {
   if (theme && theme.uTime) next.uTime = theme.uTime;
+  flushAllArcs();
   adoptShaders(next);
   const from = captureLook();
   const fromLabel = theme.label.text;
@@ -1150,7 +1151,7 @@ function updateHalo() {
     const slot = slotById.get(subject.id);
     if (slot) box = visualBox(slot, slotOpen(slot));
   } else if (subject.kind === "package") {
-    box = laid.packages.find((item) => item.id === subject.id) || null;
+    box = boxById.get(subject.id) || null;
   }
   if (!box) {
     halo.visible = false;
@@ -1338,6 +1339,7 @@ async function main() {
   showLoad("Laying out the city…", loadAt("scene"));
   await nextPaint();
   laid = layoutCity(sceneDoc.packages || []);
+  indexLayout();
   showLoad("Indexing declarations…", loadAt("layout"));
   await nextPaint();
   indexScene();
@@ -1357,6 +1359,8 @@ async function main() {
   // Fit and paint the finished city behind the bar before it goes, so the first
   // thing on screen is the city, not an empty canvas for a frame.
   resizeView();
+  flushAllArcs();
+  warmPrograms();
   renderer.render(scene, camera);
   hideLoad();
   loading = false;
@@ -1378,6 +1382,32 @@ async function main() {
   });
   const wanted = new URLSearchParams(location.search).get("tour");
   tourUI.loadURL(wanted || "./tour.json");
+}
+
+// Every program a selection can need, compiled and drawn once behind the
+// loader. The halo, the ring, the arcs and their particles are hidden until
+// the first tap, and a program is otherwise compiled the first time it draws:
+// on a phone that is a visible stall on the first selection. The next render
+// clears what this one drew.
+// The ghost of an old body (addBodyBars) draws with this program.
+const warmGhost = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.28, depthWrite: false });
+function warmPrograms() {
+  const warm = new THREE.Scene();
+  warm.fog = scene.fog;
+  const box = new THREE.BoxGeometry(0.01, 0.01, 0.01);
+  const dot = new THREE.BufferGeometry();
+  dot.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+  warm.add(
+    new THREE.Points(dot, flowMaterial),
+    new THREE.Mesh(box, arcMaterial),
+    new THREE.Mesh(box, warmGhost),
+    new THREE.Mesh(box, haloMaterial),
+    new THREE.LineLoop(ring.geometry, ring.material),
+  );
+  for (const obj of warm.children) obj.frustumCulled = false;
+  renderer.render(warm, camera);
+  box.dispose();
+  dot.dispose();
 }
 
 function clearTourMarks() {
@@ -1478,7 +1508,7 @@ function applyTourStep(step) {
 
 // A package's roof corners, so framing it shows all of it.
 function packagePoints(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (!box) {
     const at = packageAnchor(id);
     return at ? [at] : [];
@@ -1541,7 +1571,7 @@ function applyQuery() {
   urlReady = true;
   const node = readNode(state.select, nodeNames);
   if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
-  else if (node && node.kind === "external" && laid.externals.some((item) => item.id === node.id)) selectExternal(node.id, callInbound);
+  else if (node && node.kind === "external" && extById.has(node.id)) selectExternal(node.id, callInbound);
   else if (node && node.kind === "entity") selectEntity(node.id);
   const enter = params.get("enter");
   if (!selected && enter && byPackage.has(enter)) selectPackage(enter, true);
@@ -1629,7 +1659,40 @@ function indexScene() {
     ...(sceneDoc.packages || []).map((pkg) => ({ kind: pkg.external ? "external" : "package", id: pkg.id })),
     ...[...byEntity.values()].filter((item) => item.box).map((item) => ({ kind: "entity", entity: item.entity, pkg: item.pkg.id })),
   ]);
+  indexFamilies();
   indexCallers();
+}
+
+// Who belongs to whom, in scene order: a package's child packages, the drawn
+// declarations of a package, the methods drawn on a type, and how many
+// packages share a name. Every click used to find these by walking the whole
+// scene, which on a large codebase is a pause on each one.
+const childrenOf = new Map();
+const entitiesOf = new Map();
+const methodsOf = new Map();
+const namesake = new Map();
+
+function indexFamilies() {
+  childrenOf.clear();
+  entitiesOf.clear();
+  methodsOf.clear();
+  namesake.clear();
+  const push = (map, key, value) => {
+    const list = map.get(key);
+    if (list) list.push(value);
+    else map.set(key, [value]);
+  };
+  for (const pkg of sceneDoc.packages || []) {
+    if (pkg.external) continue;
+    push(childrenOf, pkg.parent, pkg);
+    const name = pkg.name || pkg.id;
+    namesake.set(name, (namesake.get(name) || 0) + 1);
+  }
+  for (const found of byEntity.values()) {
+    if (!found.box) continue;
+    if (found.pkg) push(entitiesOf, found.pkg.id, found);
+    if (found.entity.kind === "method" && found.entity.parent) push(methodsOf, found.entity.parent, found);
+  }
 }
 
 function declKey(file, recv, name) {
@@ -2051,6 +2114,44 @@ function changedCallLinks() {
 // building rather than skimming it.
 const LAND = 0.25;
 
+// Lookups the layout does not answer directly, built once per scene: a
+// package or an outside package by id, and which package footprints cover
+// each cell of a grid over the ground, so "what is under this point" reads a
+// handful of boxes instead of every package in the city.
+const boxById = new Map();
+const extById = new Map();
+let footprints = null;
+
+function indexLayout() {
+  boxById.clear();
+  extById.clear();
+  for (const box of laid.packages) boxById.set(box.id, box);
+  for (const ext of laid.externals) extById.set(ext.id, ext);
+  const b = laid.bounds;
+  const n = 128;
+  const cell = Math.max(1, Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / n);
+  const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell) + 1);
+  const rows = Math.max(1, Math.ceil((b.maxZ - b.minZ) / cell) + 1);
+  const cells = Array.from({ length: cols * rows }, () => []);
+  const col = (x) => Math.min(cols - 1, Math.max(0, Math.floor((x - b.minX) / cell)));
+  const row = (z) => Math.min(rows - 1, Math.max(0, Math.floor((z - b.minZ) / cell)));
+  // In layout order, so a cell lists its boxes in the order a scan of
+  // laid.packages would meet them.
+  for (const box of laid.packages) {
+    for (let r = row(box.z); r <= row(box.z + box.d); r++) {
+      for (let c = col(box.x); c <= col(box.x + box.w); c++) cells[r * cols + c].push(box);
+    }
+  }
+  footprints = { cells, col, row, cols, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ };
+}
+
+// The packages whose footprint may hold (x, z). Callers still test the rect.
+function packagesUnder(x, z) {
+  const f = footprints;
+  if (!f || x < f.minX || x > f.maxX || z < f.minZ || z > f.maxZ) return [];
+  return f.cells[f.row(z) * f.cols + f.col(x)];
+}
+
 let ownTopCache = null;
 function ownTop(id) {
   if (!ownTopCache) {
@@ -2064,32 +2165,39 @@ function ownTop(id) {
 }
 
 // While a module is selected, other towers are shut. Land on the roof that is
-// actually drawn. With nothing selected, use the laid tower tops.
+// actually drawn. With nothing selected, use the laid tower tops. The drawn
+// roofs are worked out once for each selection and mode: the clearance loop
+// asks for them thousands of times per arc.
+let shownTopCache = null;
 function shownOwnTop(id) {
-  const box = laid.packages.find((item) => item.id === id);
-  const plinth = box ? box.y + box.h : 0;
-  if (!lit) return Math.max(plinth, ownTop(id));
-  let top = plinth;
-  for (const slot of entitySlots) {
-    if (slot.pkgId !== id) continue;
-    const drawn = visualBox(slot, slotOpen(slot));
-    top = Math.max(top, drawn.y + drawn.h);
+  if (!lit) {
+    const box = boxById.get(id);
+    return Math.max(box ? box.y + box.h : 0, ownTop(id));
   }
-  return top;
+  if (!shownTopCache || shownTopCache.lit !== lit || shownTopCache.mode !== mode) {
+    const tops = new Map();
+    for (const box of laid.packages) tops.set(box.id, box.y + box.h);
+    for (const slot of entitySlots) {
+      const drawn = visualBox(slot, slotOpen(slot));
+      tops.set(slot.pkgId, Math.max(tops.get(slot.pkgId) ?? 0, drawn.y + drawn.h));
+    }
+    shownTopCache = { lit, mode, tops };
+  }
+  return shownTopCache.tops.get(id) ?? 0;
 }
 
 function packageRoof(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (box) return [box.x + box.w / 2, box.y + box.h, box.z + box.d / 2];
-  const ext = laid.externals.find((item) => item.id === id);
+  const ext = extById.get(id);
   if (ext) return [ext.x, ext.y + ext.h, ext.z];
   return null;
 }
 
 function packageAnchor(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (!box) {
-    const ext = laid.externals.find((item) => item.id === id);
+    const ext = extById.get(id);
     if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
     return null;
   }
@@ -2106,7 +2214,7 @@ function rectContainsXZ(box, x, z) {
 // t along the ground segment where the line is over the rectangle.
 function localTop(x, z) {
   let top = 0;
-  for (const box of laid.packages) {
+  for (const box of packagesUnder(x, z)) {
     if (!rectContainsXZ(box, x, z)) continue;
     top = Math.max(top, shownOwnTop(box.id));
   }
@@ -2118,7 +2226,7 @@ function localTop(x, z) {
 // pinned at the midpoint could not clear a tower standing right beside an
 // endpoint, however high its apex was raised, and the clearance loop used to
 // run away to a lift of 350 without gaining a metre.
-// This is the curve: makeLink draws it, the particles ride it, and the
+// This is the curve: linkGeometry draws it, the particles ride it, and the
 // clearance loop measures it, so there is no second interpretation to disagree
 // with.
 function arcControls(from, to, lift) {
@@ -2168,7 +2276,7 @@ function worstPenetration(points, margin = 0, skip) {
   const steps = Math.max(1, points.length - 1);
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
-    for (const box of laid.packages) {
+    for (const box of packagesUnder(p[0], p[2])) {
       if (!rectContainsXZ(box, p[0], p[2])) continue;
       if (skip && skip.some((id) => inSubtree(box.id, id))) continue;
       const top = shownOwnTop(box.id) + margin;
@@ -2259,7 +2367,7 @@ function entityAnchor(found) {
   return null;
 }
 
-function makeLink(from, to, color, lift, roofFrom, roofTo, thin) {
+function linkGeometry(from, to, lift, roofFrom, roofTo, thin) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
@@ -2281,11 +2389,7 @@ function makeLink(from, to, color, lift, roofFrom, roofTo, thin) {
   // As many segments as main's bows had. Twice that doubled the triangles the
   // overview draws and bought nothing visible at this radius.
   const segs = (dist > 48 ? 28 : 16) + (roofFrom ? 2 : 0) + (roofTo ? 2 : 0);
-  const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
-  const mat = new THREE.MeshBasicMaterial({ color, fog: false });
-  // The tube has real vertices, so its bounds are right and it can be culled
-  // when the camera is inside the city.
-  return new THREE.Mesh(geo, mat);
+  return new THREE.TubeGeometry(curve, segs, radius, 5, false);
 }
 function isStdPackage(id) {
   const pkg = byPackage.get(id);
@@ -2294,7 +2398,6 @@ function isStdPackage(id) {
   return head.length > 0 && !head.includes(".");
 }
 
-const flows = [];
 const flowScratch = [0, 0, 0];
 
 // Particles run on the GPU. Each flow is one row of a path texture; the vertex
@@ -2302,9 +2405,6 @@ const flowScratch = [0, 0, 0];
 // The CPU writes a path once and never touches a position again, and the point
 // is round instead of the square a bare PointsMaterial draws.
 const FLOW_SAMPLES = 64;
-let flowTexture = null;
-let flowData = null;
-let flowRows = 0;
 
 const flowMaterial = new THREE.ShaderMaterial({
   uniforms: {
@@ -2367,45 +2467,6 @@ updatePointScale = () => {
 };
 updatePointScale();
 
-function ensureFlowTexture(height) {
-  if (flowTexture && flowTexture.image.height === height) return flowTexture;
-  const data = new Float32Array(FLOW_SAMPLES * 4 * height);
-  if (flowData) data.set(flowData.subarray(0, Math.min(flowData.length, data.length)));
-  flowData = data;
-  flowTexture = new THREE.DataTexture(data, FLOW_SAMPLES, height, THREE.RGBAFormat, THREE.FloatType);
-  flowTexture.minFilter = THREE.NearestFilter;
-  flowTexture.magFilter = THREE.NearestFilter;
-  flowTexture.needsUpdate = true;
-  flowMaterial.uniforms.uPath.value = flowTexture;
-  flowMaterial.uniforms.uRows.value = height;
-  return flowTexture;
-}
-
-function writeFlowRow(flow, row) {
-  ensureFlowTexture(Math.max(1, flowRows));
-  flow.row = row;
-  const base = row * FLOW_SAMPLES * 4;
-  for (let i = 0; i < FLOW_SAMPLES; i++) {
-    const s = i * 3;
-    const o = base + i * 4;
-    flowData[o] = flow.samples[s] || 0;
-    flowData[o + 1] = flow.samples[s + 1] || 0;
-    flowData[o + 2] = flow.samples[s + 2] || 0;
-    flowData[o + 3] = 1;
-  }
-  flowTexture.needsUpdate = true;
-}
-function syncFlowTexture() {
-  flowRows = Math.max(1, flows.length);
-  ensureFlowTexture(flowRows);
-  for (let i = 0; i < flows.length; i++) {
-    writeFlowRow(flows[i].userData.flow, i);
-    const rows = flows[i].geometry.getAttribute("aRow");
-    rows.array.fill(i);
-    rows.needsUpdate = true;
-  }
-}
-
 function wrapUnit(value) {
   if (!Number.isFinite(value)) return 0;
   const wrapped = value % 1;
@@ -2415,46 +2476,193 @@ function wrapUnit(value) {
 // Particles run from the caller (t = 0) to the callee (t = 1).
 // The bow is stored as numbers. CatmullRomCurve3 keeps one shared scratch
 // vector and throws once many arcs are sampled in the same frame.
-function makeFlow(from, to, color, lift) {
+function flowPath(from, to, lift) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  // The particle path is the same curve the line is drawn along, sampled evenly.
-  // writeFlowRow reads x, y, z flat, three numbers per sample.
-  const samples = arcSamples(from, to, lift, FLOW_SAMPLES - 1).flat();
-  const count = Math.max(3, Math.min(8, Math.round(dist / 9)));
-  const size = Math.max(1.2, Math.min(dist * 0.016, 2.4));
-  const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-  const rows = new Float32Array(count);
-  const params = new Float32Array(count);
-  const speeds = new Float32Array(count);
-  const sizes = new Float32Array(count);
-  const colors = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    rows[i] = flows.length;
-    params[i] = i / count;
-    speeds[i] = speed;
-    sizes[i] = size;
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
-  }
-  geo.setAttribute("aRow", new THREE.BufferAttribute(rows, 1));
-  geo.setAttribute("aU", new THREE.BufferAttribute(params, 1));
-  geo.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
-  geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-  geo.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
-  const mesh = new THREE.Points(geo, flowMaterial);
-  mesh.frustumCulled = false;
-  mesh.userData.flow = { samples, count, speed, row: flows.length };
-  flows.push(mesh);
-  flowRows = Math.max(1, flows.length);
-  ensureFlowTexture(flowRows);
-  writeFlowRow(mesh.userData.flow, flowRows - 1);
-  return mesh;
+  // The particle path is the same curve the line is drawn along, sampled evenly,
+  // x, y, z flat, three numbers per sample.
+  return {
+    samples: arcSamples(from, to, lift, FLOW_SAMPLES - 1).flat(),
+    count: Math.max(3, Math.min(8, Math.round(dist / 9))),
+    size: Math.max(1.2, Math.min(dist * 0.016, 2.4)),
+    speed: Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1))),
+  };
 }
+
+// The arcs of a group are one tube mesh and one particle cloud, however many
+// there are: a fan of a few hundred calls is two draw calls, not a few hundred
+// pairs. addArc only queues an arc; the group is merged the next time it is
+// drawn or picked (flushArcs), and each arc keeps its range in the merge, for
+// picking and for a repaint.
+const arcMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, fog: false });
+
+function arcBatch(group) {
+  if (!group.userData.arcBatch) {
+    group.userData.arcBatch = { parts: [], dirty: false, mesh: null, points: null, material: null, path: null, pathData: null };
+  }
+  return group.userData.arcBatch;
+}
+
+function dropMerged(batch, group) {
+  for (const key of ["mesh", "points"]) {
+    const obj = batch[key];
+    if (!obj) continue;
+    group.remove(obj);
+    obj.geometry.dispose();
+    batch[key] = null;
+  }
+}
+
+function flushArcs(group) {
+  const batch = group.userData.arcBatch;
+  if (!batch || !batch.dirty) return;
+  batch.dirty = false;
+  dropMerged(batch, group);
+  const parts = batch.parts;
+  if (!parts.length) return;
+  let verts = 0;
+  let indices = 0;
+  for (const part of parts) {
+    verts += part.geo.attributes.position.count;
+    indices += part.geo.index.count;
+  }
+  const position = new Float32Array(verts * 3);
+  const index = verts > 65535 ? new Uint32Array(indices) : new Uint16Array(indices);
+  let v = 0;
+  let at = 0;
+  for (const part of parts) {
+    const g = part.geo;
+    const n = g.attributes.position.count;
+    position.set(g.attributes.position.array, v * 3);
+    const src = g.index.array;
+    for (let k = 0; k < src.length; k++) index[at + k] = src[k] + v;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    part.verts = [v, n];
+    part.tris = [at, src.length];
+    v += n;
+    at += src.length;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(position, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
+  geo.setIndex(new THREE.BufferAttribute(index, 1));
+  geo.computeBoundingSphere();
+  batch.mesh = new THREE.Mesh(geo, arcMaterial);
+  batch.mesh.userData.arcs = batch;
+  batch.mesh.raycast = raycastArcs;
+  group.add(batch.mesh);
+
+  const flowing = parts.filter((part) => part.flow);
+  if (flowing.length) {
+    const rows = flowing.length;
+    if (!batch.path || batch.path.image.height < rows) {
+      const height = Math.max(16, THREE.MathUtils.ceilPowerOfTwo(rows));
+      if (batch.path) batch.path.dispose();
+      batch.pathData = new Float32Array(FLOW_SAMPLES * 4 * height);
+      batch.path = new THREE.DataTexture(batch.pathData, FLOW_SAMPLES, height, THREE.RGBAFormat, THREE.FloatType);
+      batch.path.minFilter = THREE.NearestFilter;
+      batch.path.magFilter = THREE.NearestFilter;
+    }
+    if (!batch.material) {
+      // The group's own path texture; the clock and the point scale are shared.
+      batch.material = new THREE.ShaderMaterial({
+        uniforms: {
+          uPath: { value: null },
+          uRows: { value: 1 },
+          uTime: flowMaterial.uniforms.uTime,
+          uScale: flowMaterial.uniforms.uScale,
+        },
+        vertexShader: flowMaterial.vertexShader,
+        fragmentShader: flowMaterial.fragmentShader,
+        transparent: true,
+        depthWrite: false,
+        fog: false,
+      });
+    }
+    batch.material.uniforms.uPath.value = batch.path;
+    batch.material.uniforms.uRows.value = batch.path.image.height;
+    let points = 0;
+    for (const part of flowing) points += part.flow.count;
+    const rowOf = new Float32Array(points);
+    const params = new Float32Array(points);
+    const speeds = new Float32Array(points);
+    const sizes = new Float32Array(points);
+    let p = 0;
+    flowing.forEach((part, row) => {
+      const flow = part.flow;
+      const base = row * FLOW_SAMPLES * 4;
+      for (let i = 0; i < FLOW_SAMPLES; i++) {
+        batch.pathData[base + i * 4] = flow.samples[i * 3] || 0;
+        batch.pathData[base + i * 4 + 1] = flow.samples[i * 3 + 1] || 0;
+        batch.pathData[base + i * 4 + 2] = flow.samples[i * 3 + 2] || 0;
+        batch.pathData[base + i * 4 + 3] = 1;
+      }
+      part.dots = [p, flow.count];
+      for (let i = 0; i < flow.count; i++, p++) {
+        rowOf[p] = row;
+        params[p] = i / flow.count;
+        speeds[p] = flow.speed;
+        sizes[p] = flow.size;
+      }
+    });
+    batch.path.needsUpdate = true;
+    const cloud = new THREE.BufferGeometry();
+    cloud.setAttribute("position", new THREE.BufferAttribute(new Float32Array(points * 3), 3));
+    cloud.setAttribute("aRow", new THREE.BufferAttribute(rowOf, 1));
+    cloud.setAttribute("aU", new THREE.BufferAttribute(params, 1));
+    cloud.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
+    cloud.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+    cloud.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(points * 3), 3));
+    batch.points = new THREE.Points(cloud, batch.material);
+    batch.points.frustumCulled = false;
+    group.add(batch.points);
+  }
+  paintBatch(batch);
+}
+
+// Each arc's colour, written over its own range of the merged tube and cloud.
+function paintBatch(batch) {
+  const tube = batch.mesh && batch.mesh.geometry.getAttribute("color");
+  const dots = batch.points && batch.points.geometry.getAttribute("aColor");
+  for (const part of batch.parts) {
+    const c = part.color;
+    if (tube && part.verts) {
+      for (let i = part.verts[0]; i < part.verts[0] + part.verts[1]; i++) tube.setXYZ(i, c.r, c.g, c.b);
+    }
+    if (dots && part.dots) {
+      for (let i = part.dots[0]; i < part.dots[0] + part.dots[1]; i++) dots.setXYZ(i, c.r, c.g, c.b);
+    }
+  }
+  if (tube) tube.needsUpdate = true;
+  if (dots) dots.needsUpdate = true;
+}
+
+const arcSphere = new THREE.Sphere();
+
+// Picking an arc tests its own bounds first and then only its own triangles,
+// the way it did when every arc was its own mesh. A hit carries the arc.
+function raycastArcs(raycaster, intersects) {
+  const batch = this.userData.arcs;
+  const geo = this.geometry;
+  for (const part of batch.parts) {
+    if (!part.tris) continue;
+    arcSphere.copy(part.geo.boundingSphere).applyMatrix4(this.matrixWorld);
+    if (!raycaster.ray.intersectsSphere(arcSphere)) continue;
+    const from = intersects.length;
+    geo.setDrawRange(part.tris[0], part.tris[1]);
+    THREE.Mesh.prototype.raycast.call(this, raycaster, intersects);
+    for (let k = from; k < intersects.length; k++) intersects[k].arc = part.data;
+  }
+  geo.setDrawRange(0, Infinity);
+}
+
+function flushAllArcs() {
+  flushArcs(arcGroup);
+  flushArcs(selectArcs);
+  flushArcs(focusGroup);
+}
+
 function flowShown(mesh) {
   let node = mesh;
   while (node) {
@@ -2468,10 +2676,12 @@ function flowShown(mesh) {
 // this only reports whether anything needs a frame.
 function tickFlows(dt) {
   let shown = false;
-  for (const mesh of flows) {
-    if (!flowShown(mesh)) continue;
-    shown = true;
-    break;
+  for (const group of [arcGroup, selectArcs, focusGroup]) {
+    const points = group.userData.arcBatch && group.userData.arcBatch.points;
+    if (points && flowShown(points)) {
+      shown = true;
+      break;
+    }
   }
   if (shown) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   return shown;
@@ -2487,18 +2697,17 @@ function arcCollisions() {
   const v = new THREE.Vector3();
   const tops = new Map();
   for (const box of laid.packages) tops.set(box.id, shownOwnTop(box.id));
-  for (const child of arcGroup.children) {
-    // Particles compute their positions in the shader, so their buffer is all
-    // zeros: only the tube meshes are real geometry to test.
-    if (!child.isMesh) continue;
-    const attr = child.geometry && child.geometry.attributes && child.geometry.attributes.position;
-    if (!attr) continue;
+  // Particles compute their positions in the shader: only the tubes are real
+  // geometry to test, each arc's own, in world space.
+  const parts = (arcGroup.userData.arcBatch || { parts: [] }).parts;
+  for (const part of parts) {
+    const attr = part.geo.attributes.position;
+    const child = { userData: part.data };
     let worst = null;
     let count = 0;
     const ends = child.userData.ends || [];
     for (let i = 0; i < attr.count; i++) {
       v.fromBufferAttribute(attr, i);
-      child.localToWorld(v);
       // The riser is meant to run up its own building: skip the part of the
       // path that is below the anchor and inside reach of either end.
       let riser = false;
@@ -2531,7 +2740,7 @@ function arcCollisions() {
 
 window.citydiffCheck = () => {
   const hits = arcCollisions();
-  console.log("COLLIDE total=" + hits.length + " of " + arcGroup.children.length + " arcs");
+  console.log("COLLIDE total=" + hits.length + " of " + (arcGroup.userData.arcBatch || { parts: [] }).parts.length + " arcs");
   for (const hit of hits.slice(0, 25)) {
     console.log("COLLIDE " + JSON.stringify(hit));
   }
@@ -2541,35 +2750,34 @@ window.citydiffCheck = () => {
 // fromId and toId name the packages whose roofs the arc rises from and lands
 // on. A call arc between towers has neither.
 function addArc(group, from, to, color, lift, data, fromId, toId) {
-  const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
-  if (!mesh) return;
+  if (!from || !to) return;
+  const geo = linkGeometry(from, to, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
+  if (!geo) return;
   const tint = { kind: data.kind, change: data.change, std: !!data.std };
-  mesh.userData = data;
-  mesh.userData.tint = tint;
-  group.add(mesh);
+  data.tint = tint;
+  const batch = arcBatch(group);
   // A thin reference arc carries no particle traffic: the dots are what a
   // traced call has, and the quiet line is the point.
-  const flow = data.thin ? null : makeFlow(from, to, color, lift);
-  if (flow) {
-    flow.userData.tint = tint;
-    group.add(flow);
-  }
+  batch.parts.push({ data, tint, geo, color: color.clone(), flow: data.thin ? null : flowPath(from, to, lift) });
+  batch.dirty = true;
+}
+
+// A standard or outside reference keeps the quiet grey whatever the diff
+// says: the colour is what tells it apart from a traced call.
+function tintColor(tint) {
+  return tint.std ? paint.std : tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
 }
 
 function paintLinks(group) {
   if (!group) return;
   for (const child of group.children) {
     const tint = child.userData && child.userData.tint;
-    if (!tint) continue;
-    // A standard or outside reference keeps the quiet grey whatever the diff
-    // says: the colour is what tells it apart from a traced call.
-    const color = tint.std ? paint.std : tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
-    if (child.material && child.material.color) child.material.color.copy(color);
-    const attr = child.geometry && child.geometry.getAttribute && child.geometry.getAttribute("aColor");
-    if (!attr) continue;
-    for (let i = 0; i < attr.count; i++) attr.setXYZ(i, color.r, color.g, color.b);
-    attr.needsUpdate = true;
+    if (tint && child.material && child.material.color) child.material.color.copy(tintColor(tint));
   }
+  const batch = group.userData.arcBatch;
+  if (!batch) return;
+  for (const part of batch.parts) part.color.copy(tintColor(part.tint));
+  paintBatch(batch);
 }
 
 function paintPlinths() {
@@ -2831,8 +3039,7 @@ function entityLinks(found) {
     // away there — and marked so the city does not also draw a curve to a
     // tower the eye can already see standing on the type.
     const links = [];
-    for (const other of byEntity.values()) {
-      if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
+    for (const other of methodsOf.get(found.entity.id) || []) {
       links.push({ target: other, change: other.entity.change || "same", step: null, attached: true });
     }
     return links;
@@ -2890,8 +3097,7 @@ function isType(found) {
 // callers are the functions that call any method it declares.
 function typeCallerLinks(found) {
   const byCaller = new Map();
-  for (const other of byEntity.values()) {
-    if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
+  for (const other of methodsOf.get(found.entity.id) || []) {
     for (const link of callerLinks(other)) {
       const prev = byCaller.get(link.target.entity.id);
       if (!prev) byCaller.set(link.target.entity.id, { target: link.target, change: link.change, step: link.step });
@@ -2938,8 +3144,7 @@ function litForEntity(found) {
 // call, so the city shows which declaration reaches where.
 function packageCallLinks(id) {
   const links = [];
-  for (const found of byEntity.values()) {
-    if (!found.box || !found.pkg || found.pkg.id !== id) continue;
+  for (const found of entitiesOf.get(id) || []) {
     for (const link of entityLinks(found)) {
       // A method attached to a type is already a tower on that type: no curve.
       if (link.attached) continue;
@@ -2953,8 +3158,7 @@ function packageCallLinks(id) {
 // start at the tower that makes the call.
 function packageCallerLinks(id) {
   const links = [];
-  for (const found of byEntity.values()) {
-    if (!found.box || !found.pkg || found.pkg.id !== id) continue;
+  for (const found of entitiesOf.get(id) || []) {
     for (const link of callerLinks(found)) {
       links.push({ from: link.target, target: found, far: link.target, change: link.change, step: link.step });
     }
@@ -3174,7 +3378,7 @@ function selectExternal(id, inbound = true) {
   entitySubject = null;
   arcSubject = { id };
   applyMode();
-  const ext = laid.externals.find((item) => item.id === id);
+  const ext = extById.get(id);
   if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
   noteJump();
 }
@@ -3235,7 +3439,7 @@ function circlePositions(segments) {
 }
 
 function placeRing(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (!box) {
     ring.visible = false;
     return;
@@ -3299,7 +3503,7 @@ function flyToPackage(id) {
       if (at) points.push(at);
     }
   }
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (box) {
     points.push([box.x, box.y + box.h, box.z]);
     points.push([box.x + box.w, box.y + box.h, box.z + box.d]);
@@ -3395,19 +3599,19 @@ function focusCamera() {
 }
 
 function clearGroup(group) {
-  let dropped = false;
+  const batch = group.userData.arcBatch;
+  if (batch) {
+    batch.parts = [];
+    batch.dirty = false;
+    dropMerged(batch, group);
+  }
   for (const child of [...group.children]) {
     child.traverse((obj) => {
-      if (obj.userData && obj.userData.flow) {
-        const index = flows.indexOf(obj);
-        if (index >= 0) flows.splice(index, 1);
-        dropped = true;
-      }
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
         const list = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const mat of list) {
-          if (mat === flowMaterial || mat === haloMaterial) continue;
+          if (mat === flowMaterial || mat === haloMaterial || mat === arcMaterial) continue;
           if (mat.map) mat.map.dispose();
           // The material itself is left to the garbage collector, not
           // disposed: disposing the last user of a shader program deletes
@@ -3418,10 +3622,10 @@ function clearGroup(group) {
     });
     group.remove(child);
   }
-  if (dropped) syncFlowTexture();
 }
 
 function hitTest() {
+  flushAllArcs();
   raycaster.setFromCamera(pointer, camera);
   const objects = [];
   const pushLinks = (root) => {
@@ -3459,7 +3663,7 @@ function describeHit(hit) {
     const id = hit.object.userData.ids[hit.instanceId];
     return id ? { kind: pick, id, point: hit.point } : null;
   }
-  const data = linkPayload(hit.object);
+  const data = hit.arc || linkPayload(hit.object);
   if (data.kind === "package" || data.kind === "external") return { kind: data.kind, id: data.id, point: hit.point };
   if (data.kind === "call") {
     return { kind: "call", entityId: data.entityId, step: data.step, label: data.label, point: hit.point };
@@ -3793,7 +3997,7 @@ function splitChanges(list, changeOf) {
 }
 
 function childPackages(id) {
-  return (sceneDoc.packages || []).filter((item) => !item.external && item.parent === id);
+  return (childrenOf.get(id) || []).slice();
 }
 
 function packageTouched(pkg) {
@@ -4079,8 +4283,7 @@ function sectionCounts(section) {
 
 function packageLabel(pkg) {
   const name = pkg.name || pkg.id;
-  const same = (sceneDoc.packages || []).filter((item) => (item.name || item.id) === name && !item.external);
-  if (same.length < 2) return name;
+  if ((namesake.get(name) || 0) < 2) return name;
   const parts = pkg.id.split("/");
   return parts.slice(-2).join("/");
 }
@@ -4568,7 +4771,7 @@ function restoreSubject(entry) {
     return;
   }
   if (entry.selected.kind === "external") {
-    const ext = laid.externals.find((item) => item.id === entry.selected.id);
+    const ext = extById.get(entry.selected.id);
     if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
     return;
   }
@@ -4692,6 +4895,7 @@ function animate(now) {
   // so the only cost is the frame itself, and a frame that carries nothing but
   // decoration is paced lower than one the user is driving.
   const motion = tweening || viewDirty || (flying && !idleSpin);
+  flushAllArcs();
   const flowing = tickFlows(dt);
   const fading = tickThemeFade(t);
   const launching = !!show;
