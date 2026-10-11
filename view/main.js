@@ -610,7 +610,7 @@ function sheetBase() {
 function sheetDetents() {
   const pane = sheetPane === "tour" ? tourSideEl : hud.side;
   const full = pane.offsetHeight || window.innerHeight * 0.8;
-  const peek = parseFloat(getComputedStyle(document.body).getPropertyValue("--peek")) || 76;
+  const peek = parseFloat(getComputedStyle(document.body).getPropertyValue("--peek")) || 82;
   const half = Math.max(peek + 80, Math.min(full, Math.round((window.innerHeight - sheetBase()) * 0.5)));
   return { peek, half, full };
 }

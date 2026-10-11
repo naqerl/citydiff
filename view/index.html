@@ -1011,7 +1011,7 @@
        the gesture. With a tour the tabs under it pick which sidebar it shows,
        and on the tour tab the player sits between the two. */
     @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
-      body { --tabs-h: 0px; --player-h: 0px; --peek: 76px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
+      body { --tabs-h: 0px; --player-h: 0px; --peek: 82px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
       body.has-tour { --tabs-h: calc(48px + env(safe-area-inset-bottom)); }
       body.has-player { --player-h: 54px; }
       #sheet-tabs {
@@ -1094,21 +1094,23 @@
       #tour-side.is-collapsed > #tour-scroll { display: block; }
       #side.is-collapsed #title-row, #tour-side.is-collapsed #tour-title-row { cursor: pointer; }
 
+      /* The grabber is a handle a thumb can find and hold: a wide bar, and a
+         tall strip of sheet round it that takes the press. */
       .sheet-grip {
         display: flex;
         flex: none;
-        height: 22px;
-        margin-bottom: -10px;
+        height: 30px;
+        margin-bottom: -12px;
         align-items: center;
         justify-content: center;
         cursor: grab;
       }
       /* The theme's muted text colour is made to read on its own background, so
          the grabber shows in every theme without shouting. */
-      .sheet-grip::before { content: ""; width: 40px; height: 4px; background: var(--muted); opacity: 0.6; transition: width 150ms ease, opacity 150ms ease; }
+      .sheet-grip::before { content: ""; width: 56px; height: 6px; background: var(--muted); opacity: 0.6; transition: width 150ms ease, opacity 150ms ease; }
       /* Held, the bar fills out over the time a hold takes to open the
          action ring, and lets go at once when the finger moves. */
-      .sheet-grip.is-holding::before { width: 72px; opacity: 1; transition: width 450ms linear, opacity 450ms linear; }
+      .sheet-grip.is-holding::before { width: 96px; opacity: 1; transition: width 450ms linear, opacity 450ms linear; }
       #side-head, #tour-head { padding-top: 12px; }
 
       /* The fold arrows point the way the sheet will go. */
