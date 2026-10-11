@@ -207,15 +207,22 @@
       display: grid;
       place-items: center;
       padding: 0;
-      background: transparent;
+      /* A solid plate, like the tour's player buttons: the glyph reads over
+         the city instead of the frosted panel's blur. */
+      background: var(--elev);
       color: var(--muted);
       border: 1px solid var(--line);
     }
-    #side-toggle:hover, #side-help:hover, #side-theme:hover { color: var(--fg); border-color: var(--line-strong); }
+    #side-toggle:hover, #side-help:hover, #side-theme:hover { background: var(--line); color: var(--fg); border-color: var(--line-strong); }
     .modes { display: flex; gap: 0; }
     .modes button {
       flex: 1;
-      background: transparent;
+      /* The quiet tab is a recess, not a grey plate: the panel colour itself,
+         nearly opaque, so the city inside it stays a soft blur and the raised
+         plate of the tab that is on is a real step away from it. */
+      background: color-mix(in srgb, var(--bg) 90%, transparent);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
       color: var(--muted);
       border: 1px solid var(--line);
       /* Each tab draws its own left edge and none of its right, so the line
@@ -228,8 +235,9 @@
     /* The active tab draws all four of its own edges, including the one it
        shares with the tab on its right: that divider belongs to the active
        tab's outline, not to the quiet edge of the neighbour. The neighbour
-       drops its own left edge so the shared line stays one pixel wide. */
-    .modes button.on { color: var(--fg); background: var(--on); border-color: var(--line-strong); border-right: 1px solid var(--line-strong); }
+       drops its own left edge so the shared line stays one pixel wide. It is
+       solid: no blur, a plate the eye reads as "this one is on". */
+    .modes button.on { color: var(--fg); background: var(--elev); backdrop-filter: none; -webkit-backdrop-filter: none; border-color: var(--line-strong); border-right: 1px solid var(--line-strong); }
     .modes button.on + button { border-left: 0; }
     #stage { position: absolute; inset: 0; background: var(--bg); }
     #view { position: absolute; inset: 0; }
@@ -255,9 +263,24 @@
     #load .load-bar { display: block; height: 100%; width: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left center; transition: transform 120ms linear; }
     @media (prefers-reduced-motion: reduce) { #load .load-bar { transition: none; } }
     /* The node's own header never scrolls away: the panel is a fixed head and a
-       body of sections, and each section's rows scroll inside the section. */
+       body of sections, and each section's rows scroll inside the section. What
+       the head says — the name, the path, the counts — carries the same opaque
+       plate the expander titles do, so it reads over the city; but the plate is
+       the text's, no wider, and the frosted sidebar stands around it. */
     #detail { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
-    #detail-head { flex: none; padding: 12px 14px 8px; border-bottom: 1px solid var(--line); min-width: 0; }
+    #detail-head { flex: none; min-width: 0; padding: 0; }
+    #detail-head .head-plate {
+      margin: 10px 10px 0;
+      padding: 10px 12px 8px;
+      background: var(--elev);
+      border: 1px solid var(--line);
+      min-width: 0;
+    }
+    #detail-head .head-plate > :last-child { margin-bottom: 0; }
+    /* The Calls / Callers pair is its own row under the plate, on the frosted
+       panel: the city blurs in the space between the head, the pair and the
+       list the pair switches. */
+    #detail-head .modes.refs { margin: 10px 10px 8px; }
     #detail-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding: 0; }
     #detail h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; }
     #detail p { margin: 0 0 8px; color: var(--muted); overflow: hidden; }
