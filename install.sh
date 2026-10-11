@@ -250,8 +250,10 @@ write_subskills() {
     dst="$SKILLS_DIR/$SKILL_NAME/$sub"
     mkdir -p "$dst" || { warn "  cannot create $dst; sub-skill $sub skipped"; continue; }
     n=0
-    put() {  # put <source-file> — filled, into the sub-skill directory
-      base=$(basename "$1")
+    put() {  # put <source-file> [name] — filled, into the sub-skill directory
+      # A file fetched through the contents API arrives as a mktemp path, so its
+      # real name is passed in; a file read from a checkout carries its own.
+      base="${2:-$(basename "$1")}"
       # The sub-skill ships a Python script, so never copy build leftovers.
       case "$base" in __pycache__*|*.pyc|*.pyo|.DS_Store) return 0 ;; esac
       fill_placeholders "$1" "$dst/$base" "$sub" 2>/dev/null && n=$((n + 1)) || rm -f "$dst/$base"
@@ -263,10 +265,12 @@ write_subskills() {
       done
     else
       listing="$(fetch "https://api.github.com/repos/$REPO/contents/skills/$SKILL_NAME/$sub?ref=$ref" 2>/dev/null)"
-      for name in $(printf '%s' "$listing" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p'); do
+      # The contents API pretty-prints its JSON, so the colon is followed by a
+      # space; the tags endpoint below is parsed the same way.
+      for name in $(printf '%s' "$listing" | tr ',' '\n' | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p'); do
         tmpf="$(mktemp)"
         if fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$SKILL_NAME/$sub/$name" > "$tmpf" 2>/dev/null; then
-          put "$tmpf"
+          put "$tmpf" "$name"
         fi
         rm -f "$tmpf"
       done
