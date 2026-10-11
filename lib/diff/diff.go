@@ -3,7 +3,6 @@ package diff
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
 	"citydiff/lib"
@@ -88,7 +87,12 @@ func Entries(left, right []lib.Entity) []Entry {
 		}
 		old := queue[0]
 		pending[key] = queue[1:]
-		if !reflect.DeepEqual(old, entry) {
+		// SameDeclaration, not reflect.DeepEqual: a position is part of an
+		// entry, so a range that inserts lines above a declaration moves every
+		// one below it and reports the whole file as changed. The scene layer
+		// already pairs on this rule; pairing here disagreed with it, so the
+		// city and the -text/-json diff disagreed about what changed.
+		if !lib.SameDeclaration(old, entry) {
 			out = append(out, modified(old, entry))
 		}
 	}
