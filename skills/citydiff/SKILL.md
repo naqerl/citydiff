@@ -434,6 +434,16 @@ range, so the left sidebar shows
 that range's changes; a range that does not resolve is reported in the
 tour sidebar.
 
+## Recording a video
+
+Only when the user **directly asks** to record, film or screencast the viewer or a tour —
+"record a video of this", "film the tour", "make a demo". Never for watching or checking one.
+
+Then read the sub-skill at `citydiff/citydiff-video/`, installed inside this one. It carries the
+recorder, the GPU flags this WebGL viewer needs (without them it renders at ~1 fps and the video
+judders), the viewer traps that break a take, and a script that measures whether the output
+really is smooth.
+
 ## Repo map (for questions)
 
 | Path | What |
