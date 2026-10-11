@@ -60,6 +60,11 @@ Re-running the installer upgrades in place: it resolves the newest release, veri
 published sha256, replaces the binary, and rewrites this skill file. It also removes the
 old `citydiff-tour` skill from any directory a previous install wrote it to.
 
+A release binary's viewer checks once at startup, without waiting on it, for a newer
+release. When there is one it says so in its log (`citydiff: v0.0.28 is out (this is
+v0.0.27) …`) and in the legend (`?`), whose header names the version — or, for a build
+from source, the commit. Tell the person; re-running the installer is the upgrade.
+
 ## Flags
 
 ```

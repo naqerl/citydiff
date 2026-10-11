@@ -693,6 +693,8 @@
     .legend-card header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .legend-card header h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
     .legend-card header button { margin-left: auto; background: var(--bg); color: var(--muted); border: 1px solid var(--line-strong); padding: 4px 8px; }
+    .legend-card header .version { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .legend-card header .version a { color: var(--link); }
     .ex {
       display: flex;
       gap: 12px;
@@ -1327,6 +1329,7 @@
     <div class="legend-card">
       <header>
         <h2>Legend</h2>
+        <span id="version" class="version"></span>
         <button id="legend-close" type="button">esc</button>
       </header>
       <button class="ex" type="button">

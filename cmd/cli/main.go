@@ -183,6 +183,7 @@ func serve(addr string, snap *snapshot, tourRaw []byte) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
+	go v.watchUpdate(latestAPI(releaseRepo))
 	openBrowser(browserURL(ln.Addr()))
 	return http.Serve(ln, v.handler())
 }

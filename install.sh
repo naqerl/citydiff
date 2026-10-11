@@ -337,7 +337,11 @@ build_from_source() {
   else
     git clone -q --depth 1 "https://github.com/$REPO.git" "$src/citydiff"
   fi
-  (cd "$src/citydiff" && CGO_ENABLED=1 go build -o "$src/$BIN_NAME" ./cmd/cli) || die "go build failed (CGO and a C compiler are required)"
+  # A tag is a release, so the binary is told its version; main is named by the
+  # commit go build stamps from the clone.
+  ldflags=""
+  [ -n "$TAG" ] && ldflags="-X main.version=$TAG -X main.releaseRepo=$REPO"
+  (cd "$src/citydiff" && CGO_ENABLED=1 go build -ldflags "$ldflags" -o "$src/$BIN_NAME" ./cmd/cli) || die "go build failed (CGO and a C compiler are required)"
   mkdir -p "$BIN_DIR"
   cp "$src/$BIN_NAME" "$BIN_DIR/$BIN_NAME.tmp.$$" && chmod +x "$BIN_DIR/$BIN_NAME.tmp.$$" && mv "$BIN_DIR/$BIN_NAME.tmp.$$" "$BIN_DIR/$BIN_NAME"
   say "  installed $BIN_DIR/$BIN_NAME (built from source)"

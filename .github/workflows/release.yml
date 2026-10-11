@@ -49,7 +49,14 @@ jobs:
           CGO_ENABLED: '1'
         run: |
           echo "building $(go env GOOS)/$(go env GOARCH) on ${{ matrix.os }}"
-          go build -trimpath -ldflags "-s -w" -o "dist/${BIN_NAME}" ./cmd/cli
+          # A tag build is that release: the legend shows the version and the
+          # viewer checks this repository for a newer one. Any other build is a
+          # development build and names its commit.
+          ldflags="-s -w"
+          case "$GITHUB_REF" in
+            refs/tags/v*) ldflags="$ldflags -X main.version=${GITHUB_REF_NAME} -X main.releaseRepo=${GITHUB_REPOSITORY}" ;;
+          esac
+          go build -trimpath -ldflags "$ldflags" -o "dist/${BIN_NAME}" ./cmd/cli
 
       - name: Smoke test
         run: |

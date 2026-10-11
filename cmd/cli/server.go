@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"citydiff/lib/git"
 	"citydiff/lib/tour"
@@ -30,10 +31,14 @@ type viewer struct {
 	build  func(path, commitRange string) (*snapshot, error)
 	// editor is the command E opens a node in; nvim when empty.
 	editor []string
+	// about is this build; update is a newer release, once the startup
+	// check has found one.
+	about  buildInfo
+	update atomic.Pointer[release]
 }
 
 func newViewer(snap *snapshot, tourRaw []byte) (*viewer, error) {
-	v := &viewer{path: snap.path, build: buildSnapshot}
+	v := &viewer{path: snap.path, build: buildSnapshot, about: readBuild()}
 	if err := v.setSnapshot(snap); err != nil {
 		return nil, err
 	}
@@ -162,6 +167,7 @@ func (v *viewer) handler() http.Handler {
 	mountSkins(mux, skinsDir())
 	mux.HandleFunc("GET /api/edit", v.serveEditor)
 	mux.HandleFunc("GET /api/diff", v.serveDiff)
+	mux.HandleFunc("GET /api/version", v.serveVersion)
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	return mux
 }

@@ -18,6 +18,7 @@ import { createRocket } from "./rocket.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
 import { buildSigns, hasPlate, signText } from "./signs.js";
+import { showVersion } from "./version.js";
 
 let theme = null;
 let themeReady = false;
@@ -430,6 +431,7 @@ const hud = {
   search: document.querySelector("#search"),
   results: document.querySelector("#results"),
   legend: document.querySelector("#legend"),
+  version: document.querySelector("#version"),
   side: document.querySelector("#side"),
   collapse: document.querySelector("#side-toggle"),
   help: document.querySelector("#side-help"),
@@ -6712,6 +6714,8 @@ document.querySelector("#keys").innerHTML = KEYBINDS.map(
 
 function setLegend(open) {
   hud.legend.hidden = !open;
+  // Asked on every open: the server's update check may have answered since.
+  if (open) showVersion(hud.version);
 }
 
 // The arrow hides the panel on click, not on the way past it: pointing at it
