@@ -36,6 +36,14 @@ func TestTreeSkipsVendorTargetHiddenAndUnsupported(t *testing.T) {
 	write("Sources/M/m.swift", "func m() {}\n")
 	write(".build/checkouts/x.swift", "func x() {}\n")
 	write("DerivedData/Build/y.swift", "func y() {}\n")
+	write("package.json", "{\"name\": \"m\"}\n")
+	write("web/app.mjs", "export const a = 1\n")
+	write("web/c.cjs", "module.exports = 1\n")
+	write("web/v.jsx", "export const v = <b/>\n")
+	write("web/t.ts", "export const t = 1\n")
+	for _, dir := range []string{"node_modules/x", "dist", "build", "coverage"} {
+		write(dir+"/z.js", "var z\n")
+	}
 
 	src, err := Tree(root)
 	if err != nil {
@@ -52,7 +60,7 @@ func TestTreeSkipsVendorTargetHiddenAndUnsupported(t *testing.T) {
 		}
 		paths = append(paths, file.Path)
 	}
-	want := []string{"Cargo.toml", "Package.swift", "Sources/M/m.swift", "a.go", "go.mod", "src/lib.rs", "sub/b.go"}
+	want := []string{"Cargo.toml", "Package.swift", "Sources/M/m.swift", "a.go", "go.mod", "package.json", "src/lib.rs", "sub/b.go", "web/app.mjs", "web/c.cjs", "web/v.jsx"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("paths = %v", paths)
 	}
