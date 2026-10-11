@@ -202,7 +202,7 @@ function adoptShaders(next) {
 
 // The per-vertex and per-instance colours a theme fade blends: the particle
 // colours, the arc colours and the glow of each package.
-const FADE_ATTRIBUTES = ["aColor", "aGlow", "color"];
+const FADE_ATTRIBUTES = ["aColor", "aGlow"];
 
 function captureLook() {
   const mats = [];
@@ -821,6 +821,7 @@ document.querySelector("#side-theme").addEventListener("click", () => openSkinPa
 // The list under the search box is placed on the page, not in the sidebar,
 // so it follows the sidebar when that scrolls.
 hud.side.addEventListener("scroll", placeResults, { passive: true });
+hud.side.addEventListener("scroll", growVisibleRows, { passive: true, capture: true });
 // iOS zooms the page on a pinch whatever the viewport says. The city has its
 // own pinch, and the page itself never zooms.
 if (touchUI.matches) document.addEventListener("gesturestart", (event) => event.preventDefault());
@@ -1691,6 +1692,7 @@ const methodsOf = new Map();
 const namesake = new Map();
 
 function indexFamilies() {
+  linkMemo.clear();
   childrenOf.clear();
   entitiesOf.clear();
   methodsOf.clear();
@@ -2018,15 +2020,30 @@ function slotSize(slot, open) {
   return drawnSize(slot, drawState(slot, open));
 }
 
-// The drawn box: a method stands on the roof its type is drawn at.
+// The drawn box: a method stands on the roof its type is drawn at. It depends
+// on the mode, on whether anything is lit, and on whether the slot and its
+// type are open, so each slot keeps its last box under those four and a
+// selection works out again only the boxes it changed. Callers only read it.
 function visualBox(slot, open) {
-  const parentId = slot.entity && slot.entity.kind === "method" ? slot.entity.parent : "";
-  const parent = parentId ? slotById.get(parentId) : null;
-  return drawnBox(slot, drawState(slot, open), parent, parent ? drawState(parent, slotOpen(parent)) : null);
+  if (slot.parentSlot === undefined) {
+    const parentId = slot.entity && slot.entity.kind === "method" ? slot.entity.parent : "";
+    slot.parentSlot = (parentId && slotById.get(parentId)) || null;
+  }
+  const parent = slot.parentSlot;
+  const parentOpen = parent ? slotOpen(parent) : 0;
+  const key = (mode === "overlay" ? 1 : 0) | (lit ? 2 : 0) | (open << 2) | (parentOpen << 3);
+  if (slot.boxKey !== key) {
+    slot.box = drawnBox(slot, drawState(slot, open), parent, parent ? drawState(parent, parentOpen) : null);
+    slot.boxKey = key;
+  }
+  return slot.box;
 }
 
 function writeSlot(mesh, index, slot, open) {
   const box = visualBox(slot, open);
+  // The same box object is the same box: nothing to write.
+  if (slot.drawnBox === box) return false;
+  slot.drawnBox = box;
   const drawn = slot.drawn;
   if (drawn && drawn[0] === box.x && drawn[1] === box.y && drawn[2] === box.z && drawn[3] === box.w && drawn[4] === box.h && drawn[5] === box.d) {
     return false;
@@ -2077,7 +2094,7 @@ function entityColor(entity) {
 // There are 17 steps, so each kind's colour is shaded 17 times per theme and
 // looked up, instead of converted to HSL and back for every declaration on
 // every repaint. The result is shared: callers copy it.
-const varySteps = new Map();
+const varySteps = new WeakMap();
 const varyStep = new Map();
 
 function vary(id, color) {
@@ -2088,15 +2105,15 @@ function vary(id, color) {
     step = hash % 17;
     varyStep.set(id, step);
   }
-  const key = color.r + "," + color.g + "," + color.b;
-  let steps = varySteps.get(key);
-  if (!steps) {
-    if (varySteps.size > 64) varySteps.clear();
-    steps = [];
-    for (let k = 0; k < 17; k++) steps.push(color.clone().offsetHSL(0, 0, (k - 8) / 220));
-    varySteps.set(key, steps);
+  // Keyed by the colour itself: a theme change sets the same Color objects in
+  // place, so the shades are made again when its value moved.
+  let shades = varySteps.get(color);
+  if (!shades || shades.r !== color.r || shades.g !== color.g || shades.b !== color.b) {
+    shades = { r: color.r, g: color.g, b: color.b, steps: [] };
+    for (let k = 0; k < 17; k++) shades.steps.push(color.clone().offsetHSL(0, 0, (k - 8) / 220));
+    varySteps.set(color, shades);
   }
-  return steps[step];
+  return shades.steps[step];
 }
 
 // The overview draws an arc for every import that was added or deleted, and
@@ -2263,7 +2280,7 @@ function localTop(x, z) {
 // pinned at the midpoint could not clear a tower standing right beside an
 // endpoint, however high its apex was raised, and the clearance loop used to
 // run away to a lift of 350 without gaining a metre.
-// This is the curve: linkGeometry draws it, the particles ride it, and the
+// This is the curve: the arc shader draws it, the particles ride it, and the
 // clearance loop measures it, so there is no second interpretation to disagree
 // with.
 function arcControls(from, to, lift) {
@@ -2404,30 +2421,47 @@ function entityAnchor(found) {
   return null;
 }
 
-function linkGeometry(from, to, lift, roofFrom, roofTo, thin) {
-  if (!from || !to) return null;
+// An arc is a riser up its building's own column from the roof to the anchor
+// (without it the line began in mid-air beside the building), the bow from
+// anchor to anchor, and a riser down at the other end. The bow is the cubic of
+// arcControls. All of it lies in one upright plane, so the tube's cross-section
+// is known in closed form, and the GPU builds every tube from a shared ring
+// template: an arc costs a few numbers, not a geometry.
+const ARC_BOW = 32;
+const ARC_RINGS = ARC_BOW + 3;
+const ARC_SIDES = 5;
+
+function arcShape(from, to, lift, roofFrom, roofTo, thin) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  // A riser at each end: the anchor sits as high as its neighbourhood demands,
-  // and without this the line began in mid-air beside the building. The riser
-  // runs up the building's own column from the roof to the anchor, so the arc
-  // reads as leaving a roof and landing on one.
-  const road = arcSamples(from, to, lift, 24).slice(1, -1);
-  const path = [];
-  for (const p of [roofFrom, from]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
-  for (const p of road) path.push(new THREE.Vector3(p[0], p[1], p[2]));
-  for (const p of [to, roofTo]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
-  const curve = new THREE.CatmullRomCurve3(path);
   // A thin arc is a reference, not a traced call: barely more than half the
   // radius of a call arc, and never as thick as one.
   const radius = thin
     ? Math.max(0.03, Math.min(dist * 0.0013, 0.1))
     : Math.max(0.07, Math.min(dist * 0.0028, 0.22));
-  // As many segments as main's bows had. Twice that doubled the triangles the
-  // overview draws and bought nothing visible at this radius.
-  const segs = (dist > 48 ? 28 : 16) + (roofFrom ? 2 : 0) + (roofTo ? 2 : 0);
-  return new THREE.TubeGeometry(curve, segs, radius, 5, false);
+  return { from, to, lift, rise: roofFrom || from, fall: roofTo || to, radius };
 }
+
+// Ring k of an arc's centre line, in world space: 0 is the roof it rises
+// from, 1 to ARC_BOW + 1 the bow, the last the roof it lands on. The vertex
+// shader below is the same function; picking and ?check=1 use this one.
+function arcRing(shape, k, out) {
+  if (k <= 0) return out.set(shape.rise[0], shape.rise[1], shape.rise[2]);
+  if (k >= ARC_RINGS - 1) return out.set(shape.fall[0], shape.fall[1], shape.fall[2]);
+  const t = (k - 1) / ARC_BOW;
+  const u = 1 - t;
+  const a = u * u * u;
+  const b = 3 * u * u * t;
+  const c = 3 * u * t * t;
+  const d = t * t * t;
+  const { from, to, lift } = shape;
+  return out.set(
+    a * from[0] + b * from[0] + c * to[0] + d * to[0],
+    a * from[1] + b * (from[1] + lift) + c * (to[1] + lift) + d * to[1],
+    a * from[2] + b * from[2] + c * to[2] + d * to[2],
+  );
+}
+
 function isStdPackage(id) {
   const pkg = byPackage.get(id);
   if (!pkg || !pkg.external) return false;
@@ -2437,50 +2471,48 @@ function isStdPackage(id) {
 
 const flowScratch = [0, 0, 0];
 
-// Particles run on the GPU. Each flow is one row of a path texture; the vertex
-// shader walks the row and the fragment shader cuts a disc out of the sprite.
-// The CPU writes a path once and never touches a position again, and the point
-// is round instead of the square a bare PointsMaterial draws.
-const FLOW_SAMPLES = 64;
+// Particles run on the GPU. Every arc's dots are one instance of an eight-dot
+// template: the vertex shader walks the arc's own bow, the same cubic the tube
+// is drawn along, and the fragment shader cuts a disc out of the sprite. The
+// CPU writes an arc once and never touches a position again, and the point is
+// round instead of the square a bare PointsMaterial draws.
+const FLOW_DOTS = 8;
 
 const flowMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    uPath: { value: null },
-    uRows: { value: 1 },
     uTime: { value: 0 },
     uScale: { value: 800 },
   },
   vertexShader: `
-    #define SAMPLES ${FLOW_SAMPLES}.0
-    attribute float aRow;
-    attribute float aU;
-    attribute float aSpeed;
-    attribute float aSize;
+    attribute float aDot;
+    attribute vec3 aFrom;
+    attribute vec3 aTo;
+    attribute vec4 aFlow;
     attribute vec3 aColor;
-    uniform sampler2D uPath;
-    uniform float uRows;
     uniform float uTime;
     uniform float uScale;
     varying vec3 vColor;
     void main() {
-      float u = fract(aU + uTime * aSpeed);
-      float x = u * (SAMPLES - 1.0);
-      float i0 = floor(x);
-      float f = x - i0;
-      float row = (aRow + 0.5) / uRows;
-      vec3 p0 = texture2D(uPath, vec2((i0 + 0.5) / SAMPLES, row)).xyz;
-      vec3 p1 = texture2D(uPath, vec2((i0 + 1.5) / SAMPLES, row)).xyz;
-      vec4 mv = modelViewMatrix * vec4(mix(p0, p1, f), 1.0);
+      // aFlow: the bow's lift, how many dots the arc carries, their speed and size.
+      if (aDot >= aFlow.y) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        gl_PointSize = 0.0;
+        return;
+      }
+      float t = fract(aDot / aFlow.y + uTime * aFlow.z);
+      float u = 1.0 - t;
+      vec3 lift = vec3(0.0, aFlow.x, 0.0);
+      vec3 p = u * u * u * aFrom + 3.0 * u * u * t * (aFrom + lift) + 3.0 * u * t * t * (aTo + lift) + t * t * t * aTo;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
       // The dot rides the centre of the arc's tube. Bring it out in front of
       // the tube so the tube does not hide it.
-      mv.xyz += normalize(-mv.xyz) * aSize * 0.6;
+      mv.xyz += normalize(-mv.xyz) * aFlow.w * 0.6;
       gl_Position = projectionMatrix * mv;
-      gl_PointSize = clamp(aSize * uScale / max(0.001, -mv.z), 4.0, 12.0);
+      gl_PointSize = clamp(aFlow.w * uScale / max(0.001, -mv.z), 4.0, 12.0);
       vColor = aColor;
     }
   `,
   fragmentShader: `
-    uniform float uTime;
     varying vec3 vColor;
     void main() {
       vec2 d = gl_PointCoord - vec2(0.5);
@@ -2510,33 +2542,87 @@ function wrapUnit(value) {
   return wrapped < 0 ? wrapped + 1 : wrapped;
 }
 
-// Particles run from the caller (t = 0) to the callee (t = 1).
-// The bow is stored as numbers. CatmullRomCurve3 keeps one shared scratch
-// vector and throws once many arcs are sampled in the same frame.
-function flowPath(from, to, lift) {
-  if (!from || !to) return null;
-  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  if (dist < 0.35) return null;
-  // The particle path is the same curve the line is drawn along, sampled evenly,
-  // x, y, z flat, three numbers per sample.
+// Particles run from the caller (t = 0) to the callee (t = 1), along the bow.
+function flowOf(shape) {
+  const dist = Math.hypot(shape.to[0] - shape.from[0], shape.to[1] - shape.from[1], shape.to[2] - shape.from[2]);
   return {
-    samples: arcSamples(from, to, lift, FLOW_SAMPLES - 1).flat(),
     count: Math.max(3, Math.min(8, Math.round(dist / 9))),
     size: Math.max(1.2, Math.min(dist * 0.016, 2.4)),
     speed: Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1))),
   };
 }
 
-// The arcs of a group are one tube mesh and one particle cloud, however many
-// there are: a fan of a few hundred calls is two draw calls, not a few hundred
-// pairs. addArc only queues an arc; the group is merged the next time it is
-// drawn or picked (flushArcs), and each arc keeps its range in the merge, for
-// picking and for a repaint.
-const arcMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, fog: false });
+// The arcs of a group are one instanced tube and one instanced dot cloud,
+// however many there are: a fan of thousands of calls is two draw calls and a
+// few numbers per arc. addArc only queues an arc; the group is rebuilt the
+// next time it is drawn or picked (flushArcs).
+const arcMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+arcMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = [
+    "#define ARC_BOW " + ARC_BOW + ".0",
+    "#define ARC_LAST " + (ARC_RINGS - 1) + ".0",
+    "attribute vec2 aTube;",
+    "attribute vec3 aFrom;",
+    "attribute vec3 aTo;",
+    "attribute vec3 aRise;",
+    "attribute vec3 aFall;",
+    "attribute vec2 aShape;",
+    "attribute vec3 aColor;",
+    "varying vec3 vArc;",
+    shader.vertexShader,
+  ].join("\n").replace("#include <begin_vertex>", `
+    // aTube: the ring and the angle round it. aShape: the bow's lift and the radius.
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    vec3 lift = up * aShape.x;
+    vec3 p;
+    vec3 along;
+    if (aTube.x < 0.5) {
+      p = aRise;
+      along = aFrom - aRise;
+    } else if (aTube.x > ARC_LAST - 0.5) {
+      p = aFall;
+      along = aFall - aTo;
+    } else {
+      float t = (aTube.x - 1.0) / ARC_BOW;
+      float u = 1.0 - t;
+      p = u * u * u * aFrom + 3.0 * u * u * t * (aFrom + lift) + 3.0 * u * t * t * (aTo + lift) + t * t * t * aTo;
+      along = 3.0 * u * u * lift + 6.0 * u * t * (aTo - aFrom) + 3.0 * t * t * (-lift);
+    }
+    if (dot(along, along) < 1e-12) along = up;
+    vec3 across = vec3(aTo.x - aFrom.x, 0.0, aTo.z - aFrom.z);
+    vec3 side = dot(across, across) > 1e-10 ? normalize(cross(up, across)) : vec3(1.0, 0.0, 0.0);
+    vec3 bend = normalize(cross(normalize(along), side));
+    vec3 transformed = p + aShape.y * (cos(aTube.y) * bend + sin(aTube.y) * side);
+    vArc = aColor;`);
+  shader.fragmentShader = "varying vec3 vArc;\n" +
+    shader.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n\tdiffuseColor.rgb *= vArc;");
+};
+
+// The ring template every tube is drawn from: ARC_RINGS rings of ARC_SIDES.
+const arcTemplate = (() => {
+  const tube = new Float32Array(ARC_RINGS * ARC_SIDES * 2);
+  for (let k = 0; k < ARC_RINGS; k++) {
+    for (let j = 0; j < ARC_SIDES; j++) {
+      tube[(k * ARC_SIDES + j) * 2] = k;
+      tube[(k * ARC_SIDES + j) * 2 + 1] = (j / ARC_SIDES) * Math.PI * 2;
+    }
+  }
+  const index = [];
+  for (let k = 0; k + 1 < ARC_RINGS; k++) {
+    for (let j = 0; j < ARC_SIDES; j++) {
+      const a = k * ARC_SIDES + j;
+      const b = k * ARC_SIDES + ((j + 1) % ARC_SIDES);
+      const c = a + ARC_SIDES;
+      const d = b + ARC_SIDES;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  return { tube, index };
+})();
 
 function arcBatch(group) {
   if (!group.userData.arcBatch) {
-    group.userData.arcBatch = { parts: [], dirty: false, mesh: null, points: null, material: null, path: null, pathData: null };
+    group.userData.arcBatch = { parts: [], dirty: false, mesh: null, points: null };
   }
   return group.userData.arcBatch;
 }
@@ -2551,6 +2637,12 @@ function dropMerged(batch, group) {
   }
 }
 
+function instanced(geo, name, size, n) {
+  const attr = new THREE.InstancedBufferAttribute(new Float32Array(n * size), size);
+  geo.setAttribute(name, attr);
+  return attr.array;
+}
+
 function flushArcs(group) {
   const batch = group.userData.arcBatch;
   if (!batch || !batch.dirty) return;
@@ -2558,140 +2650,111 @@ function flushArcs(group) {
   dropMerged(batch, group);
   const parts = batch.parts;
   if (!parts.length) return;
-  let verts = 0;
-  let indices = 0;
-  for (const part of parts) {
-    verts += part.geo.attributes.position.count;
-    indices += part.geo.index.count;
-  }
-  const position = new Float32Array(verts * 3);
-  const index = verts > 65535 ? new Uint32Array(indices) : new Uint16Array(indices);
-  let v = 0;
-  let at = 0;
-  for (const part of parts) {
-    const g = part.geo;
-    const n = g.attributes.position.count;
-    position.set(g.attributes.position.array, v * 3);
-    const src = g.index.array;
-    for (let k = 0; k < src.length; k++) index[at + k] = src[k] + v;
-    if (!g.boundingSphere) g.computeBoundingSphere();
-    part.verts = [v, n];
-    part.tris = [at, src.length];
-    v += n;
-    at += src.length;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(position, 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
-  geo.setIndex(new THREE.BufferAttribute(index, 1));
-  geo.computeBoundingSphere();
+  const n = parts.length;
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(ARC_RINGS * ARC_SIDES * 3), 3));
+  geo.setAttribute("aTube", new THREE.BufferAttribute(arcTemplate.tube, 2));
+  geo.setIndex(arcTemplate.index);
+  const from = instanced(geo, "aFrom", 3, n);
+  const to = instanced(geo, "aTo", 3, n);
+  const rise = instanced(geo, "aRise", 3, n);
+  const fall = instanced(geo, "aFall", 3, n);
+  const shape = instanced(geo, "aShape", 2, n);
+  instanced(geo, "aColor", 3, n);
+  parts.forEach((part, i) => {
+    const sh = part.shape;
+    from.set(sh.from, i * 3);
+    to.set(sh.to, i * 3);
+    rise.set(sh.rise, i * 3);
+    fall.set(sh.fall, i * 3);
+    shape[i * 2] = sh.lift;
+    shape[i * 2 + 1] = sh.radius;
+  });
+  geo.instanceCount = n;
   batch.mesh = new THREE.Mesh(geo, arcMaterial);
+  batch.mesh.frustumCulled = false;
   batch.mesh.userData.arcs = batch;
   batch.mesh.raycast = raycastArcs;
   group.add(batch.mesh);
 
   const flowing = parts.filter((part) => part.flow);
   if (flowing.length) {
-    const rows = flowing.length;
-    if (!batch.path || batch.path.image.height < rows) {
-      const height = Math.max(16, THREE.MathUtils.ceilPowerOfTwo(rows));
-      if (batch.path) batch.path.dispose();
-      batch.pathData = new Float32Array(FLOW_SAMPLES * 4 * height);
-      batch.path = new THREE.DataTexture(batch.pathData, FLOW_SAMPLES, height, THREE.RGBAFormat, THREE.FloatType);
-      batch.path.minFilter = THREE.NearestFilter;
-      batch.path.magFilter = THREE.NearestFilter;
-    }
-    if (!batch.material) {
-      // The group's own path texture; the clock and the point scale are shared.
-      batch.material = new THREE.ShaderMaterial({
-        uniforms: {
-          uPath: { value: null },
-          uRows: { value: 1 },
-          uTime: flowMaterial.uniforms.uTime,
-          uScale: flowMaterial.uniforms.uScale,
-        },
-        vertexShader: flowMaterial.vertexShader,
-        fragmentShader: flowMaterial.fragmentShader,
-        transparent: true,
-        depthWrite: false,
-        fog: false,
-      });
-    }
-    batch.material.uniforms.uPath.value = batch.path;
-    batch.material.uniforms.uRows.value = batch.path.image.height;
-    let points = 0;
-    for (const part of flowing) points += part.flow.count;
-    const rowOf = new Float32Array(points);
-    const params = new Float32Array(points);
-    const speeds = new Float32Array(points);
-    const sizes = new Float32Array(points);
-    let p = 0;
-    flowing.forEach((part, row) => {
-      const flow = part.flow;
-      const base = row * FLOW_SAMPLES * 4;
-      for (let i = 0; i < FLOW_SAMPLES; i++) {
-        batch.pathData[base + i * 4] = flow.samples[i * 3] || 0;
-        batch.pathData[base + i * 4 + 1] = flow.samples[i * 3 + 1] || 0;
-        batch.pathData[base + i * 4 + 2] = flow.samples[i * 3 + 2] || 0;
-        batch.pathData[base + i * 4 + 3] = 1;
-      }
-      part.dots = [p, flow.count];
-      for (let i = 0; i < flow.count; i++, p++) {
-        rowOf[p] = row;
-        params[p] = i / flow.count;
-        speeds[p] = flow.speed;
-        sizes[p] = flow.size;
-      }
+    const m = flowing.length;
+    const cloud = new THREE.InstancedBufferGeometry();
+    cloud.setAttribute("position", new THREE.BufferAttribute(new Float32Array(FLOW_DOTS * 3), 3));
+    cloud.setAttribute("aDot", new THREE.BufferAttribute(Float32Array.from({ length: FLOW_DOTS }, (_, i) => i), 1));
+    const dFrom = instanced(cloud, "aFrom", 3, m);
+    const dTo = instanced(cloud, "aTo", 3, m);
+    const flow = instanced(cloud, "aFlow", 4, m);
+    instanced(cloud, "aColor", 3, m);
+    flowing.forEach((part, i) => {
+      part.dot = i;
+      dFrom.set(part.shape.from, i * 3);
+      dTo.set(part.shape.to, i * 3);
+      flow.set([part.shape.lift, part.flow.count, part.flow.speed, part.flow.size], i * 4);
     });
-    batch.path.needsUpdate = true;
-    const cloud = new THREE.BufferGeometry();
-    cloud.setAttribute("position", new THREE.BufferAttribute(new Float32Array(points * 3), 3));
-    cloud.setAttribute("aRow", new THREE.BufferAttribute(rowOf, 1));
-    cloud.setAttribute("aU", new THREE.BufferAttribute(params, 1));
-    cloud.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
-    cloud.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    cloud.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(points * 3), 3));
-    batch.points = new THREE.Points(cloud, batch.material);
+    cloud.instanceCount = m;
+    batch.points = new THREE.Points(cloud, flowMaterial);
     batch.points.frustumCulled = false;
     group.add(batch.points);
   }
   paintBatch(batch);
 }
 
-// Each arc's colour, written over its own range of the merged tube and cloud.
+// Each arc's colour, on its tube and on its dots.
 function paintBatch(batch) {
-  const tube = batch.mesh && batch.mesh.geometry.getAttribute("color");
+  const tube = batch.mesh && batch.mesh.geometry.getAttribute("aColor");
   const dots = batch.points && batch.points.geometry.getAttribute("aColor");
-  for (const part of batch.parts) {
+  batch.parts.forEach((part, i) => {
     const c = part.color;
-    if (tube && part.verts) {
-      for (let i = part.verts[0]; i < part.verts[0] + part.verts[1]; i++) tube.setXYZ(i, c.r, c.g, c.b);
-    }
-    if (dots && part.dots) {
-      for (let i = part.dots[0]; i < part.dots[0] + part.dots[1]; i++) dots.setXYZ(i, c.r, c.g, c.b);
-    }
-  }
+    if (tube) tube.setXYZ(i, c.r, c.g, c.b);
+    if (dots && part.dot != null) dots.setXYZ(part.dot, c.r, c.g, c.b);
+  });
   if (tube) tube.needsUpdate = true;
   if (dots) dots.needsUpdate = true;
 }
 
 const arcSphere = new THREE.Sphere();
+const arcA = new THREE.Vector3();
+const arcB = new THREE.Vector3();
+const arcOnRay = new THREE.Vector3();
 
-// Picking an arc tests its own bounds first and then only its own triangles,
-// the way it did when every arc was its own mesh. A hit carries the arc.
+// The bounds of an arc's tube: its ends, its roofs and the bow's two control
+// points hold the whole curve, and the radius pads it.
+function arcBounds(shape) {
+  const pts = [shape.rise, shape.from, shape.to, shape.fall,
+    [shape.from[0], shape.from[1] + shape.lift, shape.from[2]], [shape.to[0], shape.to[1] + shape.lift, shape.to[2]]];
+  const box = new THREE.Box3();
+  for (const p of pts) box.expandByPoint(arcA.set(p[0], p[1], p[2]));
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  sphere.radius += shape.radius;
+  return sphere;
+}
+
+// Picking an arc tests its own bounds first and then its own centre line,
+// as a tube of its radius. A hit carries the arc.
 function raycastArcs(raycaster, intersects) {
   const batch = this.userData.arcs;
-  const geo = this.geometry;
+  const ray = raycaster.ray;
   for (const part of batch.parts) {
-    if (!part.tris) continue;
-    arcSphere.copy(part.geo.boundingSphere).applyMatrix4(this.matrixWorld);
-    if (!raycaster.ray.intersectsSphere(arcSphere)) continue;
-    const from = intersects.length;
-    geo.setDrawRange(part.tris[0], part.tris[1]);
-    THREE.Mesh.prototype.raycast.call(this, raycaster, intersects);
-    for (let k = from; k < intersects.length; k++) intersects[k].arc = part.data;
+    const shape = part.shape;
+    if (!part.bounds) part.bounds = arcBounds(shape);
+    arcSphere.copy(part.bounds).applyMatrix4(this.matrixWorld);
+    if (!ray.intersectsSphere(arcSphere)) continue;
+    let best = null;
+    arcRing(shape, 0, arcA);
+    for (let k = 1; k < ARC_RINGS; k++) {
+      arcRing(shape, k, arcB);
+      if (ray.distanceSqToSegment(arcA, arcB, arcOnRay) <= shape.radius * shape.radius) {
+        const distance = ray.origin.distanceTo(arcOnRay);
+        if (distance >= raycaster.near && distance <= raycaster.far && (!best || distance < best.distance)) {
+          best = { distance, point: arcOnRay.clone(), object: this, arc: part.data };
+        }
+      }
+      arcA.copy(arcB);
+    }
+    if (best) intersects.push(best);
   }
-  geo.setDrawRange(0, Infinity);
 }
 
 function flushAllArcs() {
@@ -2734,17 +2797,17 @@ function arcCollisions() {
   const v = new THREE.Vector3();
   const tops = new Map();
   for (const box of laid.packages) tops.set(box.id, shownOwnTop(box.id));
-  // Particles compute their positions in the shader: only the tubes are real
-  // geometry to test, each arc's own, in world space.
+  // Particles and tubes are both built in the shader: the arc's centre line
+  // is the geometry to test, its underside a radius below it.
   const parts = (arcGroup.userData.arcBatch || { parts: [] }).parts;
   for (const part of parts) {
-    const attr = part.geo.attributes.position;
     const child = { userData: part.data };
     let worst = null;
     let count = 0;
     const ends = child.userData.ends || [];
-    for (let i = 0; i < attr.count; i++) {
-      v.fromBufferAttribute(attr, i);
+    for (let i = 0; i < ARC_RINGS; i++) {
+      arcRing(part.shape, i, v);
+      v.y -= part.shape.radius;
       // The riser is meant to run up its own building: skip the part of the
       // path that is below the anchor and inside reach of either end.
       let riser = false;
@@ -2768,7 +2831,7 @@ function arcCollisions() {
     }
     if (count) {
       const d = child.userData || {};
-      hits.push({ arc: (d.from || "?") + " -> " + (d.label || d.id || "?"), verts: attr.count, inside: count, worst });
+      hits.push({ arc: (d.from || "?") + " -> " + (d.label || d.id || "?"), rings: ARC_RINGS, inside: count, worst });
     }
   }
   hits.sort((a, b) => b.worst.depth - a.worst.depth);
@@ -2788,14 +2851,14 @@ window.citydiffCheck = () => {
 // on. A call arc between towers has neither.
 function addArc(group, from, to, color, lift, data, fromId, toId) {
   if (!from || !to) return;
-  const geo = linkGeometry(from, to, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
-  if (!geo) return;
+  const shape = arcShape(from, to, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
+  if (!shape) return;
   const tint = { kind: data.kind, change: data.change, std: !!data.std };
   data.tint = tint;
   const batch = arcBatch(group);
   // A thin reference arc carries no particle traffic: the dots are what a
   // traced call has, and the quiet line is the point.
-  batch.parts.push({ data, tint, geo, color: color.clone(), flow: data.thin ? null : flowPath(from, to, lift) });
+  batch.parts.push({ data, tint, shape, color: color.clone(), flow: data.thin ? null : flowOf(shape) });
   batch.dirty = true;
 }
 
@@ -3029,10 +3092,15 @@ function packageRole(id) {
     return "dep";
   }
   if (lit.entities) {
-    for (const entityId of lit.entities) {
-      const found = byEntity.get(entityId);
-      if (found && found.pkg && found.pkg.id === id) return "subject";
+    // Worked out once per selection: this is asked for every package.
+    if (!lit.entityPackages) {
+      lit.entityPackages = new Set();
+      for (const entityId of lit.entities) {
+        const found = byEntity.get(entityId);
+        if (found && found.pkg) lit.entityPackages.add(found.pkg.id);
+      }
     }
+    if (lit.entityPackages.has(id)) return "subject";
   }
   return "dim";
 }
@@ -3069,8 +3137,32 @@ function packageEdges(id, inbound) {
   return edges;
 }
 
+// The links of a declaration and of a package do not change within a scene,
+// and one click used to work them out three or four times over (the arcs, the
+// Calls / Callers counts, the list), resolving every call again each time.
+// Callers only read what these return.
+const linkMemo = new Map();
+
+function memo(key, make) {
+  let hit = linkMemo.get(key);
+  if (!hit) {
+    hit = make();
+    linkMemo.set(key, hit);
+  }
+  return hit;
+}
+
 function entityLinks(found) {
   if (!found) return [];
+  let hit = linkMemo.get(found);
+  if (!hit) {
+    hit = makeEntityLinks(found);
+    linkMemo.set(found, hit);
+  }
+  return hit;
+}
+
+function makeEntityLinks(found) {
   if (found.entity.kind === "type") {
     // A type does not call its methods: they are drawn on top of it, as towers
     // on its own base. The links are kept for the list — a method is one click
@@ -3181,6 +3273,10 @@ function litForEntity(found) {
 // not one caller: the arc starts at the function or method that writes the
 // call, so the city shows which declaration reaches where.
 function packageCallLinks(id) {
+  return memo("calls\0" + id, () => makePackageCallLinks(id));
+}
+
+function makePackageCallLinks(id) {
   const links = [];
   for (const found of entitiesOf.get(id) || []) {
     for (const link of entityLinks(found)) {
@@ -3195,6 +3291,10 @@ function packageCallLinks(id) {
 // The calls that enter a package land on the towers that are called, and they
 // start at the tower that makes the call.
 function packageCallerLinks(id) {
+  return memo("callers\0" + id, () => makePackageCallerLinks(id));
+}
+
+function makePackageCallerLinks(id) {
   const links = [];
   for (const found of entitiesOf.get(id) || []) {
     for (const link of callerLinks(found)) {
@@ -3368,14 +3468,35 @@ function changeColor(change, part) {
   return paint.same;
 }
 
+// A declaration's own colour depends on the theme and the mode; a selection
+// only dims it or not. The own colours are kept and made again when the theme
+// or the mode moved, so a click is one multiply per declaration.
+let ownColors = null;
+let ownKey = "";
+
 function recolor(mesh) {
   if (!mesh) return;
-  const color = new THREE.Color();
-  mesh.userData.slots.forEach((slot, index) => {
-    color.copy(entityColor(slot.entity));
-    if (!entityIsLit(slot.id, slot.pkgId)) color.multiplyScalar(theme.dim.entity);
-    mesh.setColorAt(index, color);
-  });
+  const slots = mesh.userData.slots;
+  const key = mode + [paint.type, paint.method, paint.function, paint.added, paint.removed, paint.modified, paint.body, paint.both, paint.moved, paint.same]
+    .map((c) => "," + c.r + "," + c.g + "," + c.b).join("");
+  if (!ownColors || ownColors.length !== slots.length * 3 || key !== ownKey) {
+    ownColors = new Float32Array(slots.length * 3);
+    slots.forEach((slot, i) => {
+      const c = entityColor(slot.entity);
+      ownColors[i * 3] = c.r;
+      ownColors[i * 3 + 1] = c.g;
+      ownColors[i * 3 + 2] = c.b;
+    });
+    ownKey = key;
+  }
+  const out = mesh.instanceColor.array;
+  const dim = theme.dim.entity;
+  for (let i = 0; i < slots.length; i++) {
+    const k = entityIsLit(slots[i].id, slots[i].pkgId) ? 1 : dim;
+    out[i * 3] = ownColors[i * 3] * k;
+    out[i * 3 + 1] = ownColors[i * 3 + 1] * k;
+    out[i * 3 + 2] = ownColors[i * 3 + 2] * k;
+  }
   mesh.instanceColor.needsUpdate = true;
 }
 
@@ -3391,9 +3512,10 @@ function slotOpen(slot) {
 function refreshInstances() {
   if (!solidMesh) return;
   let changed = false;
-  solidMesh.userData.slots.forEach((slot, index) => {
-    if (writeSlot(solidMesh, index, slot, slotOpen(slot))) changed = true;
-  });
+  const slots = solidMesh.userData.slots;
+  for (let index = 0; index < slots.length; index++) {
+    if (writeSlot(solidMesh, index, slots[index], slotOpen(slots[index]))) changed = true;
+  }
   if (changed) solidMesh.instanceMatrix.needsUpdate = true;
 }
 
@@ -3824,6 +3946,13 @@ function updateHUD() {
   hud.title.textContent = root;
   hud.overview.classList.toggle("on", mode === "overview");
   hud.changes.classList.toggle("on", mode === "overlay");
+  updateNote();
+  renderDetail();
+}
+
+// The line under the title: a snapshot's hint, the jump counter, a skin's
+// warning.
+function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
     if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
@@ -3834,7 +3963,6 @@ function updateHUD() {
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   hud.note.textContent = note;
-  renderDetail();
 }
 
 function renderDetail() {
@@ -4175,6 +4303,18 @@ function roster(pkg) {
   return wrap;
 }
 
+// A package's declarations of one kind by name. They do not change within a
+// scene, and sorting thousands of names on every click was a visible part of
+// it; the collator is the order localeCompare gives. Callers only read it.
+const nameOrder = new Intl.Collator();
+function sortedDeclared(pkg, kind) {
+  return memo("sorted\0" + kind + "\0" + pkg.id, () => declaredEntities(pkg)
+    .filter((entity) => entity.kind === kind)
+    .map((entity) => ({ entity, label: entityLabel(entity) }))
+    .sort((a, b) => nameOrder.compare(a.label, b.label))
+    .map((item) => item.entity));
+}
+
 function rosterSections(pkg) {
   const children = childPackages(pkg.id);
   children.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
@@ -4197,8 +4337,7 @@ function rosterSections(pkg) {
     ["methods", "Methods", "method"],
   ];
   for (const [key, label, kind] of groups) {
-    const list = declaredEntities(pkg).filter((entity) => entity.kind === kind);
-    list.sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
+    const list = sortedDeclared(pkg, kind);
     const split = splitChanges(list, (item) => item.change);
     sections.push({ key, label, hot: deletedFirst(split.hot), same: split.same, row: entityRow });
   }
@@ -4249,9 +4388,49 @@ function sectionBlock(section, open) {
   const body = document.createElement("div");
   body.className = "section-body";
   body.inert = !open;
-  for (const item of [...section.hot, ...section.same]) body.append(section.row(item));
+  growRows(body, [...section.hot, ...section.same], section.row);
   wrap.append(head, body);
   return wrap;
+}
+
+// A long section builds its rows as they are scrolled to, a chunk at a time:
+// a package with thousands of declarations built every row of every section on
+// every click, folded ones included. Whichever box scrolls (a section's own
+// body, or the whole sidebar on a phone) pulls the next chunk in well before
+// its end comes into view.
+const ROW_CHUNK = 120;
+const growing = new Set();
+
+function growRows(body, items, row) {
+  let shown = 0;
+  const more = () => {
+    const frag = document.createDocumentFragment();
+    const end = Math.min(items.length, shown + ROW_CHUNK);
+    for (; shown < end; shown++) frag.append(row(items[shown]));
+    body.append(frag);
+    if (shown >= items.length) growing.delete(body);
+  };
+  more();
+  if (shown >= items.length) return;
+  // Rows down to `px` below the top of the box that scrolls are built.
+  body.growTo = (px) => {
+    while (shown < items.length && body.isConnected && body.scrollHeight < px) more();
+  };
+  body.growNear = () => {
+    if (!body.isConnected) {
+      growing.delete(body);
+      return;
+    }
+    if (body.inert) return;
+    const rect = body.getBoundingClientRect();
+    const limit = Math.min(rect.bottom, window.innerHeight) + window.innerHeight;
+    while (shown < items.length && body.lastElementChild && body.lastElementChild.getBoundingClientRect().top < limit) more();
+  };
+  growing.add(body);
+}
+
+function growVisibleRows() {
+  for (const body of [...growing]) body.growNear();
 }
 
 // A folded section is out of the tab order: its rows are clipped, and Tab
@@ -4261,6 +4440,7 @@ function setSectionOpen(wrap, head, key, open) {
   head.setAttribute("aria-expanded", open ? "true" : "false");
   const body = wrap.querySelector(".section-body");
   if (body) body.inert = !open;
+  if (open) requestAnimationFrame(growVisibleRows);
   sectionsTouched = true;
   if (open) openSections.add(key);
   else openSections.delete(key);
@@ -4711,12 +4891,15 @@ function stageJumpSidebar(entry) {
 // offsets go back once the render has rebuilt the panel.
 function applySidebarScroll(state) {
   if (!state) return;
-  hud.detailBody.scrollTop = state.scroll || 0;
   for (const wrap of hud.detailBody.querySelectorAll(".section.open")) {
     const top = wrap.dataset.section ? state.bodies[wrap.dataset.section] : null;
     const body = wrap.querySelector(".section-body");
-    if (body && top != null) body.scrollTop = top;
+    if (!body) continue;
+    // Rows come in as they are scrolled to: build down to where the list was.
+    if (body.growTo) body.growTo(Math.max(top || 0, state.scroll || 0) + window.innerHeight * 2);
+    if (top != null) body.scrollTop = top;
   }
+  hud.detailBody.scrollTop = state.scroll || 0;
 }
 
 // Apply once now and once on the next frame: the flex sizes that decide how far
@@ -4773,7 +4956,9 @@ function noteJump() {
   jumps = jumps.slice(0, jumpIndex + 1);
   jumps.push(now);
   jumpIndex = jumps.length - 1;
-  updateHUD();
+  // The panel already shows the node: only the counter moved. Building the
+  // panel again cost as much as the selection itself on a large package.
+  updateNote();
   // The node is on screen now, so its folds and scrolls are the entry's own.
   jumps[jumpIndex].sidebar = sidebarState();
 }
