@@ -266,7 +266,10 @@
        body of sections, and each section's rows scroll inside the section. What
        the head says — the name, the path, the counts — carries the same opaque
        plate the expander titles do, so it reads over the city; but the plate is
-       the text's, no wider, and the frosted sidebar stands around it. */
+       the text's, no wider, and the frosted sidebar stands around it. The same
+       10px under the plate is its own only when it is the last thing in the
+       head: the range view has no Calls / Callers row to leave that gap, and a
+       package that does must not get the gap twice. */
     #detail { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
     #detail-head { flex: none; min-width: 0; padding: 0; }
     #detail-head .head-plate {
@@ -276,6 +279,7 @@
       border: 1px solid var(--line);
       min-width: 0;
     }
+    #detail-head .head-plate:last-child { margin-bottom: 10px; }
     #detail-head .head-plate > :last-child { margin-bottom: 0; }
     /* The Calls / Callers pair is its own row under the plate, on the frosted
        panel: the city blurs in the space between the head, the pair and the
@@ -730,7 +734,7 @@
     #tour-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
     #tour-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14px; letter-spacing: 0.08em; white-space: nowrap; }
     #tour-tools { display: flex; align-items: center; gap: 4px; flex: none; }
-    #tour-toggle, #tour-close {
+    #tour-toggle {
       width: 22px;
       height: 22px;
       flex: none;
@@ -741,7 +745,7 @@
       color: var(--muted);
       border: 1px solid var(--line);
     }
-    #tour-toggle:hover, #tour-close:hover { color: var(--fg); border-color: var(--line-strong); }
+    #tour-toggle:hover { color: var(--fg); border-color: var(--line-strong); }
     #tour-range { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #tour-range code { color: var(--muted); }
     #tour-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 18px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
@@ -813,7 +817,7 @@
       #search { padding: 9px 10px; }
 
       #side-theme { display: grid; }
-      #side-toggle, #side-help, #side-theme, #tour-toggle, #tour-close { width: 34px; height: 34px; }
+      #side-toggle, #side-help, #side-theme, #tour-toggle { width: 34px; height: 34px; }
       .modes button { padding: 10px 8px; }
       .section-head { padding: 11px 14px; }
       #detail button.row, #detail .section-body button.row { padding-top: 9px; padding-bottom: 9px; }
@@ -925,7 +929,8 @@
         letter-spacing: 0.08em;
       }
       #sheet-tabs button:last-child { border-right: 0; }
-      #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 2px 0 var(--accent); }
+      /* The selected panel is marked along its bottom edge. */
+      #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 -2px 0 var(--accent); }
 
       /* On the tour tab the player rests on the tabs, so play and step stay in
          reach however far the sheet is folded. main.js moves it out of the
@@ -1070,9 +1075,6 @@
           <div id="tour-title-row">
             <div id="tour-title">tour</div>
             <div id="tour-tools">
-              <button id="tour-close" type="button" aria-label="Close tour" title="Close tour">
-                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5"/></svg>
-              </button>
               <button id="tour-toggle" type="button" aria-label="Hide tour" title="Hide tour (t)">
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
               </button>
