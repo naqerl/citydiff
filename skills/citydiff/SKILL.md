@@ -1,6 +1,6 @@
 ---
 name: __SKILL_NAME__
-description: Use when the user asks to describe a pull request, explain what changed on a branch, walk through a commit range, review or present a diff, or find who calls what — for Go, Rust or Swift. Citydiff turns the change into a 3D structural diff at three levels — cross-module dependencies, declaration/entity edges, and call paths — and can serve a viewer that plays a written tour of it. Reach for it even when the user never says citydiff, e.g. "what does this PR do", "summarise what I changed this week", "who calls this function", "walk me through the branch", "review my diff". It needs a git repository for a range diff, -view serves a long-running viewer, and building from source requires CGO.
+description: Use when the user asks to describe a pull request, explain what changed on a branch, walk through a commit range, review or present a diff, or find who calls what — for Go, Rust or Swift. Citydiff turns the change into a 3D structural diff at three levels — cross-module dependencies, declaration/entity edges, and call paths — and can serve a viewer that plays a written tour of it. Reach for it even when the user never says citydiff, e.g. "what does this PR do", "summarise what I changed this week", "who calls this function", "walk me through the branch", "review my diff".
 ---
 
 # __SKILL_NAME__ — a 3D code diff you can walk through
