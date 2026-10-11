@@ -420,6 +420,10 @@
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
     }
+    /* Hover and the keyboard cursor used to share one wash, so the row Enter
+       opens was not the row a pointer was over. The cursor keeps the wash and
+       wears a thicker accent bar on its left edge. Every row reserves that
+       bar, transparent until it is the cursor, so the labels do not jump. */
     #results button {
       display: flex;
       gap: 10px;
@@ -429,10 +433,12 @@
       background: transparent;
       border: 0;
       border-bottom: 1px solid var(--line);
-      padding: 7px 10px;
+      border-left: 3px solid transparent;
+      padding: 7px 10px 7px 7px;
       color: var(--fg);
     }
-    #results button.on, #results button:hover { background: var(--on); }
+    #results button:hover { background: var(--on); }
+    #results button.on { background: var(--on); border-left-color: var(--accent); }
     #results .kind { color: var(--muted); width: 72px; flex: none; }
     #results .where { color: var(--muted); margin-left: auto; flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .keys-title { margin: 16px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
@@ -809,7 +815,7 @@
       .modes button { padding: 10px 8px; }
       .section-head { padding: 11px 14px; }
       #detail button.row, #detail .section-body button.row { padding-top: 9px; padding-bottom: 9px; }
-      #results button { padding: 11px 10px; }
+      #results button { padding: 11px 10px 11px 7px; }
       #tour-steps button { padding: 9px 8px; }
       #tour-controls { gap: 8px; }
       #tour-controls button { width: 44px; height: 38px; }
