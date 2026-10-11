@@ -84,9 +84,9 @@ func legacy() {
 	flag.StringVar(commitRange, "r", "", "commit range to diff, A..B or A...B")
 	asJSON := flag.Bool("json", false, "print entries as JSON")
 	asScene := flag.Bool("scene", false, "print the 3D scene as JSON")
-	asView := flag.Bool("view", false, "serve the 3D scene")
-	addr := flag.String("addr", "127.0.0.1:8787", "listen address for -view")
-	tourFile := flag.String("tour", "", "tour script for -view to load and play")
+	asText := flag.Bool("text", false, "print the plain text diff or file list")
+	addr := flag.String("addr", "127.0.0.1:8787", "listen address for the viewer")
+	tourFile := flag.String("tour", "", "tour script for the viewer to load and play")
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), usageText())
 		flag.PrintDefaults()
@@ -99,7 +99,24 @@ func legacy() {
 		os.Exit(2)
 	}
 
-	if *asView {
+	// With no output flag the viewer is served, so the three printing flags are
+	// mutually exclusive: naming two of them is a mistake, not a preference.
+	modes := 0
+	for _, on := range []bool{*asJSON, *asScene, *asText} {
+		if on {
+			modes++
+		}
+	}
+	if modes > 1 {
+		usageErr("pass at most one of -json, -scene, -text")
+	}
+	set := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if modes == 1 && (set["addr"] || set["tour"]) {
+		usageErr("-addr and -tour only apply when serving the viewer; they do nothing with -json, -scene or -text")
+	}
+
+	if modes == 0 {
 		snap, err := buildSnapshot(*path, *commitRange)
 		if err != nil {
 			fail(err)
@@ -283,10 +300,20 @@ func formatEntity(entry lib.Entity) string {
 		method.Name, method.Parameters, method.ReturnArgs, method.Calls, method.BodyHash, receiver)
 }
 
+// usageErr reports a bad flag combination the way the flag package reports an
+// unknown flag: to stderr, with the usage, and exit status 2.
+func usageErr(msg string) {
+	fmt.Fprintf(os.Stderr, "citydiff: %s\n", msg)
+	flag.Usage()
+	os.Exit(2)
+}
+
 func usageText() string {
-	return "Usage: citydiff [-json | -scene | -view [-tour file]] -path file-or-directory [-range A..B]\n" +
+	return "Usage: citydiff -path file-or-directory [-range A..B] [-addr addr] [-tour file]\n" +
+		"       citydiff [-json | -scene | -text] -path file-or-directory [-range A..B]\n" +
 		"       citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]\n" +
-		"       citydiff tour validate|serve|schema ...\n\n"
+		"       citydiff tour validate|serve|schema ...\n\n" +
+		"With no output flag, citydiff serves the 3D viewer and does not return.\n\n"
 }
 
 func fail(err error) {

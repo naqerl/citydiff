@@ -35,8 +35,9 @@ A filesystem source reads a tree of files. A git source reads the tree at a ref.
 ## CLI
 
 The command line stays tight. It is a small set of flags that name what to read (`-path`,
-`-range`) and which view to print or serve (`-json`, `-scene`, `-view`, `-tour`, `-addr`), and
-it grows only when a new *input* cannot be expressed any other way.
+`-range`) and which output to produce (`-json`, `-scene`, `-text`, `-tour`, `-addr`), and
+it grows only when a new *input* cannot be expressed any other way. With no output flag it
+serves the viewer — the richest view is the default, the flat printouts are the flags.
 
 A new feature does not get a flag. A flag is not free: the usage line, the flag list and the
 README are the context an agent reads before it can use the tool at all, and every entry in
@@ -55,7 +56,7 @@ wrong one. So:
   skins. Configuration like that is an environment variable with a sensible default, not
   another flag to explain.
 - **Prefer a command, a key, or a default** over a flag. `citydiff tour validate` is a
-  subcommand because it is a different verb, not a mode of `-view`.
+  subcommand because it is a different verb, not a mode of the viewer.
 
 When a flag seems necessary, say what the same thing would cost as a command, an environment
 variable or a default, and pick the smallest surface that works. A flag added now is context
