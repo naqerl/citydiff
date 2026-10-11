@@ -248,8 +248,9 @@ returns exactly that for whatever the process was launched with.
 
 A tour is a JSON script over the citydiff scene of one commit range. The viewer plays it:
 each step moves the camera, lights nodes or a call path, and shows a markdown note in the
-tour sidebar on the right. The sidebar holds the tour title and range, the note and code, and
-play/pause, prev/next and a step counter at the bottom. Write a tour when the user asks you
+tour sidebar on the right. The sidebar holds the tour title and range, the description, and
+play/pause, prev/next and a step counter at the bottom. It does not show source or a diff.
+Write a tour when the user asks you
 to walk through, present or review a change.
 
 ### Write a tour
@@ -310,8 +311,7 @@ Shape it as a story:
    and which packages are new or touched.
 2. **Go package by package**, in dependency order, one step per package that carries the
    change, saying what each gained or lost and why it had to.
-3. **Land on the functions**: `focus` the declarations that were added or rewritten, `code`
-   the ones whose body is the point.
+3. **Land on the functions**: `focus` the declarations that were added or rewritten.
 4. **Follow the call paths that matter**: `path` from the entry point to the effect,
    `highlight` for a set of nodes that changed together.
 5. **End on the point**: the last step says what is different now for the user of the code —
@@ -322,8 +322,7 @@ Choose each field to serve the sentence the note is making:
 - `mode` — `changes` for every step that talks about the change; `full` only for an opening
   or a deliberate "here is the plain city".
 - `select` — a package and its dependencies; it draws that package's changed arcs.
-- `focus` — one function's callees, or one type or variable; `code` — when the reader must see
-  the body, especially a line diff.
+- `focus` — one function's callees, or one type or variable. The sidebar stays the description.
 - `highlight` — a set of nodes that changed together; `path` — when the sentence is "this
   reaches that".
 - `camera` / `zoom` — fit the sentence: `top` for a whole package, `close` for one node,
@@ -336,8 +335,7 @@ not resolved, so a path can stop at an interface call; if validate reports no pa
 at a concrete hop or `highlight` both ends instead.
 
 Note style: **2–4 sentences**. Put names in backticks. Say why the change exists and what it
-means for the reader. Do not restate the code that is already on screen, and do not sell the
-change.
+means for the reader. Do not paste source into the note, and do not sell the change.
 
 - Weak: "`SelectFinal` was added to the review service."
 - Good: "`review.Service.SelectFinal` refuses once the lesson is published, then marks a
@@ -367,7 +365,7 @@ for reading the diff. It is the shortest honest path from "what changed" to "wha
     { "title": "The whole change", "note": "Markdown **note**.", "mode": "changes", "camera": "overview" },
     { "title": "The generator", "select": "service/flashcard/generator" },
     { "title": "Handler to view", "path": { "from": "handler.handlePostSelectFinal", "to": "meetings/view.versionBar" } },
-    { "title": "Picking the final", "focus": "review.Service.SelectFinal", "code": "review.Service.SelectFinal", "duration": 10 },
+    { "title": "Picking the final", "focus": "review.Service.SelectFinal", "duration": 10 },
     { "title": "Storage", "highlight": ["db.Queries.SetGenerationFinal", "generator.FinalVersion"], "dim": true }
   ]
 }
@@ -382,7 +380,7 @@ over from the step before except the mode.
 | field | type | effect |
 | --- | --- | --- |
 | `title` | string | Note heading. |
-| `note` | markdown | Note panel text: paragraphs, `**bold**`, `*italic*`, `` `code` ``, fenced code, `-`/`1.` lists, `#` headings, http(s) links. No raw HTML. |
+| `note` | markdown | The description: paragraphs, `**bold**`, `*italic*`, names in `` `backticks` ``, `-`/`1.` lists, `#` headings, http(s) links. No raw HTML, no source listing. |
 | `duration` | seconds | How long autoplay stays on the step. Default 8. |
 | `mode` | `"changes"` \| `"full"` | `changes` colours the diff and draws dependency arcs; `full` is the plain city. Sticks until a later step changes it. |
 | `select` | package name | Selects a package (or external import) and flies to it; its changed calls or dependencies are drawn as arcs. |
@@ -392,7 +390,6 @@ over from the step before except the mode.
 | `dim` | bool | With `highlight`/`path`: `false` keeps the rest of the city bright. Default `true`. |
 | `camera` | `"overview"` \| `"top"` \| `"fit"` \| `"close"` | `overview` frames the city, `top` looks down on the step's nodes, `fit` frames them, `close` moves in. Default: the select/focus camera, else `fit` when the step names nodes, else `overview`. |
 | `zoom` | number > 0 | Multiplies the camera distance after the camera move: `0.5` is twice as close, `1.5` farther. |
-| `code` | declaration | Shows the declaration's git diff under the note: the same hunks, line numbers and syntax colours the viewer's `D` key opens. A declaration that did not change says so. |
 
 ### Names
 
@@ -407,8 +404,7 @@ Names are matched against the scene the way you would write them:
 
 A name that matches several nodes is an error, never a guess: qualify it
 with more segments (`gen.New` instead of `New`). `select` takes packages
-only, `path` takes functions and methods only, and `code` takes
-declarations only.
+only, and `path` takes functions and methods only.
 
 The JSON Schema is printed by `citydiff tour schema`, and lives at
 https://raw.githubusercontent.com/naqerl/citydiff/main/lib/tour/tour.schema.json.
@@ -425,11 +421,10 @@ https://github.com/naqerl/citydiff/blob/main/examples/barse-flashcard-versions.t
 | `?` | the legend, with every key the viewer answers to |
 
 Dragging, wheeling or a fly key in the city pauses autoplay. The × in the
-sidebar header closes the tour. A `code` step's diff has a ⤢ button that
-opens it full screen the way `D` opens a selected node's diff (and pauses
-autoplay too); `esc` there closes it. In the city, `esc` puts the current
+sidebar header closes the tour. In the city, `esc` puts the current
 step's selection, highlights and camera back instead of flying to the whole
-tree. Loading a tour switches the viewer to the tour's
+tree. The sidebar is the description. `D` still opens the diff of a selected
+node, outside the tour. Loading a tour switches the viewer to the tour's
 range, so the left sidebar shows
 that range's changes; a range that does not resolve is reported in the
 tour sidebar.

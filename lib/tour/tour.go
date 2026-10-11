@@ -44,7 +44,6 @@ type Step struct {
 	Dim       *bool    `json:"dim,omitempty"`
 	Camera    string   `json:"camera,omitempty"`
 	Zoom      float64  `json:"zoom,omitempty"`
-	Code      string   `json:"code,omitempty"`
 }
 
 // Path asks for the call path from one function or method to another.
@@ -118,13 +117,11 @@ type Targets struct {
 	Focus     *Node  `json:"focus,omitempty"`
 	Highlight []Node `json:"highlight,omitempty"`
 	Path      []Node `json:"path,omitempty"`
-	Code      *Node  `json:"code,omitempty"`
 }
 
 var (
 	selectKinds = []string{KindPackage, KindExternal}
 	callKinds   = []string{KindFunction, KindMethod}
-	codeKinds   = []string{KindType, KindFunction, KindMethod, KindVariable}
 )
 
 // Check resolves every name in t against sc. sameRange, when not nil,
@@ -190,7 +187,6 @@ func Check(t Tour, sc scene.Scene, sameRange func(string) error) (Resolved, []Pr
 		}
 		r.Targets.Select = one("select", s.Select, selectKinds)
 		r.Targets.Focus = one("focus", s.Focus, nil)
-		r.Targets.Code = one("code", s.Code, codeKinds)
 		for j, name := range s.Highlight {
 			if node := one(fmt.Sprintf("highlight[%d]", j), name, nil); node != nil {
 				r.Targets.Highlight = append(r.Targets.Highlight, *node)
