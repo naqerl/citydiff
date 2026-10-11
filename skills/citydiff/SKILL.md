@@ -367,7 +367,7 @@ over from the step before except the mode.
 | `dim` | bool | With `highlight`/`path`: `false` keeps the rest of the city bright. Default `true`. |
 | `camera` | `"overview"` \| `"top"` \| `"fit"` \| `"close"` | `overview` frames the city, `top` looks down on the step's nodes, `fit` frames them, `close` moves in. Default: the select/focus camera, else `fit` when the step names nodes, else `overview`. |
 | `zoom` | number > 0 | Multiplies the camera distance after the camera move: `0.5` is twice as close, `1.5` farther. |
-| `code` | declaration | Shows its source under the note: a line diff when it changed, the new or old body when added or removed. |
+| `code` | declaration | Shows the declaration's git diff under the note: the same hunks, line numbers and syntax colours the viewer's `D` key opens. A declaration that did not change says so. |
 
 ### Names
 

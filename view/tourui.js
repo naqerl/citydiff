@@ -6,9 +6,10 @@
 
 import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
 import { tourAction } from "./keys.js";
-import { renderMarkdown, lineDiff, escapeHTML } from "./markdown.js";
+import { renderMarkdown, escapeHTML } from "./markdown.js";
+import { diffQuery, renderDiff } from "./diff.js";
 
-export function mountTour({ apply, clear, layout, open = true, hold = false }) {
+export function mountTour({ apply, clear, layout, open = true, hold = false, codeTarget }) {
   const root = document.getElementById("tour-side");
   const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
@@ -33,10 +34,9 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   function show(index, step) {
     ui.stepTitle.textContent = step.title;
     ui.body.innerHTML = renderMarkdown(step.note || "");
-    ui.code.hidden = true;
-    ui.code.innerHTML = "";
+    clearCode();
     codeWant = step.targets && step.targets.code ? step.targets.code.id : null;
-    if (codeWant) loadCode(codeWant);
+    if (codeWant) loadDiff(step.targets.code);
     // A step change starts at the top, so the new step's note and code read
     // from their first line; the player's counter and bar carry the position.
     ui.scroll.scrollTop = 0;
@@ -60,28 +60,40 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     }
   }
 
-  async function loadCode(id) {
-    let view = codeCache.get(id);
-    if (!view) {
+  // clearCode empties the diff panel and hides it. The note and body are
+  // cleared in place: #tour-code holds them, so wiping the outer element
+  // would take its own children with it.
+  function clearCode() {
+    ui.code.hidden = true;
+    el("tour-code-note").hidden = true;
+    el("tour-code-note").textContent = "";
+    el("tour-code-body").innerHTML = "";
+  }
+
+  // loadDiff asks for the node's hunks the way the D keybind does and draws
+  // them with the same renderer, so a code step and a D press show the same
+  // diff. codeTarget resolves the tour's node to that request's file and
+  // lines; without a target there is nothing to draw.
+  async function loadDiff(node) {
+    const id = node.id;
+    const target = codeTarget ? codeTarget(node) : null;
+    if (!target) return;
+    let reply = codeCache.get(id);
+    if (!reply) {
       try {
-        const res = await fetch("./api/code?id=" + encodeURIComponent(id));
+        const res = await fetch("./api/diff?" + diffQuery(target));
         if (!res.ok) return;
-        view = await res.json();
-        codeCache.set(id, view);
+        reply = await res.json();
+        codeCache.set(id, reply);
       } catch {
         return;
       }
     }
     if (codeWant !== id) return;
-    const head = `<div class="tour-code-head">${escapeHTML(view.file)} <span class="change-${escapeHTML(view.change)}">${escapeHTML(view.change)}</span></div>`;
-    let lines;
-    if (view.before && view.after && view.before !== view.after) lines = lineDiff(view.before, view.after);
-    else lines = (view.after || view.before || "").split("\n").map((text) => ({ op: view.after ? (view.before ? " " : "+") : "-", text }));
-    if (view.change === "same") lines = lines.map((l) => ({ op: " ", text: l.text }));
-    const body = lines
-      .map((l) => `<span class="ln ln-${l.op === "+" ? "add" : l.op === "-" ? "del" : "same"}">${escapeHTML(l.op + " " + l.text)}</span>`)
-      .join("");
-    ui.code.innerHTML = head + `<pre>${body}</pre>`;
+    const note = renderDiff(el("tour-code-body"), reply, target);
+    const head = el("tour-code-note");
+    head.textContent = note;
+    head.hidden = !note;
     ui.code.hidden = false;
   }
 
@@ -137,7 +149,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
       `<p>${escapeHTML(source)}</p><ul>` +
       list.map((p) => `<li><code>${escapeHTML(p.step ? "step " + p.step + " " + p.field : p.field)}</code> ${escapeHTML(p.message)}</li>`).join("") +
       "</ul>";
-    ui.code.hidden = true;
+    clearCode();
     ui.title.textContent = "Tour";
     ui.range.textContent = "";
   }

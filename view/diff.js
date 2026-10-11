@@ -67,7 +67,11 @@ function label(entity) {
   return entity.name || entity.id;
 }
 
-function query(target) {
+// diffQuery is the /api/diff query for a target: the file or directory and,
+// for an entity, the lines it covers and which side of the range they are
+// numbered on. The D keybind and the tour's code panel both ask this way, so
+// they get the same hunks for the same node.
+export function diffQuery(target) {
   const q = new URLSearchParams();
   for (const key of ["file", "dir", "line", "end", "side"]) if (target[key] !== undefined) q.set(key, String(target[key]));
   return q.toString();
@@ -98,7 +102,7 @@ export async function openDiff(target, onClose) {
     '<span class="diff-spacer"></span>' +
     '<span class="diff-hint">esc closes</span>' +
     "</header>" +
-    '<div id="diff-body"></div>';
+    '<div id="diff-body" class="diff-view"></div>';
   document.body.append(root);
   const p = { root, onClose, onKey: null };
   panel = p;
@@ -124,16 +128,29 @@ export async function openDiff(target, onClose) {
   const note = root.querySelector(".diff-note");
   let reply;
   try {
-    const res = await fetch("/api/diff?" + query(target));
+    const res = await fetch("/api/diff?" + diffQuery(target));
     reply = await res.json();
   } catch (err) {
     fail(body, "cannot read the diff: " + (err && err.message ? err.message : err));
     return;
   }
   if (panel !== p) return;
+  const text = renderDiff(body, reply, target);
+  if (!text) return;
+  note.textContent = text;
+  note.hidden = false;
+}
+
+// renderDiff draws one /api/diff reply into body: the files' hunks, or the
+// message saying why there is nothing to draw. It returns the note for the
+// header — the hunk count, the range and what was left out — or "" when body
+// holds a message instead. The D overlay and the tour's code panel share it,
+// so the two show the same hunks for the same node.
+export function renderDiff(body, reply, target) {
+  body.innerHTML = "";
   if (reply.problems && reply.problems.length) {
     fail(body, reply.problems[0].message);
-    return;
+    return "";
   }
   const all = reply.files || [];
   const files = all.filter((file) => (file.hunks || []).length || file.binary);
@@ -152,14 +169,13 @@ export async function openDiff(target, onClose) {
         : "the node's own lines did not change in " + range;
       fail(body, verdict + "; " + omitted + " hunk" + (omitted === 1 ? "" : "s") + " elsewhere in " + all[0].path + " " + (omitted === 1 ? "is" : "are") + " not shown");
     }
-    return;
+    return "";
   }
   const shown = files.reduce((n, file) => n + (file.hunks || []).length, 0);
   const omitted = files.reduce((n, file) => n + (file.omitted || 0), 0) + (reply.more || 0);
-  note.textContent = [shown + (shown === 1 ? " hunk" : " hunks"), reply.range, omitted ? omitted + " not shown" : ""].filter(Boolean).join(" · ");
-  note.hidden = false;
   for (const file of files) body.append(fileBlock(file));
   body.scrollTop = 0;
+  return [shown + (shown === 1 ? " hunk" : " hunks"), reply.range, omitted ? omitted + " not shown" : ""].filter(Boolean).join(" · ");
 }
 
 function fail(body, message) {
