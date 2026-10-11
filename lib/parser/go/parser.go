@@ -115,11 +115,11 @@ func walk(src []byte, root *tree_sitter.Node) (pkg string, imports []importUse, 
 				entries, calls = grow(entries, calls, at(entry, &n), nil)
 			}
 		case "type_declaration":
-			name := &n
-			if spec := n.NamedChild(0); spec != nil {
-				name = spec
+			spec := typeSpec(&n)
+			if spec == nil {
+				continue
 			}
-			entries, calls = grow(entries, calls, at(parseTypeDeclaration(src, &n), name), nil)
+			entries, calls = grow(entries, calls, at(parseTypeDeclaration(src, spec), spec), nil)
 		case "method_declaration":
 			entry, body := parseMethodDeclaration(src, &n)
 			entries, calls = grow(entries, calls, at(entry, &n), body)
@@ -198,8 +198,18 @@ func parseVarDeclaration(src []byte, varDeclaration *tree_sitter.Node) []lib.Var
 	return entries
 }
 
-func parseTypeDeclaration(src []byte, typeDeclaration *tree_sitter.Node) lib.TypeEntry {
-	typeSpec := typeDeclaration.NamedChild(0)
+// typeSpec is the first spec of a type declaration that names a type. In a
+// grouped declaration a comment can come before it, and a comment has no name.
+func typeSpec(typeDeclaration *tree_sitter.Node) *tree_sitter.Node {
+	for i := uint(0); i < typeDeclaration.NamedChildCount(); i++ {
+		if spec := typeDeclaration.NamedChild(i); spec.ChildByFieldName("name") != nil {
+			return spec
+		}
+	}
+	return nil
+}
+
+func parseTypeDeclaration(src []byte, typeSpec *tree_sitter.Node) lib.TypeEntry {
 	entry := lib.TypeEntry{Name: typeSpec.ChildByFieldName("name").Utf8Text(src)}
 	typ := typeSpec.ChildByFieldName("type")
 	if typ == nil || typ.Kind() != "struct_type" {
