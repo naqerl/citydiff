@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>citydiff</title>
   <style>
     :root {
@@ -128,7 +128,7 @@
     @media (prefers-reduced-motion: reduce) {
       html.theme-ready { transition: none; }
     }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; overscroll-behavior: none; }
     body { font: 13px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
     #detail, #results, .legend-card, #diff-body {
       scrollbar-width: thin;
@@ -150,7 +150,7 @@
     .legend-card::-webkit-scrollbar-track,
     #diff-body::-webkit-scrollbar-track { background: transparent; }
     button, input { font: inherit; color: inherit; }
-    button { cursor: pointer; }
+    button { cursor: pointer; touch-action: manipulation; }
     #app { height: 100%; background: var(--bg); }
     #work { height: 100%; min-height: 0; display: flex; position: relative; }
     #side {
@@ -200,7 +200,7 @@
     #title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
     #title { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; letter-spacing: 0.08em; text-transform: lowercase; white-space: nowrap; }
     #side-tools { display: flex; align-items: center; gap: 4px; flex: none; }
-    #side-toggle, #side-help {
+    #side-toggle, #side-help, #side-theme {
       width: 22px;
       height: 22px;
       flex: none;
@@ -211,7 +211,7 @@
       color: var(--muted);
       border: 1px solid var(--line);
     }
-    #side-toggle:hover, #side-help:hover { color: var(--fg); border-color: var(--line-strong); }
+    #side-toggle:hover, #side-help:hover, #side-theme:hover { color: var(--fg); border-color: var(--line-strong); }
     .modes { display: flex; gap: 0; }
     .modes button {
       flex: 1;
@@ -549,7 +549,7 @@
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
     }
-    #tour-side[hidden], #tour-drop[hidden], #skin-menu[hidden] { display: none; }
+    #tour-side[hidden], #tour-drop[hidden], #skin-menu[hidden], #tour-controls[hidden] { display: none; }
     body.skin-open #side,
     body.skin-open #tour-side,
     body.skin-open #tour-drop,
@@ -562,6 +562,9 @@
       pointer-events: none;
     }
     #skin-menu:focus, #skin-menu:focus-visible { outline: none; }
+    /* A swipe across the menu is a theme step, never a page scroll. */
+    #skin-menu * { touch-action: none; }
+    #skin-actions { display: none; }
     .skin-wing {
       position: absolute;
       inset: 0;
@@ -721,6 +724,219 @@
       pointer-events: none;
     }
     #detail .refs { margin: 8px 0 6px; }
+    #sheet-tabs, #side-theme, .sheet-grip, #skin-find { display: none; }
+    #perf {
+      position: fixed;
+      z-index: 60;
+      top: calc(4px + env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 2px 8px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 11px;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    /* Touch screens: a phone or a tablet, held either way. Desktop never
+       matches, so everything below leaves it as it was. */
+    @media (hover: none) and (pointer: coarse) {
+      /* A held finger never starts a text selection or a callout. */
+      body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+      input { -webkit-user-select: text; user-select: text; }
+      /* 16px keeps iOS from zooming the page when a box takes focus. */
+      #search, #skin-search { font-size: 16px; }
+      #search { padding: 9px 10px; }
+
+      #side-theme { display: grid; }
+      #side-toggle, #side-help, #side-theme, #tour-toggle, #tour-close { width: 34px; height: 34px; }
+      .modes button { padding: 10px 8px; }
+      .section-head { padding: 11px 14px; }
+      #detail button.row, #detail .section-body button.row { padding-top: 9px; padding-bottom: 9px; }
+      #results button { padding: 11px 10px; }
+      #tour-steps button { padding: 9px 8px; }
+      #tour-controls { gap: 8px; }
+      #tour-controls button { width: 44px; height: 38px; }
+      #tour-keys { display: none; }
+      #diff, #editor { inset: 0; }
+      .legend-card { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 14px; }
+      .keys { grid-template-columns: 1fr; }
+
+      /* A sidebar scrolls as one page, all the way down, instead of each
+         section scrolling its own rows inside a fixed panel. */
+      #side, #tour-side { overflow-y: auto; overscroll-behavior: contain; }
+      #detail, #detail-body, .sections, .section, .section-body, #tour-scroll { flex: none; overflow: visible; min-height: auto; }
+      .section:not(.open) .section-body { display: none; }
+      .section.open .section-body { overflow: visible; }
+      #tour-controls { position: sticky; bottom: 0; background: var(--panel); }
+
+      /* The theme menu's buttons stand in for Enter, Escape and the arrows. */
+      #skin-actions {
+        position: absolute;
+        z-index: 3;
+        left: 16px;
+        right: 16px;
+        bottom: calc(16px + env(safe-area-inset-bottom));
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        pointer-events: auto;
+      }
+      #skin-actions button, #skin-find button {
+        flex: none;
+        min-width: 92px;
+        padding: 11px 14px;
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--line-strong);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      #skin-actions button.primary { border-color: var(--fg); }
+      #skin-hint { flex: 1; text-align: center; color: var(--fg); font-size: 12px; text-shadow: 0 0 12px var(--bg); }
+      #skin-name { bottom: calc(84px + env(safe-area-inset-bottom)); left: 8%; right: 8%; }
+      #skin-find {
+        position: absolute;
+        z-index: 3;
+        top: calc(12px + env(safe-area-inset-top));
+        right: 12px;
+        display: flex;
+        gap: 6px;
+        pointer-events: auto;
+      }
+      #skin-find button { min-width: 0; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; }
+      #skin-search {
+        width: min(58vw, 260px);
+        box-sizing: border-box;
+        padding: 9px 10px;
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--fg);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      #skin-search[hidden] { display: none; }
+      #skin-search:focus { outline: none; }
+    }
+
+    /* Held sideways the sidebars stay sidebars, a little narrower. */
+    @media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+      #side { width: 300px; }
+      #tour-side { width: 320px; }
+    }
+
+    /* Held upright the sidebars are one bottom sheet, the kind iOS and
+       Android have: it rests at a detent (peek, half, full) and moves by a
+       transform, never by resizing. Dragging it anywhere moves it; only at
+       full does its content scroll, and pulling down from the top of that
+       content takes the sheet down again. main.js (the sheet section) runs
+       the gesture. With a tour the tabs under it pick which sidebar it shows,
+       and on the tour tab the player sits between the two. */
+    @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
+      body { --tabs-h: 0px; --player-h: 0px; --peek: 76px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
+      body.has-tour { --tabs-h: calc(48px + env(safe-area-inset-bottom)); }
+      body.has-player { --player-h: 54px; }
+      #sheet-tabs {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 7;
+        display: flex;
+        height: 48px;
+        padding-bottom: env(safe-area-inset-bottom);
+        background: var(--panel);
+        border-top: 1px solid var(--edge);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      body:not(.has-tour) #sheet-tabs, body.skin-open #sheet-tabs { display: none; }
+      #sheet-tabs button {
+        flex: 1;
+        padding: 0;
+        background: transparent;
+        color: var(--muted);
+        border: 0;
+        border-right: 1px solid var(--line);
+        letter-spacing: 0.08em;
+      }
+      #sheet-tabs button:last-child { border-right: 0; }
+      #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 2px 0 var(--accent); }
+
+      /* On the tour tab the player rests on the tabs, so play and step stay in
+         reach however far the sheet is folded. main.js moves it out of the
+         tour sheet for this, and the sheet rests on top of it. The city tab
+         has no player. */
+      #work > #tour-controls {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: var(--tabs-h);
+        z-index: 7;
+        height: var(--player-h);
+        box-sizing: border-box;
+        padding: 0 14px;
+        background: var(--panel);
+        border-top: 1px solid var(--edge);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      body:not(.has-player) #work > #tour-controls, body.skin-open #work > #tour-controls { display: none; }
+
+      #side, #tour-side,
+      #side.is-collapsed, #tour-side.is-collapsed {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: calc(var(--tabs-h) + var(--player-h));
+        width: auto;
+        height: calc(100% - var(--tabs-h) - var(--player-h) - var(--sheet-top));
+        box-sizing: border-box;
+        padding-bottom: env(safe-area-inset-bottom);
+        overflow-x: hidden;
+        overflow-y: hidden;
+        /* The desktop sidebar's look: the city shows through, frosted. */
+        background: var(--panel);
+        border: 0;
+        border-top: 1px solid var(--edge);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        /* Until main.js places it, the sheet rests at its peek. */
+        transform: translateY(calc(100% - var(--peek)));
+        will-change: transform;
+      }
+      body.has-tour #side, body.has-tour #tour-side { padding-bottom: 0; }
+      body.sheet-full #side:not(.is-collapsed), body.sheet-full #tour-side:not(.is-collapsed) { overflow-y: auto; }
+      body.sheet-tour #side, body:not(.sheet-tour) #tour-side { display: none; }
+      #side.is-collapsed #side-logo, #tour-side.is-collapsed #tour-logo { display: none; }
+      #side.is-collapsed #side-head, #side.is-collapsed #detail { display: flex; }
+      #side.is-collapsed #side-head { border-bottom: 1px solid var(--line); }
+      #tour-side.is-collapsed > #tour-head, #tour-side.is-collapsed > #tour-grip,
+      #tour-side.is-collapsed > #tour-controls:not([hidden]) { display: flex; }
+      #tour-side.is-collapsed > #tour-scroll { display: block; }
+      #side.is-collapsed #title-row, #tour-side.is-collapsed #tour-title-row { cursor: pointer; }
+
+      .sheet-grip {
+        display: flex;
+        flex: none;
+        height: 22px;
+        margin-bottom: -10px;
+        align-items: center;
+        justify-content: center;
+        cursor: grab;
+      }
+      /* The theme's muted text colour is made to read on its own background, so
+         the grabber shows in every theme without shouting. */
+      .sheet-grip::before { content: ""; width: 40px; height: 4px; background: var(--muted); opacity: 0.6; }
+      #side-head, #tour-head { padding-top: 12px; }
+
+      /* The fold arrows point the way the sheet will go. */
+      #side-toggle svg { transform: rotate(-90deg); }
+      #side.is-collapsed #side-toggle svg { transform: rotate(90deg); }
+      #tour-toggle svg { transform: rotate(90deg); }
+      #tour-side.is-collapsed #tour-toggle svg { transform: rotate(-90deg); }
+    }
   </style>
   <script type="importmap">
   {
@@ -742,10 +958,17 @@
             <rect x="16" y="9" width="6" height="13" fill="var(--modified)"/>
           </svg>
         </button>
+        <div id="side-grip" class="sheet-grip" aria-hidden="true"></div>
         <div id="side-head">
           <div id="title-row">
             <div id="title">citydiff</div>
             <div id="side-tools">
+              <button id="side-theme" type="button" aria-label="Theme">
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <rect x="2.75" y="2.75" width="10.5" height="10.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M4 12 L12 4 L12 12 Z" fill="currentColor"/>
+                </svg>
+              </button>
               <button id="side-help" type="button" aria-label="Help">
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                   <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/>
@@ -778,6 +1001,7 @@
         <button id="tour-logo" type="button" aria-label="Show tour" title="Show tour (t)">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M5 3 L12 8 L5 13 Z" fill="currentColor"/></svg>
         </button>
+        <div id="tour-grip" class="sheet-grip" aria-hidden="true"></div>
         <div id="tour-head">
           <div id="tour-title-row">
             <div id="tour-title">tour</div>
@@ -808,6 +1032,10 @@
       </aside>
       <div id="tour-drop" hidden>Drop a tour script</div>
       <div id="results" hidden></div>
+      <nav id="sheet-tabs" aria-label="Panels">
+        <button id="tab-side" type="button" aria-pressed="true">city</button>
+        <button id="tab-tour" type="button" aria-pressed="false" hidden>tour</button>
+      </nav>
       <div id="stage">
         <div id="view"></div>
         <div id="load" hidden role="progressbar" aria-label="Loading the city" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -827,7 +1055,21 @@
       <line id="skin-line-next"></line>
     </svg>
     <div id="skin-count"></div>
+    <div id="skin-find">
+      <input id="skin-search" type="search" placeholder="Find a theme" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" hidden>
+      <button type="button" id="skin-find-open" aria-label="Find a theme">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10.4 10.4 L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
+        </svg>
+      </button>
+    </div>
     <div id="skin-name"></div>
+    <div id="skin-actions">
+      <button type="button" id="skin-cancel">Cancel</button>
+      <span id="skin-hint">‹ swipe ›</span>
+      <button type="button" id="skin-apply" class="primary">Apply</button>
+    </div>
   </div>
   <div id="tag"></div>
   <div id="confirm" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
