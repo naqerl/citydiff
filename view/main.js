@@ -1294,11 +1294,13 @@ async function sliced(n, progress, fn) {
   progress(1);
 }
 
-// Reads scene.json with the download's own progress. The server sends a
-// Content-Length; without one the stage is passed at the end, because a guess
-// would be worse than a bar that holds still.
+// Reads scene.json with the download's own progress. The server sends the
+// decoded size (the body may come gzipped, and the stream yields it decoded);
+// without one the stage is passed at the end, because a guess would be worse
+// than a bar that holds still.
 async function readScene(response) {
-  const total = Number(response.headers.get("Content-Length") || 0);
+  const packed = !!response.headers.get("Content-Encoding");
+  const total = Number(response.headers.get("X-Scene-Bytes") || (packed ? 0 : response.headers.get("Content-Length")) || 0);
   if (!response.body || !total) return response.json();
   const reader = response.body.getReader();
   const chunks = [];
@@ -1310,13 +1312,20 @@ async function readScene(response) {
     got += value.length;
     showLoad(null, loadAt("scene", got / total));
   }
-  const bytes = new Uint8Array(got);
+  return JSON.parse(joinText(chunks, got));
+}
+
+// The chunks, joined and decoded. The bytes are let go before the parse
+// starts: on a large scene they are tens of megabytes a phone needs for it.
+function joinText(chunks, size) {
+  const bytes = new Uint8Array(size);
   let at = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, at);
     at += chunk.length;
   }
-  return JSON.parse(new TextDecoder().decode(bytes));
+  chunks.length = 0;
+  return new TextDecoder().decode(bytes);
 }
 
 async function main() {
