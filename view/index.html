@@ -266,7 +266,10 @@
        body of sections, and each section's rows scroll inside the section. What
        the head says — the name, the path, the counts — carries the same opaque
        plate the expander titles do, so it reads over the city; but the plate is
-       the text's, no wider, and the frosted sidebar stands around it. */
+       the text's, no wider, and the frosted sidebar stands around it. The same
+       10px under the plate is its own only when it is the last thing in the
+       head: the range view has no Calls / Callers row to leave that gap, and a
+       package that does must not get the gap twice. */
     #detail { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
     #detail-head { flex: none; min-width: 0; padding: 0; }
     #detail-head .head-plate {
@@ -276,6 +279,7 @@
       border: 1px solid var(--line);
       min-width: 0;
     }
+    #detail-head .head-plate:last-child { margin-bottom: 10px; }
     #detail-head .head-plate > :last-child { margin-bottom: 0; }
     /* The Calls / Callers pair is its own row under the plate, on the frosted
        panel: the city blurs in the space between the head, the pair and the
