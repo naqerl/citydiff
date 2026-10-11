@@ -4146,7 +4146,18 @@ function updateNote() {
   hud.note.textContent = note;
 }
 
+// The panel (the sidebar, or the bottom sheet on a phone) is built again only
+// when what it shows moved: the node, the mode, the direction of the calls, or
+// folds a jump put back. A theme change, the second applyMode of one click or a
+// skin's note changes no row, and rebuilding threw away the scroll and every
+// row with it.
+let detailKey = "";
+let foldsVersion = 0;
+
 function renderDetail() {
+  const key = [subjectKey(), mode, callInbound, foldsVersion].join("\0");
+  if (key === detailKey) return;
+  detailKey = key;
   stopMarches();
   const subject = subjectKey();
   if (subject !== detailSubject) {
@@ -5066,6 +5077,7 @@ function stageJumpSidebar(entry) {
   if (state) for (const key of state.open || []) openSections.add(key);
   detailSubject = entrySubjectKey(entry);
   pendingSidebarScroll = state;
+  foldsVersion++;
 }
 
 // The sidebar body and each open section body scroll on their own, so both
