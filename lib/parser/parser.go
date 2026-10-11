@@ -12,6 +12,7 @@ import (
 
 	"citydiff/lib"
 	golang "citydiff/lib/parser/go"
+	"citydiff/lib/parser/javascript"
 	"citydiff/lib/parser/rust"
 	"citydiff/lib/parser/swift"
 )
@@ -39,6 +40,11 @@ var Languages = []Language{
 		Name:    "swift",
 		Include: func(base string) bool { return base == "Package.swift" || strings.HasSuffix(base, ".swift") },
 		Parser:  swift.New(),
+	},
+	{
+		Name:    "javascript",
+		Include: func(base string) bool { return base == "package.json" || javascript.IsSource(base) },
+		Parser:  javascript.New(),
 	},
 }
 

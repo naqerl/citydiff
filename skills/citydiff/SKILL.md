@@ -1,6 +1,6 @@
 ---
 name: __SKILL_NAME__
-description: Use when the user asks to describe a pull request, explain what changed on a branch, walk through a commit range, review or present a diff, or find who calls what — for Go, Rust or Swift. Citydiff turns the change into a 3D structural diff at three levels — cross-module dependencies, declaration/entity edges, and call paths — and can serve a viewer that plays a written tour of it. Reach for it even when the user never says citydiff, e.g. "what does this PR do", "summarise what I changed this week", "who calls this function", "walk me through the branch", "review my diff".
+description: Use when the user asks to describe a pull request, explain what changed on a branch, walk through a commit range, review or present a diff, or find who calls what — for Go, Rust, Swift or JavaScript. Citydiff turns the change into a 3D structural diff at three levels — cross-module dependencies, declaration/entity edges, and call paths — and can serve a viewer that plays a written tour of it. Reach for it even when the user never says citydiff, e.g. "what does this PR do", "summarise what I changed this week", "who calls this function", "walk me through the branch", "review my diff".
 ---
 
 # __SKILL_NAME__ — a 3D code diff you can walk through
@@ -14,7 +14,7 @@ description: Use when the user asks to describe a pull request, explain what cha
   declarations changed, which call paths are new — rather than read a flat diff.
 
 Read the diff with `git diff` too: citydiff shows the structure, the notes a tour writes
-must come from the source. Known limits: **Go, Rust and Swift only**; a commit range needs a
+must come from the source. Known limits: **Go, Rust, Swift and JavaScript only**; a commit range needs a
 **git repository**; the default `citydiff` (the viewer) is **long-running**; building from
 source needs **CGO**.
 
@@ -405,6 +405,7 @@ Names are matched against the scene the way you would write them:
 - Go declaration: `pkg/path.Func`, `pkg.Type.Method`, `Type.Method`, `Func`. Any unique tail of whole segments works.
 - Rust: `crate::module::func`, `module::Type::method`, `<T as Trait>::m`, `<T as fmt::Display>::fmt`. A trait method is also found as `T::m` when nothing else matches.
 - Swift: `Module.Type.method`, `Type.method`, `Module.func`, nested `Outer.Inner.method`; `init`, `deinit`, `subscript` and computed properties are methods of their type. Members of `extension T` and `extension T: P` are both found under `T`. Each overload is its own node with the same name, so `Type.init` with several initializers is ambiguous: name another node, or use the scene id `citydiff nodes` prints.
+- JavaScript: a module is a directory, named under its package.json name (`express/lib`); write `module.func` (`lib.createApplication`), `Class.method` (`Router.handle`), or `module.Class.method`. Methods assigned as `X.m = function` or `X.prototype.m = function`, and those of an exported object literal, are methods of `X`.
 - A scene id (`file#kind#Name` from `nodes -json`) always works.
 - Case is ignored only if nothing matches exactly.
 

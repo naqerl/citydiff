@@ -126,8 +126,8 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func commonFlags(fs *flag.FlagSet) (path, commitRange *string) {
-	path = fs.String("path", ".", "path to a Go, Rust or Swift file or directory")
-	fs.StringVar(path, "p", ".", "path to a Go, Rust or Swift file or directory")
+	path = fs.String("path", ".", "path to a Go, Rust, Swift or JavaScript file or directory")
+	fs.StringVar(path, "p", ".", "path to a Go, Rust, Swift or JavaScript file or directory")
 	commitRange = fs.String("range", "", "commit range, A..B or A...B")
 	fs.StringVar(commitRange, "r", "", "commit range, A..B or A...B")
 	return path, commitRange

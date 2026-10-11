@@ -41,7 +41,7 @@ func Tree(root string) (lib.Source, error) {
 	}
 	if !info.IsDir() {
 		if !Include(abs) {
-			return nil, errors.New(root + " is not a Go, Rust or Swift file")
+			return nil, errors.New(root + " is not a Go, Rust, Swift or JavaScript file")
 		}
 		src, err := os.ReadFile(abs)
 		if err != nil {
@@ -86,8 +86,13 @@ func Tree(root string) (lib.Source, error) {
 }
 
 // SkipDir reports whether a directory name is left out of a snapshot.
-// vendor, Cargo's target, Xcode's DerivedData and hidden directories such
-// as SwiftPM's .build are not module source.
+// vendor, Cargo's target, Xcode's DerivedData, node_modules, the usual
+// JavaScript build outputs (dist, build, coverage) and hidden directories
+// such as SwiftPM's .build are not module source.
 func SkipDir(name string) bool {
-	return name == "vendor" || name == "target" || name == "DerivedData" || strings.HasPrefix(name, ".")
+	switch name {
+	case "vendor", "target", "DerivedData", "node_modules", "dist", "build", "coverage":
+		return true
+	}
+	return strings.HasPrefix(name, ".")
 }
