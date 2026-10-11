@@ -857,6 +857,16 @@ let lastActivity = 0;
 const DECOR_FRAME_MS = 1000 / 60;
 let decorBudget = 0;
 let lastDecor = 0;
+// Adaptive resolution on touch screens (adaptResolution): the step, the frames a
+// verdict takes, what counts as slow and as fast, and the frames it has seen.
+const ADAPT_STEP = 0.25;
+// A verdict takes 45 frames or 1.2 s of them, whichever comes first, and at
+// least 8: a phone drawing 7 frames a second should not wait 7 s to be helped.
+const ADAPT_FRAMES = 45;
+const ADAPT_WINDOW_MS = 1200;
+const ADAPT_SLOW_MS = 22;
+const ADAPT_FAST_MS = 17.5;
+const adapt = { last: 0, gaps: [], span: 0, good: 0, settled: 0, ceiling: Infinity, until: 0 };
 const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
@@ -902,6 +912,7 @@ function requestFrame(delay = 0) {
 
 function parkLoop() {
   clearTimeout(idleTimer);
+  adapt.last = 0;
   const remain = lastActivity ? IDLE_SPIN_MS - (performance.now() - lastActivity) : IDLE_SPIN_MS;
   idleTimer = setTimeout(requestFrame, Math.max(40, remain));
 }
@@ -5268,6 +5279,60 @@ function flyCamera(dt, now) {
   return true;
 }
 
+// On a phone or a tablet the city's resolution follows how fast its frames
+// come. When the frames drawn back to back run slower than about 45 a second,
+// the pixel ratio steps down a quarter, to 1 at the least; when they run at
+// full speed for a few seconds it steps back up toward the screen's own, which
+// is still capped at 2. A ratio that just proved too slow is not tried again
+// for half a minute, so the picture does not pump. Anti-aliasing stays on.
+// Desktop keeps the full ratio.
+
+function setResolution(ratio, t) {
+  renderer.setPixelRatio(ratio);
+  updatePointScale();
+  adapt.gaps.length = 0;
+  adapt.span = 0;
+  adapt.good = 0;
+  // The frames right after a resize are not a measure of the new size.
+  adapt.settled = t + 600;
+  viewDirty = true;
+}
+
+function adaptResolution(t) {
+  if (!touchUI.matches) return;
+  const top = Math.min(window.devicePixelRatio || 1, 2);
+  const floor = Math.min(1, top);
+  const ratio = renderer.getPixelRatio();
+  if (ratio > top) {
+    setResolution(top, t);
+    return;
+  }
+  const gap = adapt.last ? t - adapt.last : 0;
+  adapt.last = t;
+  // Only frames drawn back to back count: the loop parking clears `last`, so
+  // the wait after a pause is never a sample. A long task (a selection on a
+  // large package) is one sample, and the median below does not see it.
+  if (document.hidden || gap <= 0 || gap > 2000 || t < adapt.settled) return;
+  adapt.gaps.push(gap);
+  adapt.span += gap;
+  if (adapt.gaps.length < ADAPT_FRAMES && !(adapt.span >= ADAPT_WINDOW_MS && adapt.gaps.length >= 8)) return;
+  adapt.span = 0;
+  // The median, so one slow frame does not move the resolution.
+  const median = adapt.gaps.sort((a, b) => a - b)[adapt.gaps.length >> 1];
+  adapt.gaps.length = 0;
+  if (t > adapt.until) adapt.ceiling = top;
+  if (median > ADAPT_SLOW_MS && ratio > floor) {
+    adapt.ceiling = ratio - ADAPT_STEP;
+    adapt.until = t + 30000;
+    setResolution(Math.max(floor, ratio - ADAPT_STEP), t);
+  } else if (median < ADAPT_FAST_MS && ratio < Math.min(top, adapt.ceiling)) {
+    adapt.good++;
+    if (adapt.good >= 3) setResolution(Math.min(top, adapt.ceiling, ratio + ADAPT_STEP), t);
+  } else {
+    adapt.good = 0;
+  }
+}
+
 // A floor nobody can see is not drawn. The built-in skins set the plane's
 // opacity to 0, and it was still a lit, blended quad over half the screen.
 function drawCity() {
@@ -5351,6 +5416,7 @@ function animate(now) {
     drawCity();
     viewDirty = false;
     if (decorDue) decorBudget -= DECOR_FRAME_MS;
+    adaptResolution(t);
   }
   if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading || launching) {
     requestFrame();
