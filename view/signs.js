@@ -208,7 +208,13 @@ export function buildSigns(items, renderer, ink) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const plateColor = { value: new THREE.Vector4(0, 0, 0, 0) };
-  const material = new THREE.MeshBasicMaterial({ map: tex, color: ink, transparent: true, depthWrite: false, fog: false });
+  // A sign hangs a hair in front of its wall: the polygon offset keeps the
+  // wall from showing through it from far away, where the depth buffer is
+  // coarse.
+  const material = new THREE.MeshBasicMaterial({
+    map: tex, color: ink, transparent: true, depthWrite: false, fog: false,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
+  });
   // A glyph cell is the ink over the plate. Without a plate it is the ink
   // alone, exactly what the old one-canvas-per-sign texture drew.
   material.onBeforeCompile = (shader) => {

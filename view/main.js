@@ -183,7 +183,7 @@ function adoptShaders(next) {
     return dress(mat, next.ground, next);
   });
   swapMaterial(horizonMesh, next.horizon, next, () => {
-    const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true });
+    const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, ...ON_THE_GROUND });
     return dress(mat, next.horizon, next);
   });
   swapMaterial(pkgMesh, next.package, next, () => packageMaterial(next));
@@ -1835,6 +1835,7 @@ async function buildCity(progress = () => {}) {
       side: THREE.DoubleSide,
       transparent: true,
       opacity: theme.horizon.opacity,
+      ...ON_THE_GROUND,
     }), theme.horizon, theme), theme.horizon),
   );
   horizonMesh.rotation.x = -Math.PI / 2;
@@ -2130,6 +2131,13 @@ function raycastPlinths(raycaster, intersects) {
   });
   if (hit && hit.distance >= raycaster.near && hit.distance <= raycaster.far) intersects.push({ ...hit, object: this });
 }
+
+// The ring lies a hair above the ground disc. From the overview the depth
+// buffer cannot tell two surfaces that close apart, and which one won changed
+// with every camera move: the ring came out in broken, flickering pieces. A
+// polygon offset pulls it toward the eye by a few steps of the depth buffer,
+// whatever the distance.
+const ON_THE_GROUND = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 };
 
 function coloredBox() {
   // Instanced colors multiply the geometry color. An empty color attribute is
@@ -5335,7 +5343,23 @@ function adaptResolution(t) {
 
 // A floor nobody can see is not drawn. The built-in skins set the plane's
 // opacity to 0, and it was still a lit, blended quad over half the screen.
+// The near plane follows how far the camera stands from what it looks at.
+// A fixed 0.1 spent nearly all of the depth buffer on the first metres in
+// front of the eye, so from the overview, hundreds of units away, surfaces
+// close together (the ring on the ground, a sign on its wall) fought over the
+// same depth and flickered as the camera moved. Up close it is 0.1 as before;
+// at the overview it is a few units, and the precision there is many times
+// finer. Nothing drawn is that near the camera at that distance.
+function fitNear() {
+  const near = Math.min(10, Math.max(0.1, camera.position.distanceTo(controls.target) * 0.005));
+  if (Math.abs(near - camera.near) > camera.near * 0.1) {
+    camera.near = near;
+    camera.updateProjectionMatrix();
+  }
+}
+
 function drawCity() {
+  fitNear();
   if (instancesDirty && laid) {
     instancesDirty = false;
     refreshInstances();
