@@ -155,13 +155,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   el("tour-prev").addEventListener("click", () => player && player.prev());
   el("tour-next").addEventListener("click", () => player && player.next());
   el("tour-play").addEventListener("click", () => player && player.toggle());
-  el("tour-close").addEventListener("click", close);
-
-  // A mouse folds the tour on the way past the arrow. A tap fires an
-  // emulated mouseenter too, so only a real mouse counts here.
-  el("tour-toggle").addEventListener("pointerenter", (event) => {
-    if (event.pointerType === "mouse") setOpen(false);
-  });
   // Folded into a phone's bottom sheet the arrow stays on screen, and opens it.
   el("tour-toggle").addEventListener("click", () => setOpen(root.classList.contains("is-collapsed")));
   el("tour-logo").addEventListener("click", () => setOpen(true));
