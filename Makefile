@@ -32,7 +32,7 @@ diff: vet
 
 view: vet
 	@printf 'citydiff: %s %s\n' "$(FILE)" "$(if $(RANGE),$(RANGE),working tree)" >&2
-	go run ./cmd/cli -path "$(FILE)" $(if $(RANGE),-range "$(RANGE)") -view $(ARGS)
+	go run ./cmd/cli -path "$(FILE)" $(if $(RANGE),-range "$(RANGE)") $(ARGS)
 
 IMAGE ?= citydiff:$(shell git rev-parse --short HEAD 2>/dev/null || echo latest)
 PORT ?= 8787
@@ -54,4 +54,4 @@ run-docker:
 		-p "$(PORT):8787" \
 		-v "$(abspath $(DOCKER_PATH)):/work" \
 		"$(IMAGE)" \
-		-path "$(container_path)" -view -addr 0.0.0.0:8787 $(if $(DOCKER_RANGE),-range "$(DOCKER_RANGE)") $(ARGS)
+		-path "$(container_path)" -addr 0.0.0.0:8787 $(if $(DOCKER_RANGE),-range "$(DOCKER_RANGE)") $(ARGS)

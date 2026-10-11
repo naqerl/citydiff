@@ -20,8 +20,8 @@ The default column in the tables below is the dark skin. The link on each field 
 ## Choose a skin
 
 ```sh
-citydiff -path . -view                      # dark, then /skin in the page
-CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
+citydiff -path .                                 # dark, then /skin in the page
+CITYDIFF_SKINS_DIR=~/skins citydiff -path .
 ```
 
 Choosing a skin is the page's job. The viewer process only learns where the extra skins
@@ -419,7 +419,7 @@ the viewer: `/skin` in the page walks to `paper` with `←` / `→`. Enter appli
 A directory that lives somewhere else is pointed at with `CITYDIFF_SKINS_DIR`:
 
 ```sh
-CITYDIFF_SKINS_DIR=~/skins citydiff -path . -view
+CITYDIFF_SKINS_DIR=~/skins citydiff -path .
 ```
 
 Picking the built-in `light` in the theme menu compares it with the built-in light skin.

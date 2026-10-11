@@ -16,4 +16,4 @@ COPY --from=build /out/citydiff /usr/local/bin/citydiff
 EXPOSE 8787
 WORKDIR /work
 ENTRYPOINT ["citydiff"]
-CMD ["-path", "/work", "-view", "-addr", "0.0.0.0:8787"]
+CMD ["-path", "/work", "-addr", "0.0.0.0:8787"]

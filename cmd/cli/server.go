@@ -14,9 +14,9 @@ import (
 	"citydiff/view"
 )
 
-// viewer is the state behind -view: the scene it serves and the tour the
-// page plays. Loading a tour for another range rebuilds the scene for that
-// range, so the city and the left sidebar show the tour's changes.
+// viewer is the state behind the default serve mode: the scene it serves and
+// the tour the page plays. Loading a tour for another range rebuilds the scene
+// for that range, so the city and the left sidebar show the tour's changes.
 type viewer struct {
 	mu      sync.Mutex
 	path    string

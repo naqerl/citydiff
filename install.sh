@@ -58,6 +58,14 @@ say()  { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
+# The skill is read by an agent that loaded its skill list at startup, so a
+# fresh install is invisible to it until it reloads. Say so, last, to the agent.
+skills_reload_note() {
+  say ""
+  say "note: this agent needs to reload its skills to see the new one."
+  say "      If it cannot reload, ask the operator to restart it."
+}
+
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
 need curl
 
@@ -255,6 +263,7 @@ if [ -n "$SKILLS_ONLY" ]; then
   write_skill "$TAG"
   remove_legacy_tour_skill
   say "skills installed."
+  [ -n "$NO_SKILLS" ] || skills_reload_note
   exit 0
 fi
 
@@ -281,6 +290,7 @@ if [ -n "$FROM_SOURCE" ]; then
   if [ -z "$NO_SKILLS" ]; then write_skill "$TAG"; remove_legacy_tour_skill; fi
   say ""
   say "$BIN_NAME $version installed."
+  [ -n "$NO_SKILLS" ] || skills_reload_note
   exit 0
 fi
 
@@ -396,5 +406,6 @@ say "$BIN_NAME $version installed."
 say ""
 say "next:"
 say "  $BIN_NAME -path /path/to/go/repo -range A..B -json"
-say "  $BIN_NAME -path /path/to/go/repo -view &   # then open http://127.0.0.1:8787"
+say "  $BIN_NAME -path /path/to/go/repo           # serves the viewer at http://127.0.0.1:8787"
 say "  $BIN_NAME nodes -path /path/to/repo -range A..B -changed   # names for a tour"
+[ -n "$NO_SKILLS" ] || skills_reload_note
