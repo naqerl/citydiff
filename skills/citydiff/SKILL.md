@@ -122,6 +122,10 @@ long-running process, not a command whose output you wait for:
   use `nohup … > log 2>&1 &` and keep the pid.
 - **Poll** the address (`curl -fsS -o /dev/null http://127.0.0.1:8787/`) instead of blocking on
   the process.
+- Once it listens it **opens the page in the default browser** by itself (`open` on macOS,
+  `xdg-open` where there is a display), so the person sees it without being handed a URL.
+  Set `CITYDIFF_NO_BROWSER=1` in its environment to keep the browser shut — when you restart
+  it over and over, or when the person reads it on another machine.
 - **Never** pass `-view` to mean this — the flag no longer exists.
 - `kill` is how you stop it. If something is already listening on the port, **someone else
   owns that viewer** — check before starting another and pick a fresh `-addr`; do not kill a
@@ -311,7 +315,7 @@ to walk through, present or review a change.
 
    ```sh
    nohup citydiff tour serve -path REPO -addr 127.0.0.1:8787 tour.json > /tmp/citydiff-tour.log 2>&1 &
-   # then open http://127.0.0.1:8787/
+   # it opens http://127.0.0.1:8787/ in the default browser itself
    ```
 
    Equivalent: `citydiff -path REPO -tour tour.json` (the default serve mode). Either way the
