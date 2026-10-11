@@ -1,7 +1,7 @@
 // The action ring: the viewer's keys that have no button and no gesture of
 // their own (RING in keys.js), laid round a circle so a mouse or a finger
 // reaches them. It lives for one press. Holding the right button on the city
-// opens it at the pointer; on a touch screen holding the sheet's grip opens it
+// opens it at the pointer; on a touch screen holding the sheet's handle opens it
 // in the middle of the screen, over a blurred city. Moving lights the item
 // pointed at, and letting go runs it; letting go in the middle runs nothing.
 // An item that cannot act lights at half strength, and the line above the
@@ -33,7 +33,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const OUTER = 120;
 const GAP = 26;
 const CONTENT = 80;
-// A finger is not over the ring: it holds the sheet's grip, at the bottom
+// A finger is not over the ring: it holds the sheet's handle, at the bottom
 // of the screen, and the ring is in the middle. So it drives a cursor on the
 // ring, the way a finger on a touchpad drives a pointer: the cursor starts
 // in the ring's middle, moves as far and the same way as the finger does,

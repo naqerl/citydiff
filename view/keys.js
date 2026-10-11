@@ -31,7 +31,7 @@ export const KEYBINDS = [
 
 // The action ring holds the keys nothing on screen stands in for: no button,
 // no gesture. The right button held on the city opens it, and on a touch
-// screen a held sheet grip does, so a mouse or a finger reaches every one.
+// screen the sheet's handle held does, so a mouse or a finger reaches every one.
 // The order is clockwise from the top, and pairs face each other across the
 // ring: the two that open the node, back and forward, the bird view and
 // Escape.

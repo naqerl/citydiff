@@ -889,7 +889,7 @@
       pointer-events: none;
     }
     #detail .refs { margin: 8px 0 6px; }
-    #sheet-tabs, #side-theme, .sheet-grip, #skin-find { display: none; }
+    #sheet-tabs, #side-theme, #sheet-handle, #skin-find { display: none; }
     #perf {
       position: fixed;
       z-index: 60;
@@ -1011,7 +1011,7 @@
        the gesture. With a tour the tabs under it pick which sidebar it shows,
        and on the tour tab the player sits between the two. */
     @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
-      body { --tabs-h: 0px; --player-h: 0px; --peek: 82px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
+      body { --tabs-h: 0px; --player-h: 0px; --peek: 88px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
       body.has-tour { --tabs-h: calc(48px + env(safe-area-inset-bottom)); }
       body.has-player { --player-h: 54px; }
       #sheet-tabs {
@@ -1089,29 +1089,56 @@
       #side.is-collapsed #side-logo, #tour-side.is-collapsed #tour-logo { display: none; }
       #side.is-collapsed #side-head, #side.is-collapsed #detail { display: flex; }
       #side.is-collapsed #side-head { border-bottom: 1px solid var(--line); }
-      #tour-side.is-collapsed > #tour-head, #tour-side.is-collapsed > #tour-grip,
+      #tour-side.is-collapsed > #tour-head,
       #tour-side.is-collapsed > #tour-controls:not([hidden]) { display: flex; }
       #tour-side.is-collapsed > #tour-scroll { display: block; }
       #side.is-collapsed #title-row, #tour-side.is-collapsed #tour-title-row { cursor: pointer; }
 
-      /* The grabber is a handle a thumb can find and hold: a wide bar, and a
-         tall strip of sheet round it that takes the press. */
-      .sheet-grip {
-        display: flex;
-        flex: none;
-        height: 30px;
-        margin-bottom: -12px;
-        align-items: center;
-        justify-content: center;
+      /* The sheet's handle: a square button sitting on the sheet's top edge,
+         a third above it and two thirds on the sheet. A tap steps the sheet through
+         its detents, a drag moves it, and a hold opens the action ring. It is
+         outside the sheet, which clips what sticks out of it, and main.js
+         (placeSheet) moves it with the sheet's top edge. Solid, like the
+         player's buttons, so it reads over the city above the sheet, and
+         outlined in the accent, so it reads as the thing to hold. */
+      #sheet-handle {
+        position: absolute;
+        left: 50%;
+        bottom: calc(var(--tabs-h) + var(--player-h));
+        z-index: 6;
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        box-sizing: border-box;
+        padding: 0;
+        background: var(--elev);
+        color: var(--muted);
+        border: 1px solid var(--accent);
+        /* Until main.js places it, it sits on the peeking sheet's edge. */
+        transform: translate(-50%, calc(44px * 2 / 3 - var(--peek)));
+        will-change: transform;
+        touch-action: none;
         cursor: grab;
       }
-      /* The theme's muted text colour is made to read on its own background, so
-         the grabber shows in every theme without shouting. */
-      .sheet-grip::before { content: ""; width: 56px; height: 6px; background: var(--muted); opacity: 0.6; transition: width 150ms ease, opacity 150ms ease; }
-      /* Held, the bar fills out over the time a hold takes to open the
-         action ring, and lets go at once when the finger moves. */
-      .sheet-grip.is-holding::before { width: 96px; opacity: 1; transition: width 450ms linear, opacity 450ms linear; }
-      #side-head, #tour-head { padding-top: 12px; }
+      body.skin-open #sheet-handle { display: none; }
+      /* Two short bars, the grabber's own sign, in the muted text colour so
+         it shows in every theme without shouting. Held, they widen over the
+         time a hold takes to open the action ring, and the button lights. */
+      #sheet-handle i {
+        display: block;
+        width: 16px;
+        height: 2px;
+        margin-top: -5px;
+        background: currentColor;
+        box-shadow: 0 5px 0 currentColor;
+        transition: width 150ms ease;
+      }
+      #sheet-handle.is-holding { color: var(--accent); }
+      #sheet-handle.is-holding i { width: 28px; transition: width 450ms linear; }
+      /* The handle's lower two thirds lie over the top of the sheet: the head
+         starts under them. */
+      #side-head, #tour-head { padding-top: 34px; }
 
       /* The fold arrows point the way the sheet will go. */
       #side-toggle svg { transform: rotate(-90deg); }
@@ -1141,7 +1168,6 @@
             <rect x="16" y="9" width="6" height="13" fill="var(--modified)"/>
           </svg>
         </button>
-        <div id="side-grip" class="sheet-grip" aria-hidden="true"></div>
         <div id="side-head">
           <div id="title-row">
             <div id="title">citydiff</div>
@@ -1184,7 +1210,6 @@
         <button id="tour-logo" type="button" aria-label="Show tour" title="Show tour (t)">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M5 3 L12 8 L5 13 Z" fill="currentColor"/></svg>
         </button>
-        <div id="tour-grip" class="sheet-grip" aria-hidden="true"></div>
         <div id="tour-head">
           <div id="tour-title-row">
             <div id="tour-title">tour</div>
@@ -1212,6 +1237,7 @@
         </div>
         <div id="tour-keys"><kbd>space</kbd> play · <kbd>,</kbd> <kbd>.</kbd> step · <kbd>t</kbd> hide</div>
       </aside>
+      <button id="sheet-handle" type="button" aria-label="Sheet: tap to open or close, drag to move, hold for actions"><i aria-hidden="true"></i></button>
       <div id="tour-drop" hidden>Drop a tour script</div>
       <div id="results" hidden></div>
       <nav id="sheet-tabs" aria-label="Panels">

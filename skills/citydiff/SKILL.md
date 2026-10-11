@@ -174,10 +174,10 @@ the top. Moving lights the item the pointer points at, and letting go of the but
 letting go in the middle runs nothing. An item with nothing to act on stays in its place,
 dimmed; lit, it shows at half strength and a line above the ring says why (nvim with nothing
 selected: "select something first"), and letting go there runs nothing. The left button with
-shift, ctrl or cmd pans. On a touch screen, holding the bottom sheet's grip (sideways, the
-sidebar's title) folds the sheet and opens the same ring in the middle of the screen over the
-blurred city, without the key letters and with Cancel as its top item (reset moves to the
-bottom). The finger drives a cursor on the ring the way it drives one on a touchpad: a small
+shift, ctrl or cmd pans. On a touch screen, holding the square handle on the bottom sheet's
+top edge (sideways, the sidebar's title) folds the sheet and opens the same ring in the
+middle of the screen over the blurred city, without the key letters and with Cancel as its
+top item (reset moves to the bottom). The finger drives a cursor on the ring the way it drives one on a touchpad: a small
 square starts in the ring's middle, moves as far and the same way as the finger, and stops at
 the rim. Whatever slice it is over lights, the middle lights Cancel, and lifting the finger
 runs what is lit. The lit item's glyph and word turn the skin's accent, its slice is shaded

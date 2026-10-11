@@ -573,6 +573,7 @@ const tourSideEl = document.querySelector("#tour-side");
 const tourPlayer = document.querySelector("#tour-controls");
 const tourKeys = document.querySelector("#tour-keys");
 const sheetPanes = [hud.side, tourSideEl];
+const sheetHandle = document.querySelector("#sheet-handle");
 let sheetPane = "side";
 let sheetLevel = "half";
 let tourWasOpen = false;
@@ -610,7 +611,7 @@ function sheetBase() {
 function sheetDetents() {
   const pane = sheetPane === "tour" ? tourSideEl : hud.side;
   const full = pane.offsetHeight || window.innerHeight * 0.8;
-  const peek = parseFloat(getComputedStyle(document.body).getPropertyValue("--peek")) || 82;
+  const peek = parseFloat(getComputedStyle(document.body).getPropertyValue("--peek")) || 88;
   const half = Math.max(peek + 80, Math.min(full, Math.round((window.innerHeight - sheetBase()) * 0.5)));
   return { peek, half, full };
 }
@@ -621,17 +622,22 @@ function sheetShown() {
   return sheetLevel === "full" ? d.full : d.half;
 }
 
+// The handle sits on the sheet's top edge, a third of it above: it stands on
+// the same base as the sheet and rises the height of the sheet on screen,
+// less two thirds of its own.
 function placeSheet(shown, animate) {
   const full = sheetDetents().full;
   for (const pane of sheetPanes) {
     pane.style.transition = animate ? SHEET_SETTLE : "none";
     pane.style.transform = "translateY(" + Math.round(full - shown) + "px)";
   }
+  sheetHandle.style.transition = animate ? SHEET_SETTLE : "none";
+  sheetHandle.style.transform = "translate(-50%, " + Math.round((sheetHandle.offsetHeight * 2) / 3 - shown) + "px)";
 }
 
 function settleSheet(animate = true) {
   if (!sheetMode.matches) {
-    for (const pane of sheetPanes) {
+    for (const pane of [...sheetPanes, sheetHandle]) {
       pane.style.transition = "";
       pane.style.transform = "";
     }
@@ -702,14 +708,13 @@ sheetTabs.tour.addEventListener("click", () => {
   else showTourPane();
 });
 
-// The grabber steps through the detents, the way a tap on it does on iOS.
-for (const grip of document.querySelectorAll(".sheet-grip")) {
-  grip.addEventListener("click", () => {
-    if (!sheetMode.matches) return;
-    if (!paneOpen()) goToDetent("half");
-    else goToDetent(sheetLevel === "half" ? "full" : "half");
-  });
-}
+// A tap on the handle steps through the detents, the way a tap on the
+// grabber does on iOS.
+sheetHandle.addEventListener("click", () => {
+  if (!sheetMode.matches) return;
+  if (!paneOpen()) goToDetent("half");
+  else goToDetent(sheetLevel === "half" ? "full" : "half");
+});
 // Peeking, the title row is the handle: a tap on it (not on its buttons)
 // brings the sheet up.
 for (const row of [document.querySelector("#title-row"), document.querySelector("#tour-title-row")]) {
@@ -737,15 +742,16 @@ function onSheetTouchStart(event) {
     return;
   }
   const touch = event.touches[0];
-  const pane = event.currentTarget;
+  // The handle is outside the sheet; a drag on it moves the sheet showing.
+  const pane = event.currentTarget === sheetHandle ? (sheetPane === "tour" ? tourSideEl : hud.side) : event.currentTarget;
   sheetDrag = {
     pane,
     x: touch.clientX,
     y: touch.clientY,
     mode: "",
-    // The grabber and the header always move the sheet; so does any drag
+    // The handle and the header always move the sheet; so does any drag
     // while the sheet is short of full.
-    head: !!event.target.closest(".sheet-grip, #side-head, #tour-head"),
+    head: !!event.target.closest("#sheet-handle, #side-head, #tour-head"),
     from: sheetShown(),
     shown: sheetShown(),
     samples: [[touch.clientY, event.timeStamp]],
@@ -809,7 +815,7 @@ function onSheetTouchEnd() {
   goToDetent(level);
 }
 
-for (const pane of sheetPanes) {
+for (const pane of [...sheetPanes, sheetHandle]) {
   pane.addEventListener("touchstart", onSheetTouchStart, { passive: true });
   pane.addEventListener("touchmove", onSheetTouchMove, { passive: false });
   pane.addEventListener("touchend", onSheetTouchEnd);
@@ -6220,7 +6226,7 @@ window.addEventListener("blur", () => { held.clear(); requestFrame(); });
 // The action ring (ring.js) holds the keys that have no button and no gesture
 // of their own, for a mouse and for a finger, and lives for one press. The
 // right button held on the city opens it under the pointer, over the running
-// city. On a touch screen the sheet's grip held still opens it in the middle
+// city. On a touch screen the sheet's handle held still opens it in the middle
 // of the screen over the blurred city, and the sheet folds out of its way;
 // sideways it opens in the middle of what the sidebars leave. Moving lights
 // an item and letting go runs it, the same code its key runs.
@@ -6389,16 +6395,16 @@ function openRingTouch(x, y) {
   actionRing.open({ at: ringMiddle, from: [x, y], touch: true });
 }
 
-// On a touch screen the sheet's grip, held still for a moment, opens the
+// On a touch screen the sheet's handle, held still for a moment, opens the
 // ring. Upright the title row is the sheet's handle as well, and sideways,
 // where there is no sheet, the sidebar's title row (or its logo, folded) is
 // the handle. A move before the moment is up is a drag, and the sheet has it;
-// a move after it lights the item the finger is over, and lifting the finger
-// runs it.
+// a move after it drives the ring's cursor, and lifting the finger runs what
+// the cursor lights.
 const RING_HOLD_MS = 450;
 const RING_HOLD_SLOP = 10;
 let ringHold = null;
-// The finger that held the grip lifts with the ring up, and the click that
+// The finger that held the handle lifts with the ring up, and the click that
 // may follow is not a tap on whatever is under it now. A click that follows a
 // lift comes at once, so only the next moment's is swallowed.
 let ringHeld = false;
@@ -6412,7 +6418,7 @@ function cancelRingHold() {
   ringHold = null;
 }
 
-for (const handle of document.querySelectorAll(".sheet-grip, #title-row, #tour-title-row, #side-logo, #tour-logo")) {
+for (const handle of document.querySelectorAll("#sheet-handle, #title-row, #tour-title-row, #side-logo, #tour-logo")) {
   handle.addEventListener("touchstart", (event) => {
     cancelRingHold();
     ringHeld = false;
@@ -6421,7 +6427,7 @@ for (const handle of document.querySelectorAll(".sheet-grip, #title-row, #tour-t
     const button = event.target.closest("button");
     if (button && button !== handle) return;
     const touch = event.touches[0];
-    // The grip's bar fills out while it is held, so the finger knows to stay.
+    // The handle's bars widen while it is held, so the finger knows to stay.
     handle.classList.add("is-holding");
     ringHold = {
       handle,
