@@ -11,6 +11,7 @@ import { KEYBINDS, birdAction, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
+import { mountRing, freeCenter } from "./ring.js";
 import { applyPage, cycleSkin, loadSkin } from "./skin.js";
 import { isLaunch, LAUNCH_SKIN } from "./launch.js";
 import { createRocket } from "./rocket.js";
@@ -38,6 +39,7 @@ const paint = {
   function: new THREE.Color(),
   method: new THREE.Color(),
   selection: new THREE.Color(),
+  hover: new THREE.Color(),
 };
 
 function syncPaint(next) {
@@ -54,6 +56,7 @@ function syncPaint(next) {
   paint.function.set(next.function.color);
   paint.method.set(next.method.color);
   paint.selection.set(next.selection.color);
+  paint.hover.set(next.selection.hover || next.selection.color);
 }
 
 function useTheme(next) {
@@ -67,6 +70,7 @@ function useTheme(next) {
   ring.material.color.set(next.selection.ring);
   ring.material.opacity = next.selection.ringOpacity;
   haloMaterial.uniforms.uColor.value.copy(paint.selection);
+  paintHover();
   themeReady = true;
   document.documentElement.classList.add("theme-ready");
 }
@@ -323,6 +327,7 @@ function repaintScene() {
   if (laid) scene.fog.density = theme.fog.falloff / citySpan();
   ring.material.color.set(theme.selection.ring);
   ring.material.opacity = theme.selection.ringOpacity;
+  paintHover();
   updateHalo();
 }
 
@@ -889,6 +894,8 @@ let instancesDirty = true;
 // codebase it can cost more than the build itself.
 let loading = true;
 let pointerDirty = false;
+// The action ring is up, and the loop holds the city still under it.
+let ringUp = false;
 let frameQueued = false;
 let idleTimer = 0;
 const settledPos = new THREE.Vector3();
@@ -1073,6 +1080,10 @@ new ResizeObserver(resizeView).observe(viewEl);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
+// The right button is the action ring's: held on the city, it opens the ring
+// under the pointer. The left button with shift, ctrl or cmd still pans, and
+// so do two fingers.
+controls.mouseButtons.RIGHT = -1;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.minDistance = 2;
 // The loop parks when nothing on screen moves. A drag, a pinch, or the glide
@@ -1180,6 +1191,87 @@ function updateHalo() {
   const change = (byPackage.get(subject.kind === "package" ? subject.id : "") || {}).change;
   haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : paint.selection);
   halo.visible = true;
+}
+
+// The node under the mouse is outlined in the skin's hover colour, with a
+// light wash over its faces, so what a click would pick is plain before the
+// click. It is one unit box and its twelve edges, scaled onto the node: a new
+// hover moves them and builds nothing, and a frame is drawn only when the
+// outline moved, not on every move of the mouse. A finger has no hover.
+const hoverFill = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.18, depthWrite: false, fog: false, toneMapped: false });
+const hoverLine = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95, fog: false, toneMapped: false });
+const hoverMark = new THREE.Group();
+{
+  const unit = new THREE.BoxGeometry(1, 1, 1);
+  hoverMark.add(new THREE.Mesh(unit, hoverFill), new THREE.LineSegments(new THREE.EdgesGeometry(unit), hoverLine));
+  for (const part of hoverMark.children) part.frustumCulled = false;
+}
+hoverMark.visible = false;
+scene.add(hoverMark);
+// What the outline is on: { kind, id } of a declaration, a package or an
+// outside package, or null.
+let hoverOn = null;
+
+function paintHover() {
+  hoverFill.color.copy(paint.hover);
+  hoverLine.color.copy(paint.hover);
+}
+
+// The box the outline wraps: the node as it is drawn now, which for a
+// declaration depends on the mode and on what is lit.
+function hoverBox(target) {
+  if (target.kind === "entity") {
+    const slot = slotById.get(target.id);
+    if (!slot) return null;
+    const box = visualBox(slot, slotOpen(slot));
+    return box.h > 0.01 ? box : null;
+  }
+  if (target.kind === "package") {
+    const pkg = byPackage.get(target.id);
+    if (pkg && pkg.change === "removed" && mode !== "overlay") return null;
+    return boxById.get(target.id) || null;
+  }
+  if (target.kind === "external") {
+    // The octahedron's own box: radius 0.9, standing 1.2 above its spot.
+    const ext = extById.get(target.id);
+    return ext ? { x: ext.x - 0.9, y: ext.y + 0.3, z: ext.z - 0.9, w: 1.8, h: 1.8, d: 1.8 } : null;
+  }
+  return null;
+}
+
+// Put the outline on the hovered node as it is drawn now. A little larger
+// than the node, so its edges never fight the node's own faces for depth.
+function placeHover() {
+  const box = hoverOn && hoverBox(hoverOn);
+  if (!box) {
+    hoverMark.visible = false;
+    return;
+  }
+  const pad = Math.min(0.6, Math.max(0.08, 0.03 * Math.max(box.w, box.h, box.d)));
+  hoverMark.scale.set(box.w + pad, box.h + pad, box.d + pad);
+  hoverMark.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
+  hoverMark.visible = true;
+}
+
+// Move the outline to target, or take it off with null. True when that
+// changed what is on screen, which is when the city needs a frame.
+function setHover(target) {
+  const same = hoverOn && target ? hoverOn.kind === target.kind && hoverOn.id === target.id : hoverOn === target;
+  if (same) return false;
+  const was = hoverMark.visible;
+  hoverOn = target;
+  placeHover();
+  return was || hoverMark.visible;
+}
+
+// Take the outline and the floating name off, and draw the city without them.
+function clearHover() {
+  hud.tag.style.display = "none";
+  renderer.domElement.style.cursor = "";
+  if (setHover(null)) {
+    viewDirty = true;
+    requestFrame();
+  }
 }
 const selectArcs = new THREE.Group();
 scene.add(selectArcs);
@@ -4035,30 +4127,35 @@ function describeHit(hit) {
   return null;
 }
 
+// The name under the pointer, and the outline on what a click there would
+// pick: the node itself, or the far end of an arc. True when the outline
+// moved, which is the only part of a hover the city has to draw.
 function onHover(hit) {
   if (skinPicking || idleSpin) {
     hud.tag.style.display = "none";
     renderer.domElement.style.cursor = "";
-    return;
+    return setHover(null);
   }
   const found = describeHit(hit);
   if (!found) {
     hud.tag.style.display = "none";
     renderer.domElement.style.cursor = "";
-    return;
+    return setHover(null);
   }
   if (found.kind === "call") {
     showTag(found.point, entityInfo(found.entityId) || found.label || "call");
-    return;
+    return setHover(found.entityId ? { kind: "entity", id: found.entityId } : null);
   }
   if (found.kind === "dep") {
     showTag(found.point, packageInfo(found.id));
-    return;
+    const dep = byPackage.get(found.id);
+    return setHover({ kind: dep && dep.external ? "external" : "package", id: found.id });
   }
   const pkg = byPackage.get(found.id);
   const entity = byEntity.get(found.id);
   const label = entity ? entityLabel(entity.entity) : (pkg ? pkg.name || pkg.id : found.id);
   showTag(found.point, label);
+  return setHover({ kind: found.kind, id: found.id });
 }
 
 function showTag(point, text) {
@@ -5219,11 +5316,18 @@ function restoreSubject(entry) {
   flyTo(pose.pos, pose.target);
 }
 
+// The entry a step back (-1) or forward (1) lands on, or -1 when there is
+// none that way. Detached, the current entry is one step back.
+function jumpTarget(step) {
+  if (!jumps.length) return -1;
+  const next = jumpDetached ? jumpIndex + (step < 0 ? 0 : step) : jumpIndex + step;
+  return next >= 0 && next < jumps.length ? next : -1;
+}
+
 // step is -1 for the older entry, +1 for the newer one.
 function jumpStep(step) {
-  if (!jumps.length) return;
-  const next = jumpDetached ? jumpIndex + (step < 0 ? 0 : step) : jumpIndex + step;
-  if (next < 0 || next >= jumps.length) return;
+  const next = jumpTarget(step);
+  if (next < 0) return;
   jumpIndex = next;
   jumpDetached = false;
   jumping = true;
@@ -5365,6 +5469,8 @@ function drawCity() {
   if (instancesDirty && laid) {
     instancesDirty = false;
     refreshInstances();
+    // The towers changed size under a still mouse: the outline follows.
+    placeHover();
   }
   if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
   renderer.render(scene, camera);
@@ -5377,6 +5483,20 @@ function animate(now) {
   // closes, and the close starts the loop again.
   if (editorActive()) {
     clearTimeout(idleTimer);
+    return;
+  }
+  // On a touch screen the action ring holds the city still while it is up: no particles, no
+  // halo, no idle orbit, no glide, so the blur under it is worked out once
+  // instead of on every frame. A frame the view itself asks for (the city
+  // easing down as the sheet folds, a resize) is still drawn. The close
+  // starts the loop again.
+  if (ringUp) {
+    clearTimeout(idleTimer);
+    lastFrame = 0;
+    if (viewDirty && themeReady) {
+      drawCity();
+      viewDirty = false;
+    }
     return;
   }
   const t = now || performance.now();
@@ -5419,14 +5539,14 @@ function animate(now) {
   if (halo.visible) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   const live = theme && theme.live;
   if (live) theme.uTime.value += dt > 0 ? dt : 0;
+  // A hover asks for a frame only when its outline moved: the name that
+  // follows the pointer is the page's, not the city's.
   let hovered = false;
   if (idleSpin) {
-    hovered = pointerDirty;
-    if (pointerDirty) onHover(null);
+    if (pointerDirty || hoverOn) hovered = onHover(null);
     pointerDirty = false;
   } else if (pointerDirty && !pointerDown && !bird.on) {
-    onHover(hitTest());
-    hovered = pointerDirty;
+    hovered = onHover(hitTest());
     pointerDirty = false;
   }
   // A frame that carries nothing but decoration (the particles, the halo, a
@@ -5510,8 +5630,8 @@ function setCallDirection(inbound, node) {
   else selectPackage(subject.id, true);
 }
 
-// Right-click has no menu of its own: the Calls / Callers buttons pick the
-// direction. The canvas still swallows the browser's context menu.
+// The right button held on the city opens the action ring under the pointer,
+// never the browser's own menu.
 renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
 // A tap is one finger that went down and came up in place. A second finger
 // makes it a pinch or a pan, and nothing it lifts off is a tap.
@@ -5523,6 +5643,7 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   pointerDown = touching.size > 1 ? null : { x: event.clientX, y: event.clientY, button: event.button, touch: event.pointerType !== "mouse" };
   if (tourUI) tourUI.userTookOver();
   tween = null;
+  if (event.button === 2 && event.pointerType === "mouse") openRingAt(event.clientX, event.clientY);
 });
 function aimPointer(x, y) {
   const rect = renderer.domElement.getBoundingClientRect();
@@ -5534,6 +5655,13 @@ renderer.domElement.addEventListener("pointermove", (event) => {
   aimPointer(event.clientX, event.clientY);
   if (event.pointerType === "mouse") pointerDirty = true;
   requestFrame();
+});
+// A mouse that leaves the city for a sidebar, a menu or another window takes
+// its hover with it.
+renderer.domElement.addEventListener("pointerleave", (event) => {
+  if (event.pointerType !== "mouse") return;
+  pointerDirty = false;
+  clearHover();
 });
 renderer.domElement.addEventListener("pointercancel", (event) => {
   touching.delete(event.pointerId);
@@ -5554,6 +5682,8 @@ renderer.domElement.addEventListener("pointerup", (event) => {
     return;
   }
   activate(describeHit(hitTest()));
+  // The click may have shut the towers around the pointer: look again.
+  pointerDirty = true;
 });
 
 // Touch taps work the way they do on a map. A tap waits a moment before it
@@ -5942,27 +6072,11 @@ window.addEventListener("keydown", (event) => {
   if (diffActive()) return;
   requestFrame();
   if (editAction(event) && event.target !== hud.search) {
-    const target = editTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
-    if (target) {
-      event.preventDefault();
-      held.clear();
-      openEditor(target, () => {
-        renderer.domElement.focus?.();
-        // Time in the editor is not idle time: the orbit waits its full delay.
-        noteActivity();
-        lastFrame = 0;
-        requestFrame();
-      });
-    }
+    if (editSubject()) event.preventDefault();
     return;
   }
   if (diffAction(event) && event.target !== hud.search) {
-    const target = diffTarget(selected || (focus && { kind: "entity", id: focus.entity.id }), byEntity, byPackage);
-    if (target) {
-      event.preventDefault();
-      held.clear();
-      openDiff(target, () => { renderer.domElement.focus?.(); requestFrame(); }).catch(() => {});
-    }
+    if (diffSubject()) event.preventDefault();
     return;
   }
   const typing = event.target === hud.search;
@@ -6102,6 +6216,258 @@ window.addEventListener("keyup", (event) => {
   requestFrame();
 });
 window.addEventListener("blur", () => { held.clear(); requestFrame(); });
+
+// The action ring (ring.js) holds the keys that have no button and no gesture
+// of their own, for a mouse and for a finger, and lives for one press. The
+// right button held on the city opens it under the pointer, over the running
+// city. On a touch screen the sheet's grip held still opens it in the middle
+// of the screen over the blurred city, and the sheet folds out of its way;
+// sideways it opens in the middle of what the sidebars leave. Moving lights
+// an item and letting go runs it, the same code its key runs.
+
+// The node a key acts on: the call diff's entity, or the selection.
+function keySubject() {
+  return selected || (focus && { kind: "entity", id: focus.entity.id });
+}
+
+// E: the subject in nvim, in a terminal over the city. False when there is
+// nothing to open.
+function editSubject() {
+  const target = editTarget(keySubject(), byEntity, byPackage);
+  if (!target) return false;
+  held.clear();
+  openEditor(target, () => {
+    renderer.domElement.focus?.();
+    // Time in the editor is not idle time: the orbit waits its full delay.
+    noteActivity();
+    lastFrame = 0;
+    requestFrame();
+  });
+  return true;
+}
+
+// D: the git diff of the subject, over the city. False when there is none.
+function diffSubject() {
+  const target = diffTarget(keySubject(), byEntity, byPackage);
+  if (!target) return false;
+  held.clear();
+  openDiff(target, () => { renderer.domElement.focus?.(); requestFrame(); }).catch(() => {});
+  return true;
+}
+
+// Which items can act now, and for one that cannot, why not: the ring shows
+// that over itself while the item is lit. In the bird view the city under it
+// is hidden, and only what its keys do there is live, the same as on the
+// keyboard.
+function ringState(id) {
+  const subject = keySubject();
+  const birdWhy = "leave the bird view first";
+  const can = (enabled, why) => (enabled ? { enabled: true } : { enabled: false, why });
+  if (id === "bird") return { enabled: !!laid, on: bird.on };
+  if (bird.on && (id === "reset" || id === "back" || id === "forward" || id === "deselect")) return can(false, birdWhy);
+  if (id === "reset") return can(true);
+  if (id === "back") return can(jumpTarget(-1) >= 0, "nothing earlier to go back to");
+  if (id === "forward") return can(jumpTarget(1) >= 0, "nothing later to go forward to");
+  if (id === "deselect") return can(!!(selected || focus || entered || tourLit || tourLinks), "nothing is selected");
+  if (id === "edit" || id === "diff") {
+    const target = id === "edit" ? editTarget(subject, byEntity, byPackage) : diffTarget(subject, byEntity, byPackage);
+    if (target) return can(true);
+    if (!subject) return can(false, "select something first");
+    const outside = subject.kind === "external" || !!(byPackage.get(subject.id) || {}).external;
+    if (outside) return can(false, id === "edit" ? "an outside package has no source here" : "an outside package has no diff");
+    return can(false, "this node has no file");
+  }
+  return can(false, "");
+}
+
+function runRing(id) {
+  noteActivity();
+  endIntro();
+  if (id === "reset") {
+    if (tourUI) tourUI.userTookOver();
+    resetCamera();
+  } else if (id === "bird") {
+    if (bird.on) leaveBird();
+    else enterBird();
+  } else if (id === "back" || id === "forward") {
+    if (tourUI) tourUI.userTookOver();
+    jumpStep(id === "back" ? -1 : 1);
+  } else if (id === "deselect") {
+    goBack();
+  } else if (id === "edit") {
+    editSubject();
+  } else if (id === "diff") {
+    diffSubject();
+  }
+  requestFrame();
+}
+
+// Upright, the sheet the ring folded away: put back where it was when the
+// ring closes without running anything.
+let ringSheet = null;
+// What holds the ring open: "mouse", "touch", or "" when it is shut. And when
+// a mouse last let go of it, so the menu the browser may still raise for that
+// right button is not shown.
+let ringPress = "";
+let ringLetGo = 0;
+
+const actionRing = mountRing({
+  state: ringState,
+  run: runRing,
+  onOpen: () => {
+    held.clear();
+    cancelPendingTap();
+    closeSearch();
+    if (tourUI) tourUI.userTookOver();
+    // One more frame, without the outline, and then the city holds still.
+    clearHover();
+    viewDirty = true;
+    requestFrame();
+  },
+  onClose: (reason) => {
+    if (ringPress === "mouse") ringLetGo = performance.now();
+    ringPress = "";
+    ringUp = false;
+    const sheet = ringSheet;
+    ringSheet = null;
+    if (reason === "cancel" && sheet && sheetMode.matches && sheetPane === sheet.pane && !paneOpen()) {
+      sheetLevel = sheet.level;
+      setPaneOpen(true);
+    }
+    noteActivity();
+    lastFrame = 0;
+    viewDirty = true;
+    requestFrame();
+  },
+});
+
+function ringReady() {
+  return !!laid && !loading && !skinPicking && !skinRevealing && !rocket.showing() && !editorActive() && !diffActive();
+}
+
+function openRingAt(x, y) {
+  if (!ringReady()) return;
+  ringPress = "mouse";
+  actionRing.open({ at: () => [x, y], from: [x, y] });
+}
+
+// The mouse moves the lit item while the right button is down, and letting go
+// of the button runs it. Pointer capture brings both here from anywhere.
+window.addEventListener("pointermove", (event) => {
+  if (event.pointerType !== "mouse" || ringPress !== "mouse") return;
+  // The button came up where the page never heard of it: let the ring go.
+  if (!(event.buttons & 2)) actionRing.close("cancel");
+  else actionRing.track(event.clientX, event.clientY);
+});
+window.addEventListener("pointerup", (event) => {
+  if (event.pointerType === "mouse" && event.button === 2 && ringPress === "mouse") actionRing.release();
+});
+window.addEventListener("contextmenu", (event) => {
+  if (ringPress === "mouse" || performance.now() - ringLetGo < 400) event.preventDefault();
+}, true);
+
+// Upright the middle of the screen, sideways the middle of what the sidebars
+// leave. Asked again when the screen turns.
+function ringMiddle() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (sheetMode.matches) return [w / 2, h / 2];
+  return freeCenter(w, h, coverOf("#side"), coverOf("#tour-side"));
+}
+
+function openRingTouch(x, y) {
+  if (!ringReady()) return;
+  sheetDrag = null;
+  ringSheet = null;
+  if (sheetMode.matches && paneOpen()) {
+    ringSheet = { pane: sheetPane, level: sheetLevel };
+    setPaneOpen(false);
+  }
+  // Only a touch screen holds the city still: there the ring covers it.
+  ringUp = true;
+  ringPress = "touch";
+  actionRing.open({ at: ringMiddle, from: [x, y], touch: true });
+}
+
+// On a touch screen the sheet's grip, held still for a moment, opens the
+// ring. Upright the title row is the sheet's handle as well, and sideways,
+// where there is no sheet, the sidebar's title row (or its logo, folded) is
+// the handle. A move before the moment is up is a drag, and the sheet has it;
+// a move after it lights the item the finger is over, and lifting the finger
+// runs it.
+const RING_HOLD_MS = 450;
+const RING_HOLD_SLOP = 10;
+let ringHold = null;
+// The finger that held the grip lifts with the ring up, and the click that
+// may follow is not a tap on whatever is under it now. A click that follows a
+// lift comes at once, so only the next moment's is swallowed.
+let ringHeld = false;
+let swallowUntil = 0;
+
+function cancelRingHold() {
+  if (ringHold) {
+    clearTimeout(ringHold.timer);
+    ringHold.handle.classList.remove("is-holding");
+  }
+  ringHold = null;
+}
+
+for (const handle of document.querySelectorAll(".sheet-grip, #title-row, #tour-title-row, #side-logo, #tour-logo")) {
+  handle.addEventListener("touchstart", (event) => {
+    cancelRingHold();
+    ringHeld = false;
+    if (!touchUI.matches || event.touches.length !== 1) return;
+    // The title row's own buttons keep their taps.
+    const button = event.target.closest("button");
+    if (button && button !== handle) return;
+    const touch = event.touches[0];
+    // The grip's bar fills out while it is held, so the finger knows to stay.
+    handle.classList.add("is-holding");
+    ringHold = {
+      handle,
+      x: touch.clientX,
+      y: touch.clientY,
+      timer: setTimeout(() => {
+        handle.classList.remove("is-holding");
+        ringHold = null;
+        ringHeld = true;
+        if (navigator.vibrate) navigator.vibrate(8);
+        openRingTouch(touch.clientX, touch.clientY);
+      }, RING_HOLD_MS),
+    };
+  }, { passive: true });
+  // A finger's moves stay with the element it went down on, so the handle
+  // hears the whole press. With the ring up they are the ring's, never a
+  // scroll of the sidebar under it.
+  handle.addEventListener("touchmove", (event) => {
+    if (ringPress !== "touch") return;
+    event.preventDefault();
+    const touch = event.touches[0];
+    if (touch) actionRing.track(touch.clientX, touch.clientY);
+  }, { passive: false });
+  handle.addEventListener("touchend", () => {
+    if (ringHeld) swallowUntil = performance.now() + 400;
+    ringHeld = false;
+    if (ringPress === "touch") actionRing.release();
+  });
+  handle.addEventListener("touchcancel", () => {
+    if (ringPress === "touch") actionRing.close("cancel");
+  });
+  handle.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+window.addEventListener("touchmove", (event) => {
+  if (!ringHold) return;
+  const touch = event.touches[0];
+  if (event.touches.length !== 1 || Math.hypot(touch.clientX - ringHold.x, touch.clientY - ringHold.y) > RING_HOLD_SLOP) cancelRingHold();
+}, { passive: true });
+window.addEventListener("touchend", cancelRingHold, { passive: true });
+window.addEventListener("touchcancel", cancelRingHold, { passive: true });
+window.addEventListener("click", (event) => {
+  if (performance.now() >= swallowUntil) return;
+  swallowUntil = 0;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 // The legend's key list is written from KEYBINDS, the same list the tour
 // keys and the README are checked against.
 document.querySelector("#keys").innerHTML = KEYBINDS.map(
@@ -6935,6 +7301,7 @@ function enterBird() {
   tween = null;
   endIntro();
   held.clear();
+  clearHover();
   buildBird();
   birdHide();
   const b = laid.bounds;

@@ -166,6 +166,27 @@ callers, drawn between the towers that make them. The address bar follows the vi
 a method is `…:Type:Name`), plus `side=closed` / `tourside=closed` — so a link to the viewer
 can open on a given node.
 
+The node under the mouse is outlined in the skin's hover colour (`selection.hover`, or a hue
+none of the city's colours use). Holding the right button on the city opens the action ring
+under the pointer: the keys that have no button or gesture of their own — reset camera `0`,
+diff `D`, forward `i`, bird view `y`, deselect `esc`, back `o` and nvim `E`, clockwise from
+the top. Moving lights the item the pointer points at, and letting go of the button runs it;
+letting go in the middle runs nothing. An item with nothing to act on stays in its place,
+dimmed; lit, it shows at half strength and a line above the ring says why (nvim with nothing
+selected: "select something first"), and letting go there runs nothing. The left button with
+shift, ctrl or cmd pans. On a touch screen, holding the bottom sheet's grip (sideways, the
+sidebar's title) folds the sheet and opens the same ring in the middle of the screen over the
+blurred city, without the key letters and with Cancel as its top item (reset moves to the
+bottom). The finger drives a cursor on the ring the way it drives one on a touchpad: a small
+square starts in the ring's middle, moves as far and the same way as the finger, and stops at
+the rim. Whatever slice it is over lights, the middle lights Cancel, and lifting the finger
+runs what is lit. The lit item's glyph and word turn the skin's accent, its slice is shaded
+darker with an accent rim on its outer edge, and it holds a little past its edge before the
+next one takes over, so a pointer on the line between two items does not flicker between
+them. In nvim
+on a touch screen a bar under the terminal has `esc`, `ctrl`, `alt` (both held for the next
+key), `/`, `:`, `;`, `(` and `)`; the keyboard comes up only when the terminal is tapped.
+
 ## Keys
 
 The viewer answers to these. `?` opens the same list inside the page, written from the one
@@ -188,6 +209,7 @@ source (`view/keys.js`), and the tests check that this table and that list agree
 | `drag` | orbit |
 | `scroll` | zoom |
 | `click` | enters |
+| `right hold` | action ring |
 | `enter` | opens a function |
 | `E` | open in nvim |
 | `D` | diff of the change |

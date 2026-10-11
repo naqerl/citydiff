@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { ELEMENTS, assetURL, cycleSkin, loadSkin, mergeSkin, pageVars, skinFromValue, skinURL, skyboxKind } from "./skin.js";
+import { ELEMENTS, assetURL, cycleSkin, hoverColor, loadSkin, mergeSkin, pageVars, skinFromValue, skinURL, skyboxKind } from "./skin.js";
 
 function readSkin(name) {
   return JSON.parse(readFileSync(new URL("../skins/" + name + "/skin.json", import.meta.url), "utf8"));
@@ -306,4 +306,56 @@ test("the theme list is a ring", () => {
   // One theme, or none, has nowhere to go.
   assert.equal(cycleSkin(["dark"], "dark", 1), "");
   assert.equal(cycleSkin([], "dark", 1), "");
+});
+
+// The hue of a #rrggbb colour in turns (0 to 1), and how grey it is.
+function hueOf(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { hue: 0, sat: 0 };
+  const d = max - min;
+  const sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const hue = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { hue: hue / 6, sat };
+}
+
+test("a skin that names its hover keeps it", () => {
+  const skin = mergeSkin(dark, { selection: { hover: "#123456" } });
+  assert.equal(hoverColor(skin), "#123456");
+  assert.equal(pageVars(skin)["--hover"], "#123456");
+});
+
+test("the hover is a hue the city does not already mean something by", () => {
+  for (const name of builtinNames()) {
+    const skin = mergeSkin(dark, readSkin(name));
+    const hover = hoverColor(skin);
+    assert.match(hover, /^#[0-9a-f]{6}$/, name);
+    assert.ok(contrast(hover, skin.hud.bg) >= 4.5, name + " " + hover + " on " + skin.hud.bg);
+    if (hueOf(skin.hud.accent).sat < 0.2) {
+      // A grey skin stays grey: its hover is its own text colour.
+      assert.equal(hover, skin.hud.fg, name);
+      continue;
+    }
+    const { hue } = hueOf(hover);
+    const c = skin.change;
+    for (const other of [c.added, c.removed, c.modified, c.body, c.both, c.moved, skin.call.color, skin.selection.color]) {
+      const theirs = hueOf(other);
+      if (theirs.sat < 0.2) continue;
+      const apart = Math.min(Math.abs(hue - theirs.hue), 1 - Math.abs(hue - theirs.hue));
+      assert.ok(apart >= 0.05, name + ": " + hover + " is too near " + other);
+    }
+  }
+});
+
+test("a loaded skin carries its hover", async () => {
+  const fetchImpl = async (url) => {
+    if (url === "/skins/dark/skin.json") return { ok: true, status: 200, url, json: async () => dark };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const skin = await loadSkin("dark", fetchImpl);
+  assert.equal(skin.selection.hover, hoverColor(dark));
+  assert.equal(pageVars(skin)["--hover"], skin.selection.hover);
 });

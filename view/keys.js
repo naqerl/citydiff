@@ -18,6 +18,7 @@ export const KEYBINDS = [
   { keys: ["drag"], does: "orbit" },
   { keys: ["scroll"], does: "zoom" },
   { keys: ["click"], does: "enters" },
+  { keys: ["right hold"], does: "action ring" },
   { keys: ["enter"], does: "opens a function" },
   { keys: ["E"], does: "open in nvim" },
   { keys: ["D"], does: "diff of the change" },
@@ -27,6 +28,27 @@ export const KEYBINDS = [
   { keys: [",", "."], does: "tour previous / next" },
   { keys: ["?"], does: "legend" },
 ];
+
+// The action ring holds the keys nothing on screen stands in for: no button,
+// no gesture. The right button held on the city opens it, and on a touch
+// screen a held sheet grip does, so a mouse or a finger reaches every one.
+// The order is clockwise from the top, and pairs face each other across the
+// ring: the two that open the node, back and forward, the bird view and
+// Escape.
+export const RING = [
+  { id: "reset", key: "0", label: "reset" },
+  { id: "diff", key: "D", label: "diff" },
+  { id: "forward", key: "i", label: "forward" },
+  { id: "bird", key: "y", label: "bird" },
+  { id: "deselect", key: "esc", label: "deselect" },
+  { id: "back", key: "o", label: "back" },
+  { id: "edit", key: "E", label: "nvim" },
+];
+
+// On a touch screen the top of the ring is Cancel, the way out without
+// running anything, and the rest keep their pairs across the ring with reset
+// at the bottom, opposite Cancel.
+export const RING_TOUCH = ["cancel", "diff", "forward", "bird", "reset", "deselect", "back", "edit"];
 
 const TOUR = { " ": "toggle", ",": "prev", ".": "next", t: "sidebar", T: "sidebar" };
 

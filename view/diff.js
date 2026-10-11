@@ -99,7 +99,7 @@ export async function openDiff(target, onClose) {
     '<span class="diff-where"></span>' +
     '<span class="diff-note" hidden></span>' +
     '<span class="diff-spacer"></span>' +
-    '<span class="diff-hint">esc closes</span>' +
+    '<button type="button" class="diff-close" aria-label="Close">esc</button>' +
     "</header>" +
     '<div id="diff-body" class="diff-view"></div>';
   document.body.append(root);
@@ -111,6 +111,7 @@ export async function openDiff(target, onClose) {
   root.addEventListener("click", (event) => {
     if (event.target === root) closeDiff();
   });
+  root.querySelector(".diff-close").addEventListener("click", () => closeDiff());
   p.onKey = (event) => {
     if (event.key !== "Escape") return;
     // The viewer listens on the window, which sees this event after the
