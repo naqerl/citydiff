@@ -219,14 +219,18 @@
       color: var(--muted);
       border: 1px solid var(--line);
       /* Each tab draws its own left edge and none of its right, so the line
-         between two of them belongs to the tab on the right. That way the
-         active tab is outlined in full on both sides, instead of borrowing a
-         quiet edge from the tab next to it. */
+         between two of them belongs to the tab on the right — except when the
+         tab on the left is active, which owns the divider (see below). */
       border-right: 0;
       padding: 6px 8px;
     }
     .modes button:last-child { border-right: 1px solid var(--line); }
-    .modes button.on { color: var(--fg); background: var(--on); border-color: var(--line-strong); }
+    /* The active tab draws all four of its own edges, including the one it
+       shares with the tab on its right: that divider belongs to the active
+       tab's outline, not to the quiet edge of the neighbour. The neighbour
+       drops its own left edge so the shared line stays one pixel wide. */
+    .modes button.on { color: var(--fg); background: var(--on); border-color: var(--line-strong); border-right: 1px solid var(--line-strong); }
+    .modes button.on + button { border-left: 0; }
     #stage { position: absolute; inset: 0; background: var(--bg); }
     #view { position: absolute; inset: 0; }
     #view canvas { display: block; width: 100%; height: 100%; }
@@ -273,6 +277,9 @@
        itself never shrinks, so a crowded panel scrolls instead of hiding it. */
     .section { display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; transition: flex-grow 180ms ease; }
     .section.open { flex-grow: 1; }
+    /* The expander titles and their rows carry the same opaque panel colour
+       the tour's text and diff do, so the list reads over the city instead of
+       with the city behind it. */
     .section-head {
       display: flex;
       align-items: center;
@@ -280,7 +287,7 @@
       width: 100%;
       min-width: 0;
       flex: none;
-      background: transparent;
+      background: var(--elev);
       border: 0;
       border-bottom: 1px solid var(--line);
       padding: 7px 14px;
@@ -291,7 +298,9 @@
       text-transform: uppercase;
       text-align: left;
     }
-    .section-head:hover { background: var(--elev); color: var(--fg); }
+    /* A hover wash over the opaque title: the colour the bar already has,
+       one step lighter, so the hover is felt and the opaque bar stays. */
+    .section-head:hover { background-image: linear-gradient(var(--edge), var(--edge)); color: var(--fg); }
     .section-head:focus-visible { outline: 1px solid var(--fg); outline-offset: -1px; color: var(--fg); }
     .section-caret { flex: none; display: grid; place-items: center; width: 10px; transition: transform 160ms ease; }
     .section.open .section-caret { transform: rotate(90deg); }
@@ -304,6 +313,12 @@
     /* Rows line up under the section's title, past the caret and its gap. The
        `#detail` prefix is needed: `#detail button.row` above carries the id. */
     #detail .section-body button.row { padding: 4px 14px 4px 32px; }
+    /* A list reads as a list when its rows alternate: the darker row, the
+       lighter row, back and forth — the Finder list's stripe. The change of
+       shade is the only separator there is; a rule between rows would just
+       sit on top of a line the colour already draws, so the rows carry none. */
+    #detail .section-body button.row:nth-child(odd) { background-color: var(--bg); }
+    #detail .section-body button.row:nth-child(even) { background-color: var(--elev); }
     @media (prefers-reduced-motion: reduce) { .section, .section-caret { transition: none; } }
     #detail button.row {
       display: flex;
@@ -314,7 +329,6 @@
       background: transparent;
       color: var(--fg);
       border: 0;
-      border-bottom: 1px solid var(--elev);
       padding: 4px 2px;
     }
     .clip { display: block; min-width: 0; flex: 1; overflow: hidden; }
@@ -327,7 +341,16 @@
     /* A package outside the snapshot: named in the same quiet grey its arc is
        drawn in, so the Calls list and the city agree on which hops leave it. */
     #detail button.row.ext .where { color: var(--call-std); }
-    #detail button.row:hover, #detail button.row.on { background: var(--elev); }
+    /* A hover or a selection washes the row it lands on without replacing the
+       stripe under it: the gradient paints over the opaque colour, so the
+       alternating list stays itself and the state still shows. The selected
+       row comes after the hover, so it holds its own colour while hovered. */
+    #detail button.row:hover { background-image: linear-gradient(var(--edge), var(--edge)); }
+    #detail button.row.on {
+      background-image:
+        linear-gradient(var(--current-bg), var(--current-bg)),
+        linear-gradient(var(--current-bg), var(--current-bg));
+    }
     .added { color: var(--added-text); }
     .removed { color: var(--removed-text); }
     .modified { color: var(--modified-text); }

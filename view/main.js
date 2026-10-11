@@ -3619,16 +3619,21 @@ function renderDetail() {
   }
   hud.detailHead.replaceChildren();
   hud.detailBody.replaceChildren();
+  // A function, method, type or variable contains one thing: the calls it
+  // makes and the calls it takes. The Packages / Types / Variables /
+  // Functions / Methods expanders belong to the package around it — a node
+  // that holds none of them has no business listing them, so the panel shows
+  // only the Calls / Callers section behind its own tabs.
   if (focus) {
     hud.detailHead.append(focusDetail(focus.entity));
-    hud.detailBody.append(roster(focus.pkg));
+    hud.detailBody.append(roster(null));
     return;
   }
   if (selected && selected.kind === "entity") {
     const found = byEntity.get(selected.id);
     if (found) {
       hud.detailHead.append(entityDetail(found.entity));
-      hud.detailBody.append(roster(found.pkg));
+      hud.detailBody.append(roster(null));
     }
     return;
   }
