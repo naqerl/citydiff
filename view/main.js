@@ -4305,9 +4305,11 @@ function goBack() {
 }
 
 // Escape always lets go of the node: the call diff, the selection and the
-// package it sits in, and flies back to the whole city.
+// package it sits in, and a tour step's highlight and path, and flies back to
+// the whole city.
 function goBackInner() {
-  const hadSelection = focus || selected || entered || entitySubject || arcSubject;
+  const hadSelection = focus || selected || entered || entitySubject || arcSubject || tourLit || tourLinks;
+  clearTourMarks();
   if (focus) dropFocus();
   entered = null;
   entitySubject = null;
