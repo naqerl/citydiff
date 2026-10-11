@@ -96,6 +96,67 @@ func TestEntriesIgnoresReorderAndUnchanged(t *testing.T) {
 	}
 }
 
+func TestEntriesIgnoresADeclarationThatOnlyMoved(t *testing.T) {
+	// Adding an import above a declaration shifts every line below it. Every
+	// one of those declarations moved, and none of them changed, so the diff is
+	// the import alone. Positions are part of an entry, which is how this used
+	// to report the whole file as modified; the scene layer already paired on
+	// SameDeclaration, and this keeps the two agreeing.
+	service := &lib.TypeEntry{Name: "*Service"}
+	left := []lib.Entity{
+		lib.VariableEntry{Name: "ErrNotAssigned", Pos: lib.Pos{Line: 20, Column: 6}},
+		lib.TypeEntry{Name: "Service", MethodsHash: "aaa", Pos: lib.Pos{Line: 40, Column: 6}},
+		lib.FunctionEntry{Name: "New", BodyHash: "n", Pos: lib.Pos{Line: 60, Column: 1}},
+		lib.MethodEntry{
+			FunctionEntry: lib.FunctionEntry{Name: "List", BodyHash: "list", Pos: lib.Pos{Line: 80, Column: 2}},
+			Type:          service,
+		},
+	}
+	right := []lib.Entity{
+		lib.ImportEntry{Path: "barse/lib/dbx"},
+		lib.VariableEntry{Name: "ErrNotAssigned", Pos: lib.Pos{Line: 21, Column: 6}},
+		lib.TypeEntry{Name: "Service", MethodsHash: "aaa", Pos: lib.Pos{Line: 41, Column: 6}},
+		lib.FunctionEntry{Name: "New", BodyHash: "n", Pos: lib.Pos{Line: 61, Column: 1}},
+		lib.MethodEntry{
+			FunctionEntry: lib.FunctionEntry{Name: "List", BodyHash: "list", Pos: lib.Pos{Line: 81, Column: 2}},
+			Type:          service,
+		},
+	}
+
+	changes := Entries(left, right)
+	if len(changes) != 1 {
+		t.Fatalf("a range that shifted every line gave %d changes: %v", len(changes), changes)
+	}
+	if changes[0].Action != Added || changes[0].Name() != "barse/lib/dbx" {
+		t.Fatalf("want the added import, got %s", changes[0])
+	}
+}
+
+func TestEntriesStillReportsARealChangeAmongMovedOnes(t *testing.T) {
+	// The guard above must not swallow a change that happens to sit below an
+	// inserted line: one moved and one edited, only the edited one is reported.
+	left := []lib.Entity{
+		lib.FunctionEntry{Name: "Moved", BodyHash: "same", Pos: lib.Pos{Line: 10, Column: 1}},
+		lib.FunctionEntry{Name: "Edited", BodyHash: "before", Pos: lib.Pos{Line: 20, Column: 1}},
+	}
+	right := []lib.Entity{
+		lib.ImportEntry{Path: "example/db"},
+		lib.FunctionEntry{Name: "Moved", BodyHash: "same", Pos: lib.Pos{Line: 11, Column: 1}},
+		lib.FunctionEntry{Name: "Edited", BodyHash: "after", Pos: lib.Pos{Line: 21, Column: 1}},
+	}
+
+	changes := Entries(left, right)
+	if len(changes) != 2 {
+		t.Fatalf("want the added import and the edited function, got %d: %v", len(changes), changes)
+	}
+	if changes[1].Action != Modified || changes[1].Name() != "Edited" {
+		t.Fatalf("want modified Edited, got %s", changes[1])
+	}
+	if fields := editFields(changes[1]); fields != "bodyHash" {
+		t.Fatalf("edits on the declaration that really changed = %s", fields)
+	}
+}
+
 func TestEntriesBodyHashAndMethodsHash(t *testing.T) {
 	left := []lib.Entity{
 		lib.TypeEntry{Name: "Service", MethodsHash: "aaa"},
