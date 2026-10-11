@@ -65,6 +65,10 @@ export function dress(material, spec, theme) {
   }
   if (!vertex && !fragment && !fog && !(spec && spec.mapTextures)) return material;
   const prev = material.onBeforeCompile;
+  // The patches already on the material are part of the program too: two
+  // materials with the same skin shader and different patches below it must
+  // not share one compiled program.
+  const below = material.customProgramCacheKey();
   material.onBeforeCompile = (shader) => {
     if (prev) prev(shader);
     const headV = [];
@@ -100,7 +104,10 @@ export function dress(material, spec, theme) {
     if (needsUv || vertex) {
       let body = "";
       if (needsUv) body += "#if !defined( USE_UV ) && !defined( USE_ANISOTROPY )\n\tvUv = uv;\n#endif\n";
-      if (vertex) body += vertex + "\n";
+      // An instanced mesh can hand the skin its own idea of `transformed`
+      // (a box at its real size) and take it back afterwards.
+      const wrap = material.userData.vertexWrap;
+      if (vertex) body += (wrap ? wrap[0] + "\n" : "") + vertex + "\n" + (wrap ? wrap[1] + "\n" : "");
       shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n" + body);
     }
     if (fragment) shader.fragmentShader = shader.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n" + fragment);
@@ -113,7 +120,7 @@ export function dress(material, spec, theme) {
     if (fog) shader.fragmentShader = shader.fragmentShader.replace("#include <fog_fragment>", fog);
   };
   const maps = spec && spec.mapTextures ? Object.keys(spec.mapTextures).join(",") : "";
-  material.customProgramCacheKey = () => [vertex, fragment, fog, maps].join("\n");
+  material.customProgramCacheKey = () => [below, vertex, fragment, fog, maps].join("\n");
   return material;
 }
 

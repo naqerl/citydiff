@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,4 +152,43 @@ func TestViewWithATourStartsOnTheToursRange(t *testing.T) {
 func toJSON(v any) string {
 	raw, _ := json.Marshal(v)
 	return string(raw)
+}
+
+func TestSceneIsServedGzippedWithItsDecodedSize(t *testing.T) {
+	dir, h := rangeRepo(t)
+	snap, err := buildSnapshot(dir, h[0]+".."+h[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := newViewer(snap, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(v.handler())
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL+"/scene.json", nil)
+	// Asked for by hand, so the client hands the body over still compressed.
+	req.Header.Set("Accept-Encoding", "gzip")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("Content-Encoding = %q", res.Header.Get("Content-Encoding"))
+	}
+	zr, err := gzip.NewReader(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, v.payload) {
+		t.Fatal("the decoded body is not the scene")
+	}
+	if got := res.Header.Get("X-Scene-Bytes"); got != strconv.Itoa(len(raw)) {
+		t.Fatalf("X-Scene-Bytes = %s, decoded %d", got, len(raw))
+	}
 }

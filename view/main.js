@@ -16,6 +16,7 @@ import { isLaunch, LAUNCH_SKIN } from "./launch.js";
 import { createRocket } from "./rocket.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
+import { buildSigns, hasPlate, signText } from "./signs.js";
 
 let theme = null;
 let themeReady = false;
@@ -182,31 +183,20 @@ function adoptShaders(next) {
     return dress(mat, next.ground, next);
   });
   swapMaterial(horizonMesh, next.horizon, next, () => {
-    const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true });
+    const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, ...ON_THE_GROUND });
     return dress(mat, next.horizon, next);
   });
-  for (const plinth of plinths) {
-    if (plinth.external) {
-      plinth.material = swapMaterial(plinth.mesh, next.external, next, () => dress(new THREE.MeshStandardMaterial(), next.external, next));
-    } else {
-      plinth.material = swapMaterial(plinth.mesh, next.package, next, () => {
-        const mat = new THREE.MeshLambertMaterial();
-        tintEmissive(mat);
-        return dress(mat, next.package, next);
-      });
-    }
-  }
+  swapMaterial(pkgMesh, next.package, next, () => packageMaterial(next));
+  swapMaterial(extMesh, next.external, next, () => externalMaterial(next));
   if (solidMesh && next.entity.vertexSource && next.entity.vertexSource.includes("aHouse") && !solidMesh.geometry.getAttribute("aHouse")) {
     solidMesh.geometry.setAttribute("aHouse", houseAttribute(solidMesh.userData.slots));
   }
-  if (solidMesh) {
-    solidMat = swapMaterial(solidMesh, next.entity, next, () => {
-      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-      tintEmissive(mat);
-      return dress(mat, next.entity, next);
-    });
-  }
+  if (solidMesh) solidMat = swapMaterial(solidMesh, next.entity, next, () => towerMaterial(next));
 }
+
+// The per-vertex and per-instance colours a theme fade blends: the particle
+// colours, the arc colours and the glow of each package.
+const FADE_ATTRIBUTES = ["aColor", "aGlow"];
 
 function captureLook() {
   const mats = [];
@@ -226,8 +216,10 @@ function captureLook() {
       mats.push(rec);
     }
     if (obj.instanceColor) instances.push({ attr: obj.instanceColor, colors: Float32Array.from(obj.instanceColor.array) });
-    const painted = obj.geometry && obj.geometry.getAttribute && obj.geometry.getAttribute("aColor");
-    if (painted) attrs.push({ attr: painted, colors: Float32Array.from(painted.array) });
+    for (const name of FADE_ATTRIBUTES) {
+      const painted = obj.geometry && obj.geometry.getAttribute && obj.geometry.getAttribute(name);
+      if (painted) attrs.push({ attr: painted, colors: Float32Array.from(painted.array) });
+    }
   });
   const clear = new THREE.Color();
   renderer.getClearColor(clear);
@@ -336,6 +328,7 @@ function repaintScene() {
 
 function fadeToTheme(next) {
   if (theme && theme.uTime) next.uTime = theme.uTime;
+  flushAllArcs();
   adoptShaders(next);
   const from = captureLook();
   const fromLabel = theme.label.text;
@@ -347,7 +340,7 @@ function fadeToTheme(next) {
   const to = captureLook();
   const glideSky = fromSky && skyColors(next);
   mixLook(from, to, 0);
-  redrawPlates(fromLabel, fromBg);
+  paintSigns(fromLabel, fromBg);
   if (glideSky) applyGradient(scene, fromSky);
   else applySky(scene, next);
   skinWarning = next.shadeWarning || "";
@@ -356,7 +349,7 @@ function fadeToTheme(next) {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) {
     mixLook(from, to, 1);
-    redrawPlates(next.label.text, next.label.background);
+    paintSigns(next.label.text, next.label.background);
     if (glideSky) applyGradient(scene, glideSky);
     if (next.hud && next.hud.scheme) document.documentElement.style.colorScheme = next.hud.scheme;
     updateHalo();
@@ -388,7 +381,7 @@ function tickThemeFade(now) {
   const k = Math.min(1, (now - fade.t0) / fade.ms);
   const s = k * k * (3 - 2 * k);
   mixLook(fade.from, fade.to, s);
-  redrawPlates(mixCSS(fade.fromLabel, fade.toLabel, s), mixCSS(fade.fromBg, fade.toBg, s));
+  paintSigns(mixCSS(fade.fromLabel, fade.toLabel, s), mixCSS(fade.fromBg, fade.toBg, s));
   if (fade.fromSky) {
     applyGradient(scene, {
       top: mixCSS(fade.fromSky.top, fade.toSky.top, s),
@@ -404,7 +397,7 @@ function tickThemeFade(now) {
     if (fade.scheme) document.documentElement.style.colorScheme = fade.scheme;
     themeFade = null;
     paintPlinths();
-    redrawPlates(fade.toLabel, fade.toBg);
+    paintSigns(fade.toLabel, fade.toBg);
     updateHalo();
   }
   return true;
@@ -822,6 +815,7 @@ document.querySelector("#side-theme").addEventListener("click", () => openSkinPa
 // The list under the search box is placed on the page, not in the sidebar,
 // so it follows the sidebar when that scrolls.
 hud.side.addEventListener("scroll", placeResults, { passive: true });
+hud.side.addEventListener("scroll", growVisibleRows, { passive: true, capture: true });
 // iOS zooms the page on a pinch whatever the viewport says. The city has its
 // own pinch, and the page itself never zooms.
 if (touchUI.matches) document.addEventListener("gesturestart", (event) => event.preventDefault());
@@ -858,6 +852,21 @@ const held = new Set();
 const flyDir = new THREE.Vector3();
 let lastFrame = 0;
 let lastActivity = 0;
+// Decoration-only frames are paced to 60 a second: the time owed since the
+// last one drawn, and the frame that last added to it.
+const DECOR_FRAME_MS = 1000 / 60;
+let decorBudget = 0;
+let lastDecor = 0;
+// Adaptive resolution on touch screens (adaptResolution): the step, the frames a
+// verdict takes, what counts as slow and as fast, and the frames it has seen.
+const ADAPT_STEP = 0.25;
+// A verdict takes 45 frames or 1.2 s of them, whichever comes first, and at
+// least 8: a phone drawing 7 frames a second should not wait 7 s to be helped.
+const ADAPT_FRAMES = 45;
+const ADAPT_WINDOW_MS = 1200;
+const ADAPT_SLOW_MS = 22;
+const ADAPT_FAST_MS = 17.5;
+const adapt = { last: 0, gaps: [], span: 0, good: 0, settled: 0, ceiling: Infinity, until: 0 };
 const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
@@ -870,6 +879,10 @@ let idleSpin = false;
 // view: overview, a selected package, and a call focus.
 let introSpin = true;
 let viewDirty = true;
+// The declarations' drawn boxes depend on the mode and on what is lit, so
+// they are worked out again when applyMode runs, not on every frame the view
+// is redrawn: a sheet slide or a pinch redraws every frame and changes none.
+let instancesDirty = true;
 // The loader is up until main() paints the finished city. While it is, the
 // animate loop must not draw: the loader covers the canvas, and rendering a
 // half-built city every frame the loader yields is pure waste — on a large
@@ -899,6 +912,7 @@ function requestFrame(delay = 0) {
 
 function parkLoop() {
   clearTimeout(idleTimer);
+  adapt.last = 0;
   const remain = lastActivity ? IDLE_SPIN_MS - (performance.now() - lastActivity) : IDLE_SPIN_MS;
   idleTimer = setTimeout(requestFrame, Math.max(40, remain));
 }
@@ -1152,7 +1166,7 @@ function updateHalo() {
     const slot = slotById.get(subject.id);
     if (slot) box = visualBox(slot, slotOpen(slot));
   } else if (subject.kind === "package") {
-    box = laid.packages.find((item) => item.id === subject.id) || null;
+    box = boxById.get(subject.id) || null;
   }
   if (!box) {
     halo.visible = false;
@@ -1177,6 +1191,9 @@ let solidMat = null;
 let planeMesh = null;
 let groundMesh = null;
 let horizonMesh = null;
+let pkgMesh = null;
+let extMesh = null;
+let signs = null;
 let hemiLight = null;
 let keyLight = null;
 let rimLight = null;
@@ -1283,11 +1300,13 @@ async function sliced(n, progress, fn) {
   progress(1);
 }
 
-// Reads scene.json with the download's own progress. The server sends a
-// Content-Length; without one the stage is passed at the end, because a guess
-// would be worse than a bar that holds still.
+// Reads scene.json with the download's own progress. The server sends the
+// decoded size (the body may come gzipped, and the stream yields it decoded);
+// without one the stage is passed at the end, because a guess would be worse
+// than a bar that holds still.
 async function readScene(response) {
-  const total = Number(response.headers.get("Content-Length") || 0);
+  const packed = !!response.headers.get("Content-Encoding");
+  const total = Number(response.headers.get("X-Scene-Bytes") || (packed ? 0 : response.headers.get("Content-Length")) || 0);
   if (!response.body || !total) return response.json();
   const reader = response.body.getReader();
   const chunks = [];
@@ -1299,13 +1318,20 @@ async function readScene(response) {
     got += value.length;
     showLoad(null, loadAt("scene", got / total));
   }
-  const bytes = new Uint8Array(got);
+  return JSON.parse(joinText(chunks, got));
+}
+
+// The chunks, joined and decoded. The bytes are let go before the parse
+// starts: on a large scene they are tens of megabytes a phone needs for it.
+function joinText(chunks, size) {
+  const bytes = new Uint8Array(size);
   let at = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, at);
     at += chunk.length;
   }
-  return JSON.parse(new TextDecoder().decode(bytes));
+  chunks.length = 0;
+  return new TextDecoder().decode(bytes);
 }
 
 async function main() {
@@ -1337,6 +1363,7 @@ async function main() {
   showLoad("Laying out the city…", loadAt("scene"));
   await nextPaint();
   laid = layoutCity(sceneDoc.packages || []);
+  indexLayout();
   showLoad("Indexing declarations…", loadAt("layout"));
   await nextPaint();
   indexScene();
@@ -1356,7 +1383,9 @@ async function main() {
   // Fit and paint the finished city behind the bar before it goes, so the first
   // thing on screen is the city, not an empty canvas for a frame.
   resizeView();
-  renderer.render(scene, camera);
+  flushAllArcs();
+  warmPrograms();
+  drawCity();
   hideLoad();
   loading = false;
   requestFrame();
@@ -1377,6 +1406,32 @@ async function main() {
   });
   const wanted = new URLSearchParams(location.search).get("tour");
   tourUI.loadURL(wanted || "./tour.json");
+}
+
+// Every program a selection can need, compiled and drawn once behind the
+// loader. The halo, the ring, the arcs and their particles are hidden until
+// the first tap, and a program is otherwise compiled the first time it draws:
+// on a phone that is a visible stall on the first selection. The next render
+// clears what this one drew.
+// The ghost of an old body (addBodyBars) draws with this program.
+const warmGhost = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.28, depthWrite: false });
+function warmPrograms() {
+  const warm = new THREE.Scene();
+  warm.fog = scene.fog;
+  const box = new THREE.BoxGeometry(0.01, 0.01, 0.01);
+  const dot = new THREE.BufferGeometry();
+  dot.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+  warm.add(
+    new THREE.Points(dot, flowMaterial),
+    new THREE.Mesh(box, arcMaterial),
+    new THREE.Mesh(box, warmGhost),
+    new THREE.Mesh(box, haloMaterial),
+    new THREE.LineLoop(ring.geometry, ring.material),
+  );
+  for (const obj of warm.children) obj.frustumCulled = false;
+  renderer.render(warm, camera);
+  box.dispose();
+  dot.dispose();
 }
 
 function clearTourMarks() {
@@ -1477,7 +1532,7 @@ function applyTourStep(step) {
 
 // A package's roof corners, so framing it shows all of it.
 function packagePoints(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (!box) {
     const at = packageAnchor(id);
     return at ? [at] : [];
@@ -1540,7 +1595,7 @@ function applyQuery() {
   urlReady = true;
   const node = readNode(state.select, nodeNames);
   if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
-  else if (node && node.kind === "external" && laid.externals.some((item) => item.id === node.id)) selectExternal(node.id, callInbound);
+  else if (node && node.kind === "external" && extById.has(node.id)) selectExternal(node.id, callInbound);
   else if (node && node.kind === "entity") selectEntity(node.id);
   const enter = params.get("enter");
   if (!selected && enter && byPackage.has(enter)) selectPackage(enter, true);
@@ -1628,7 +1683,41 @@ function indexScene() {
     ...(sceneDoc.packages || []).map((pkg) => ({ kind: pkg.external ? "external" : "package", id: pkg.id })),
     ...[...byEntity.values()].filter((item) => item.box).map((item) => ({ kind: "entity", entity: item.entity, pkg: item.pkg.id })),
   ]);
+  indexFamilies();
   indexCallers();
+}
+
+// Who belongs to whom, in scene order: a package's child packages, the drawn
+// declarations of a package, the methods drawn on a type, and how many
+// packages share a name. Every click used to find these by walking the whole
+// scene, which on a large codebase is a pause on each one.
+const childrenOf = new Map();
+const entitiesOf = new Map();
+const methodsOf = new Map();
+const namesake = new Map();
+
+function indexFamilies() {
+  linkMemo.clear();
+  childrenOf.clear();
+  entitiesOf.clear();
+  methodsOf.clear();
+  namesake.clear();
+  const push = (map, key, value) => {
+    const list = map.get(key);
+    if (list) list.push(value);
+    else map.set(key, [value]);
+  };
+  for (const pkg of sceneDoc.packages || []) {
+    if (pkg.external) continue;
+    push(childrenOf, pkg.parent, pkg);
+    const name = pkg.name || pkg.id;
+    namesake.set(name, (namesake.get(name) || 0) + 1);
+  }
+  for (const found of byEntity.values()) {
+    if (!found.box) continue;
+    if (found.pkg) push(entitiesOf, found.pkg.id, found);
+    if (found.entity.kind === "method" && found.entity.parent) push(methodsOf, found.entity.parent, found);
+  }
 }
 
 function declKey(file, recv, name) {
@@ -1746,51 +1835,30 @@ async function buildCity(progress = () => {}) {
       side: THREE.DoubleSide,
       transparent: true,
       opacity: theme.horizon.opacity,
+      ...ON_THE_GROUND,
     }), theme.horizon, theme), theme.horizon),
   );
   horizonMesh.rotation.x = -Math.PI / 2;
   horizonMesh.position.y = 0.01;
   city.add(horizonMesh);
 
-  // A sign is a canvas texture, one per package, so this loop is the slow half
-  // of the stage. It is sliced so the bar keeps moving while it runs.
-  await sliced(laid.packages.length, (f) => progress(f * 0.5), (i) => {
-    const box = laid.packages[i];
-    const pkg = byPackage.get(box.id);
-    const geom = new THREE.BoxGeometry(box.w, box.h, box.d);
-    const material = new THREE.MeshLambertMaterial({
-      color: plinthColor(box.depth, box.synthetic),
-      emissive: new THREE.Color(theme.package.emissive),
-      emissiveIntensity: theme.package.emissiveIntensity,
-    });
-    tintEmissive(material);
-    rememberShade(dress(material, theme.package, theme), theme.package);
-    const mesh = new THREE.Mesh(geom, material);
-    mesh.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
-    mesh.userData = { kind: "package", id: box.id };
-    city.add(mesh);
-    const plate = namePlate(box);
-    if (plate) mesh.add(plate);
-    plinths.push({ id: box.id, box, mesh, material, plate, pkg });
-  });
-
-  for (const box of laid.externals) {
-    const mesh = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.9, 0),
-      new THREE.MeshStandardMaterial({
-        color: theme.external.color,
-        metalness: theme.external.metalness,
-        roughness: theme.external.roughness,
-        emissive: theme.external.emissive,
-        emissiveIntensity: theme.external.emissiveIntensity,
-      }),
-    );
-    rememberShade(dress(mesh.material, theme.external, theme), theme.external);
-    mesh.position.set(box.x, box.y + 1.2, box.z);
-    mesh.userData = { kind: "external", id: box.id };
-    city.add(mesh);
-    plinths.push({ id: box.id, box, mesh, material: mesh.material, plate: null, external: true });
+  // Every package is an instance of one unit box, and every package outside
+  // the snapshot an instance of one octahedron: two draw calls for the whole
+  // city, however many packages it has. paintPlinths writes their colours.
+  const signItems = [];
+  for (const box of laid.packages) {
+    const sign = hasPlate(box) ? signItems.push({ box, text: signText(box.name || box.id) }) - 1 : -1;
+    plinths.push({ id: box.id, box, pkg: byPackage.get(box.id), index: plinths.length, sign });
   }
+  const outside = laid.externals.map((box, index) => ({ id: box.id, box, index, sign: -1, external: true }));
+  pkgMesh = plinthMesh(new THREE.BoxGeometry(1, 1, 1), packageMaterial(theme), plinths, "package");
+  extMesh = plinthMesh(new THREE.OctahedronGeometry(0.9, 0), externalMaterial(theme), outside, "external");
+  plinths.push(...outside);
+  for (const mesh of [pkgMesh, extMesh]) if (mesh) city.add(mesh);
+  signs = buildSigns(signItems, renderer, new THREE.Color(theme.label.text));
+  city.add(signs.mesh);
+  paintSigns(theme.label.text, theme.label.background);
+  progress(0.5);
 
   const solids = [];
   await sliced(laid.packages.length, (f) => progress(0.5 + f * 0.15), (i) => {
@@ -1815,17 +1883,261 @@ async function buildCity(progress = () => {}) {
   if (theme.entity.vertexSource && theme.entity.vertexSource.includes("aHouse")) {
     geo.setAttribute("aHouse", houseAttribute(solids));
   }
-  solidMat = new THREE.MeshLambertMaterial({
-    color: theme.entity.color,
-    emissive: theme.entity.emissive,
-    emissiveIntensity: theme.entity.emissiveIntensity,
-    vertexColors: true,
-  });
-  tintEmissive(solidMat);
-  rememberShade(dress(solidMat, theme.entity, theme), theme.entity);
+  solidMat = towerMaterial(theme);
+  solidMat.color.set(theme.entity.color);
+  solidMat.emissive.set(theme.entity.emissive);
+  solidMat.emissiveIntensity = theme.entity.emissiveIntensity;
   solidMesh = await makeInstances(geo, solidMat, solids, (f) => progress(0.65 + f * 0.35));
   if (solidMesh) city.add(solidMesh);
 }
+
+// A package box or an outside package. Each instance carries its own glow:
+// for a package the emissive intensity (the colour is the skin's), for an
+// outside package the emissive colour times its intensity.
+function plinthPatch(material, sized) {
+  const prev = material.onBeforeCompile;
+  const below = material.customProgramCacheKey();
+  material.onBeforeCompile = (shader, renderer) => {
+    prev.call(material, shader, renderer);
+    const size = sized ? "attribute vec3 aBoxSize;\n" : "";
+    shader.vertexShader = "attribute vec3 aGlow;\n" + size + "varying vec3 vGlow;\n" +
+      shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n\tvGlow = aGlow;");
+    shader.fragmentShader = "varying vec3 vGlow;\n" +
+      shader.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vGlow;");
+  };
+  material.customProgramCacheKey = () => below + "\nplinth" + (sized ? " sized" : "");
+  // A skin's vertex shader writes `transformed` for a box at its real size,
+  // as it did when every package was its own mesh.
+  if (sized) material.userData.vertexWrap = ["transformed *= aBoxSize;", "transformed /= aBoxSize;"];
+  return material;
+}
+
+function packageMaterial(skin) {
+  const mat = new THREE.MeshLambertMaterial({ emissive: new THREE.Color(skin.package.emissive), emissiveIntensity: 1 });
+  tintEmissive(mat);
+  plinthPatch(mat, true);
+  return rememberShade(dress(mat, skin.package, skin), skin.package);
+}
+
+function externalMaterial(skin) {
+  const mat = new THREE.MeshStandardMaterial({
+    metalness: skin.external.metalness,
+    roughness: skin.external.roughness,
+    emissive: 0xffffff,
+    emissiveIntensity: 1,
+  });
+  plinthPatch(mat, false);
+  return rememberShade(dress(mat, skin.external, skin), skin.external);
+}
+
+function plinthMesh(geo, material, list, kind) {
+  if (!list.length) return null;
+  const n = list.length;
+  const mesh = new THREE.InstancedMesh(geo, material, n);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+  geo.setAttribute("aGlow", new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3));
+  if (kind === "package") {
+    const sizes = new Float32Array(n * 3);
+    list.forEach((plinth, i) => sizes.set([plinth.box.w, plinth.box.h, plinth.box.d], i * 3));
+    geo.setAttribute("aBoxSize", new THREE.InstancedBufferAttribute(sizes, 3));
+  }
+  mesh.userData = { kind: kind + "s", pick: kind, ids: list.map((plinth) => plinth.id) };
+  mesh.frustumCulled = false;
+  for (const plinth of list) placePlinth(mesh, plinth, true);
+  mesh.instanceMatrix.needsUpdate = true;
+  if (kind === "package") {
+    mesh.userData.plinths = list;
+    mesh.userData.top = list.reduce((top, plinth) => Math.max(top, plinth.box.y + plinth.box.h), 0);
+    mesh.userData.grid = pickGrid(list, (plinth) => [plinth.box.x, plinth.box.z, plinth.box.w, plinth.box.d]);
+    mesh.raycast = raycastPlinths;
+  } else {
+    // Bounds for picking, taken while every instance is shown.
+    mesh.computeBoundingSphere();
+  }
+  return mesh;
+}
+
+// A hidden plinth is an instance shrunk to nothing: it draws no pixel and no
+// ray can hit it.
+function placePlinth(mesh, plinth, shown) {
+  plinth.shown = shown;
+  const box = plinth.box;
+  if (plinth.external) scratch.pos.set(box.x, box.y + 1.2, box.z);
+  else scratch.pos.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
+  if (!shown) scratch.scale.set(0, 0, 0);
+  else if (plinth.external) scratch.scale.set(1, 1, 1);
+  else scratch.scale.set(box.w, box.h, box.d);
+  scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
+  mesh.setMatrixAt(plinth.index, scratch.mat);
+}
+
+// The declarations draw at the size the view asks for: a removed one in the
+// overview, a shut one while something is lit, a method on its type's drawn
+// roof. The instance matrix is the laid-out box; the vertex shader moves each
+// vertex into the drawn box, by the same rule as drawnSize and drawnBox in
+// layout.js (visualBox, which picking and the arcs use). A selection writes
+// the open flags that moved, not a matrix for every declaration. A skin's
+// vertex shader still sees the unit box: this runs after it.
+const towerUniforms = { uLit: { value: 0 }, uOverlay: { value: 0 } };
+
+function towerMaterial(skin) {
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  tintEmissive(mat);
+  const prev = mat.onBeforeCompile;
+  const below = mat.customProgramCacheKey();
+  mat.onBeforeCompile = (shader, renderer) => {
+    prev.call(mat, shader, renderer);
+    shader.uniforms.uLit = towerUniforms.uLit;
+    shader.uniforms.uOverlay = towerUniforms.uOverlay;
+    shader.vertexShader = [
+      // x, y, z, w and h, d, the type's h (0 without one), removed.
+      "attribute vec4 aLaidA;",
+      "attribute vec4 aLaidB;",
+      // open, the type open, the type removed.
+      "attribute vec4 aOpen;",
+      "uniform float uLit;",
+      "uniform float uOverlay;",
+      shader.vertexShader,
+    ].join("\n").replace("#include <project_vertex>", `
+    {
+      vec3 laid = vec3(aLaidA.w, aLaidB.x, aLaidB.y);
+      vec3 base = max(laid, vec3(0.05));
+      vec3 size;
+      if (aLaidB.w > 0.5 && uOverlay < 0.5) size = vec3(0.001);
+      else if (uLit > 0.5 && aOpen.x < 0.5) size = vec3(max(laid.x * 0.4, 0.04), 0.03, max(laid.z * 0.4, 0.04));
+      else size = vec3(base.x, max(laid.y * (0.045 + 0.955 * aOpen.x), 0.05), base.z);
+      float floorY = aLaidA.y;
+      if (aLaidB.z > 0.0) {
+        float typeH;
+        if (aOpen.z > 0.5 && uOverlay < 0.5) typeH = 0.001;
+        else if (uLit > 0.5 && aOpen.y < 0.5) typeH = 0.03;
+        else typeH = max(aLaidB.z * (0.045 + 0.955 * aOpen.y), 0.05);
+        floorY = aLaidA.y - aLaidB.z + typeH;
+      }
+      vec3 laidCenter = aLaidA.xyz + base * 0.5;
+      vec3 drawnCenter = vec3(aLaidA.x, floorY, aLaidA.z) + size * 0.5;
+      transformed = (drawnCenter - laidCenter) / base + transformed * (size / base);
+    }
+    #include <project_vertex>`);
+  };
+  mat.customProgramCacheKey = () => below + "\ntower";
+  return rememberShade(dress(mat, skin.entity, skin), skin.entity);
+}
+
+// Picking walks a grid over the ground along the ray and tests only the
+// boxes standing in the cells it crosses. Three's InstancedMesh.raycast
+// tested every instance on every mouse move, which at 100k declarations was
+// most of a frame. An item is listed in every cell its footprint, grown by
+// half a cell, touches, so the samples the walk takes half a cell apart
+// cannot step past it.
+function pickGrid(items, rectOf) {
+  const b = laid.bounds;
+  const span = Math.max(b.maxX - b.minX, b.maxZ - b.minZ, 1);
+  const cell = Math.max(0.5, span / 256);
+  const cols = Math.ceil((b.maxX - b.minX) / cell) + 3;
+  const rows = Math.ceil((b.maxZ - b.minZ) / cell) + 3;
+  const x0 = b.minX - cell;
+  const z0 = b.minZ - cell;
+  const clampCol = (x) => Math.min(cols - 1, Math.max(0, Math.floor((x - x0) / cell)));
+  const clampRow = (z) => Math.min(rows - 1, Math.max(0, Math.floor((z - z0) / cell)));
+  const reach = (i, visit) => {
+    const [x, z, w, d] = rectOf(items[i]);
+    const pad = cell * 0.5;
+    for (let r = clampRow(z - pad); r <= clampRow(z + d + pad); r++) {
+      for (let c = clampCol(x - pad); c <= clampCol(x + w + pad); c++) visit(r * cols + c);
+    }
+  };
+  // Compressed rows: each cell's items are one run of `list`.
+  const start = new Int32Array(cols * rows + 1);
+  for (let i = 0; i < items.length; i++) reach(i, (k) => { start[k + 1]++; });
+  for (let k = 0; k < cols * rows; k++) start[k + 1] += start[k];
+  const fill = start.slice(0, cols * rows);
+  const list = new Int32Array(start[cols * rows]);
+  for (let i = 0; i < items.length; i++) reach(i, (k) => { list[fill[k]++] = i; });
+  return { cell, cols, rows, x0, z0, start, list, seen: new Int32Array(items.length), stamp: 0 };
+}
+
+const pickBox = new THREE.Box3();
+const pickPoint = new THREE.Vector3();
+
+// The nearest box along the ray among the grid's items. boxOf fills pickBox
+// for item i, or returns false when the item cannot be hit.
+function pickAlong(grid, ray, top, boxOf) {
+  const b = laid.bounds;
+  // The stretch of the ray above the city's footprint and below its roofs.
+  let t0 = 0;
+  let t1 = Infinity;
+  const lo = [grid.x0, -1, grid.z0];
+  const hi = [grid.x0 + grid.cols * grid.cell, top, grid.z0 + grid.rows * grid.cell];
+  const o = [ray.origin.x, ray.origin.y, ray.origin.z];
+  const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(dir[k]) < 1e-12) {
+      if (o[k] < lo[k] || o[k] > hi[k]) return null;
+      continue;
+    }
+    let a = (lo[k] - o[k]) / dir[k];
+    let c = (hi[k] - o[k]) / dir[k];
+    if (a > c) [a, c] = [c, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, c);
+  }
+  if (t0 > t1) return null;
+  const flat = Math.hypot(dir[0], dir[2]);
+  const step = flat > 1e-9 ? (grid.cell * 0.5) / flat : Math.max(t1 - t0, 1);
+  grid.stamp++;
+  let best = null;
+  for (let t = t0; t <= t1 + step; t += step) {
+    // Every later cell holds only hits further along the ray than this one.
+    if (best && t > best.distance + step) break;
+    const at = Math.min(t, t1);
+    const c = Math.floor((o[0] + dir[0] * at - grid.x0) / grid.cell);
+    const r = Math.floor((o[2] + dir[2] * at - grid.z0) / grid.cell);
+    if (c < 0 || r < 0 || c >= grid.cols || r >= grid.rows) continue;
+    const k = r * grid.cols + c;
+    for (let j = grid.start[k]; j < grid.start[k + 1]; j++) {
+      const i = grid.list[j];
+      if (grid.seen[i] === grid.stamp) continue;
+      grid.seen[i] = grid.stamp;
+      if (!boxOf(i)) continue;
+      if (!ray.intersectBox(pickBox, pickPoint)) continue;
+      const distance = ray.origin.distanceTo(pickPoint);
+      if (!best || distance < best.distance) best = { distance, point: pickPoint.clone(), instanceId: i };
+    }
+  }
+  return best;
+}
+
+function raycastTowers(raycaster, intersects) {
+  const slots = this.userData.slots;
+  const hit = pickAlong(this.userData.grid, raycaster.ray, laid.bounds.maxY + 1, (i) => {
+    const box = visualBox(slots[i], slotOpen(slots[i]));
+    pickBox.min.set(box.x, box.y, box.z);
+    pickBox.max.set(box.x + box.w, box.y + box.h, box.z + box.d);
+    return true;
+  });
+  if (hit && hit.distance >= raycaster.near && hit.distance <= raycaster.far) intersects.push({ ...hit, object: this });
+}
+
+function raycastPlinths(raycaster, intersects) {
+  const list = this.userData.plinths;
+  const hit = pickAlong(this.userData.grid, raycaster.ray, this.userData.top + 1, (i) => {
+    const plinth = list[i];
+    if (!plinth.shown) return false;
+    const box = plinth.box;
+    pickBox.min.set(box.x, box.y, box.z);
+    pickBox.max.set(box.x + box.w, box.y + box.h, box.z + box.d);
+    return true;
+  });
+  if (hit && hit.distance >= raycaster.near && hit.distance <= raycaster.far) intersects.push({ ...hit, object: this });
+}
+
+// The ring lies a hair above the ground disc. From the overview the depth
+// buffer cannot tell two surfaces that close apart, and which one won changed
+// with every camera move: the ring came out in broken, flickering pieces. A
+// polygon offset pulls it toward the eye by a few steps of the depth buffer,
+// whatever the distance.
+const ON_THE_GROUND = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 };
 
 function coloredBox() {
   // Instanced colors multiply the geometry color. An empty color attribute is
@@ -1860,21 +2172,41 @@ async function makeInstances(geo, material, slots, progress = null) {
     if (progress) progress(1);
     return null;
   }
-  const mesh = new THREE.InstancedMesh(geo, material, slots.length);
-  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(slots.length * 3), 3);
+  const n = slots.length;
+  const mesh = new THREE.InstancedMesh(geo, material, n);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+  const laidA = new Float32Array(n * 4);
+  const laidB = new Float32Array(n * 4);
+  const open = new Float32Array(n * 4);
   const color = new THREE.Color();
   // One matrix and one colour per declaration: slicing it keeps the bar alive
-  // on a codebase with tens of thousands of them.
-  await sliced(slots.length, progress, (index) => {
+  // on a codebase with tens of thousands of them. The matrix is the laid-out
+  // box and never changes; the shader draws the box at its drawn size.
+  await sliced(n, progress, (index) => {
     const slot = slots[index];
     color.copy(entityColor(slot.entity));
     mesh.setColorAt(index, color);
-    writeSlot(mesh, index, slot, 1);
+    const parent = towerParent(slot);
+    laidA.set([slot.x, slot.y, slot.z, slot.w], index * 4);
+    laidB.set([slot.h, slot.d, parent ? parent.h : 0, slot.entity.change === "removed" ? 1 : 0], index * 4);
+    open.set([1, 1, parent && parent.entity.change === "removed" ? 1 : 0, 0], index * 4);
+    const w = Math.max(slot.w, 0.05);
+    const h = Math.max(slot.h, 0.05);
+    const d = Math.max(slot.d, 0.05);
+    scratch.pos.set(slot.x + w / 2, slot.y + h / 2, slot.z + d / 2);
+    scratch.scale.set(w, h, d);
+    scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
+    mesh.setMatrixAt(index, scratch.mat);
   });
+  geo.setAttribute("aLaidA", new THREE.InstancedBufferAttribute(laidA, 4));
+  geo.setAttribute("aLaidB", new THREE.InstancedBufferAttribute(laidB, 4));
+  geo.setAttribute("aOpen", new THREE.InstancedBufferAttribute(open, 4));
   mesh.instanceColor.needsUpdate = true;
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   mesh.userData.slots = slots;
+  mesh.userData.grid = pickGrid(slots, (slot) => [slot.x, slot.z, Math.max(slot.w, 0.05), Math.max(slot.d, 0.05)]);
+  mesh.raycast = raycastTowers;
   return mesh;
 }
 
@@ -1886,123 +2218,38 @@ function slotSize(slot, open) {
   return drawnSize(slot, drawState(slot, open));
 }
 
-// The drawn box: a method stands on the roof its type is drawn at.
+// The drawn box: a method stands on the roof its type is drawn at. It depends
+// on the mode, on whether anything is lit, and on whether the slot and its
+// type are open, so each slot keeps its last box under those four and a
+// selection works out again only the boxes it changed. Callers only read it.
+function towerParent(slot) {
+  if (slot.parentSlot === undefined) {
+    const parentId = slot.entity && slot.entity.kind === "method" ? slot.entity.parent : "";
+    slot.parentSlot = (parentId && slotById.get(parentId)) || null;
+  }
+  return slot.parentSlot;
+}
+
 function visualBox(slot, open) {
-  const parentId = slot.entity && slot.entity.kind === "method" ? slot.entity.parent : "";
-  const parent = parentId ? slotById.get(parentId) : null;
-  return drawnBox(slot, drawState(slot, open), parent, parent ? drawState(parent, slotOpen(parent)) : null);
-}
-
-function writeSlot(mesh, index, slot, open) {
-  const box = visualBox(slot, open);
-  const drawn = slot.drawn;
-  if (drawn && drawn[0] === box.x && drawn[1] === box.y && drawn[2] === box.z && drawn[3] === box.w && drawn[4] === box.h && drawn[5] === box.d) {
-    return false;
+  const parent = towerParent(slot);
+  const parentOpen = parent ? slotOpen(parent) : 0;
+  const key = (mode === "overlay" ? 1 : 0) | (lit ? 2 : 0) | (open << 2) | (parentOpen << 3);
+  if (slot.boxKey !== key) {
+    slot.box = drawnBox(slot, drawState(slot, open), parent, parent ? drawState(parent, parentOpen) : null);
+    slot.boxKey = key;
   }
-  slot.drawn = [box.x, box.y, box.z, box.w, box.h, box.d];
-  scratch.pos.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
-  scratch.scale.set(box.w, box.h, box.d);
-  scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
-  mesh.setMatrixAt(index, scratch.mat);
-  return true;
+  return slot.box;
 }
 
-// A sign is painted at this size and then stretched over its plate: a bigger
-// canvas is what keeps the text sharp now that a plate grows with its building.
-const SIGN_FONT = 96;
-const SIGN_PAD = 28;
-
-function signFont() {
-  return "600 " + SIGN_FONT + "px ui-monospace, monospace";
-}
-
-function drawSign(canvas, text, textColor, background) {
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (background && background !== "transparent") {
-    ctx.fillStyle = background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.font = signFont();
-  ctx.fillStyle = textColor;
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, SIGN_PAD / 2, canvas.height / 2);
-}
-
-function redrawPlates(textColor, background) {
-  for (const plinth of plinths) {
-    const plate = plinth.plate;
-    const tex = plate && plate.userData.sign;
-    if (!tex) continue;
-    drawSign(tex.image, plate.userData.signText, textColor, background);
-    tex.needsUpdate = true;
-  }
-}
-
-function signTexture(label) {
-  const probe = document.createElement("canvas").getContext("2d");
-  probe.font = signFont();
-  const text = label.length > 22 ? label.slice(0, 21) + "…" : label;
-  const textW = Math.ceil(probe.measureText(text).width);
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(SIGN_FONT * 1.34, textW + SIGN_PAD);
-  canvas.height = Math.round(SIGN_FONT * 1.5);
-  const background = theme.label.background;
-  drawSign(canvas, text, theme.label.text, background);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  return { tex, aspect: canvas.width / canvas.height, text };
-}
-
-function setPlateOpacity(plate, opacity) {
-  if (!plate) return;
-  const mats = new Set();
-  plate.traverse((obj) => {
-    if (obj.material) mats.add(obj.material);
-  });
-  for (const mat of mats) {
-    mat.opacity = opacity;
-    mat.transparent = true;
-  }
-}
-
-// The name sits on all four faces, just under the roof, facing outward.
-// PlaneGeometry faces local +z. rotation.y turns that normal to each side:
-// 0 → +z, π → −z, +π/2 → +x, −π/2 → −x.
-// A sign is as big as its wall allows: as wide as the face it sits on, and no
-// taller than the building can carry. A tall package gets a big sign, a flat
-// one a small one, and the two pairs of faces get a geometry each because the
-// front of a building is usually wider than its side.
-function plateGeometry(span, boxHeight, aspect) {
-  const width = Math.max(0.6, span * 0.94);
-  const maxHeight = Math.max(0.5, Math.min(boxHeight * 0.62, 4));
-  const height = Math.min(width / aspect, maxHeight);
-  return new THREE.PlaneGeometry(height * aspect, height);
-}
-
-function namePlate(box) {
-  if (Math.max(box.w, box.d) < 5 || Math.min(box.w, box.d) < 2.2) return null;
-  const { tex, aspect, text } = signTexture(box.name || box.id);
-  const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
-  const group = new THREE.Group();
-  group.userData.sign = tex;
-  group.userData.signText = text;
-  const gap = 0.045;
-  const faces = [
-    [0, box.d / 2 + gap, 0, box.w],
-    [0, -box.d / 2 - gap, Math.PI, box.w],
-    [box.w / 2 + gap, 0, Math.PI / 2, box.d],
-    [-box.w / 2 - gap, 0, -Math.PI / 2, box.d],
-  ];
-  for (const [x, z, rot, span] of faces) {
-    const geo = plateGeometry(span, box.h, aspect);
-    const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(x, box.h / 2 - geo.parameters.height / 2 - 0.06, z);
-    mesh.rotation.y = rot;
-    group.add(mesh);
-  }
-  return group;
+// The ink and the plate behind every package name. Both are colours on the
+// one sign mesh, so a fade calls this every frame and uploads nothing.
+const signPlate = new THREE.Color();
+function paintSigns(textColor, background) {
+  if (!signs) return;
+  signs.material.color.set(textColor);
+  const [r, g, b, a] = parseCSSColor(background);
+  signPlate.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
+  signs.setPlate(signPlate, a);
 }
 
 function plinthColor(depth, synthetic) {
@@ -2028,11 +2275,30 @@ function entityColor(entity) {
   return vary(entity.id, base);
 }
 
+// A declaration's colour is its kind's, a step lighter or darker by its id.
+// There are 17 steps, so each kind's colour is shaded 17 times per theme and
+// looked up, instead of converted to HSL and back for every declaration on
+// every repaint. The result is shared: callers copy it.
+const varySteps = new WeakMap();
+const varyStep = new Map();
+
 function vary(id, color) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 33 + id.charCodeAt(i)) >>> 0;
-  const shift = ((hash % 17) - 8) / 220;
-  return color.clone().offsetHSL(0, 0, shift);
+  let step = varyStep.get(id);
+  if (step === undefined) {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = (hash * 33 + id.charCodeAt(i)) >>> 0;
+    step = hash % 17;
+    varyStep.set(id, step);
+  }
+  // Keyed by the colour itself: a theme change sets the same Color objects in
+  // place, so the shades are made again when its value moved.
+  let shades = varySteps.get(color);
+  if (!shades || shades.r !== color.r || shades.g !== color.g || shades.b !== color.b) {
+    shades = { r: color.r, g: color.g, b: color.b, steps: [] };
+    for (let k = 0; k < 17; k++) shades.steps.push(color.clone().offsetHSL(0, 0, (k - 8) / 220));
+    varySteps.set(color, shades);
+  }
+  return shades.steps[step];
 }
 
 // The overview draws an arc for every import that was added or deleted, and
@@ -2087,6 +2353,44 @@ function changedCallLinks() {
 // building rather than skimming it.
 const LAND = 0.25;
 
+// Lookups the layout does not answer directly, built once per scene: a
+// package or an outside package by id, and which package footprints cover
+// each cell of a grid over the ground, so "what is under this point" reads a
+// handful of boxes instead of every package in the city.
+const boxById = new Map();
+const extById = new Map();
+let footprints = null;
+
+function indexLayout() {
+  boxById.clear();
+  extById.clear();
+  for (const box of laid.packages) boxById.set(box.id, box);
+  for (const ext of laid.externals) extById.set(ext.id, ext);
+  const b = laid.bounds;
+  const n = 128;
+  const cell = Math.max(1, Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / n);
+  const cols = Math.max(1, Math.ceil((b.maxX - b.minX) / cell) + 1);
+  const rows = Math.max(1, Math.ceil((b.maxZ - b.minZ) / cell) + 1);
+  const cells = Array.from({ length: cols * rows }, () => []);
+  const col = (x) => Math.min(cols - 1, Math.max(0, Math.floor((x - b.minX) / cell)));
+  const row = (z) => Math.min(rows - 1, Math.max(0, Math.floor((z - b.minZ) / cell)));
+  // In layout order, so a cell lists its boxes in the order a scan of
+  // laid.packages would meet them.
+  for (const box of laid.packages) {
+    for (let r = row(box.z); r <= row(box.z + box.d); r++) {
+      for (let c = col(box.x); c <= col(box.x + box.w); c++) cells[r * cols + c].push(box);
+    }
+  }
+  footprints = { cells, col, row, cols, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ };
+}
+
+// The packages whose footprint may hold (x, z). Callers still test the rect.
+function packagesUnder(x, z) {
+  const f = footprints;
+  if (!f || x < f.minX || x > f.maxX || z < f.minZ || z > f.maxZ) return [];
+  return f.cells[f.row(z) * f.cols + f.col(x)];
+}
+
 let ownTopCache = null;
 function ownTop(id) {
   if (!ownTopCache) {
@@ -2100,32 +2404,39 @@ function ownTop(id) {
 }
 
 // While a module is selected, other towers are shut. Land on the roof that is
-// actually drawn. With nothing selected, use the laid tower tops.
+// actually drawn. With nothing selected, use the laid tower tops. The drawn
+// roofs are worked out once for each selection and mode: the clearance loop
+// asks for them thousands of times per arc.
+let shownTopCache = null;
 function shownOwnTop(id) {
-  const box = laid.packages.find((item) => item.id === id);
-  const plinth = box ? box.y + box.h : 0;
-  if (!lit) return Math.max(plinth, ownTop(id));
-  let top = plinth;
-  for (const slot of entitySlots) {
-    if (slot.pkgId !== id) continue;
-    const drawn = visualBox(slot, slotOpen(slot));
-    top = Math.max(top, drawn.y + drawn.h);
+  if (!lit) {
+    const box = boxById.get(id);
+    return Math.max(box ? box.y + box.h : 0, ownTop(id));
   }
-  return top;
+  if (!shownTopCache || shownTopCache.lit !== lit || shownTopCache.mode !== mode) {
+    const tops = new Map();
+    for (const box of laid.packages) tops.set(box.id, box.y + box.h);
+    for (const slot of entitySlots) {
+      const drawn = visualBox(slot, slotOpen(slot));
+      tops.set(slot.pkgId, Math.max(tops.get(slot.pkgId) ?? 0, drawn.y + drawn.h));
+    }
+    shownTopCache = { lit, mode, tops };
+  }
+  return shownTopCache.tops.get(id) ?? 0;
 }
 
 function packageRoof(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (box) return [box.x + box.w / 2, box.y + box.h, box.z + box.d / 2];
-  const ext = laid.externals.find((item) => item.id === id);
+  const ext = extById.get(id);
   if (ext) return [ext.x, ext.y + ext.h, ext.z];
   return null;
 }
 
 function packageAnchor(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (!box) {
-    const ext = laid.externals.find((item) => item.id === id);
+    const ext = extById.get(id);
     if (ext) return [ext.x, ext.y + ext.h + 0.7, ext.z];
     return null;
   }
@@ -2142,7 +2453,7 @@ function rectContainsXZ(box, x, z) {
 // t along the ground segment where the line is over the rectangle.
 function localTop(x, z) {
   let top = 0;
-  for (const box of laid.packages) {
+  for (const box of packagesUnder(x, z)) {
     if (!rectContainsXZ(box, x, z)) continue;
     top = Math.max(top, shownOwnTop(box.id));
   }
@@ -2154,7 +2465,7 @@ function localTop(x, z) {
 // pinned at the midpoint could not clear a tower standing right beside an
 // endpoint, however high its apex was raised, and the clearance loop used to
 // run away to a lift of 350 without gaining a metre.
-// This is the curve: makeLink draws it, the particles ride it, and the
+// This is the curve: the arc shader draws it, the particles ride it, and the
 // clearance loop measures it, so there is no second interpretation to disagree
 // with.
 function arcControls(from, to, lift) {
@@ -2204,7 +2515,7 @@ function worstPenetration(points, margin = 0, skip) {
   const steps = Math.max(1, points.length - 1);
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
-    for (const box of laid.packages) {
+    for (const box of packagesUnder(p[0], p[2])) {
       if (!rectContainsXZ(box, p[0], p[2])) continue;
       if (skip && skip.some((id) => inSubtree(box.id, id))) continue;
       const top = shownOwnTop(box.id) + margin;
@@ -2295,34 +2606,47 @@ function entityAnchor(found) {
   return null;
 }
 
-function makeLink(from, to, color, lift, roofFrom, roofTo, thin) {
-  if (!from || !to) return null;
+// An arc is a riser up its building's own column from the roof to the anchor
+// (without it the line began in mid-air beside the building), the bow from
+// anchor to anchor, and a riser down at the other end. The bow is the cubic of
+// arcControls. All of it lies in one upright plane, so the tube's cross-section
+// is known in closed form, and the GPU builds every tube from a shared ring
+// template: an arc costs a few numbers, not a geometry.
+const ARC_BOW = 32;
+const ARC_RINGS = ARC_BOW + 3;
+const ARC_SIDES = 5;
+
+function arcShape(from, to, lift, roofFrom, roofTo, thin) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
-  // A riser at each end: the anchor sits as high as its neighbourhood demands,
-  // and without this the line began in mid-air beside the building. The riser
-  // runs up the building's own column from the roof to the anchor, so the arc
-  // reads as leaving a roof and landing on one.
-  const road = arcSamples(from, to, lift, 24).slice(1, -1);
-  const path = [];
-  for (const p of [roofFrom, from]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
-  for (const p of road) path.push(new THREE.Vector3(p[0], p[1], p[2]));
-  for (const p of [to, roofTo]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
-  const curve = new THREE.CatmullRomCurve3(path);
   // A thin arc is a reference, not a traced call: barely more than half the
   // radius of a call arc, and never as thick as one.
   const radius = thin
     ? Math.max(0.03, Math.min(dist * 0.0013, 0.1))
     : Math.max(0.07, Math.min(dist * 0.0028, 0.22));
-  // As many segments as main's bows had. Twice that doubled the triangles the
-  // overview draws and bought nothing visible at this radius.
-  const segs = (dist > 48 ? 28 : 16) + (roofFrom ? 2 : 0) + (roofTo ? 2 : 0);
-  const geo = new THREE.TubeGeometry(curve, segs, radius, 5, false);
-  const mat = new THREE.MeshBasicMaterial({ color, fog: false });
-  // The tube has real vertices, so its bounds are right and it can be culled
-  // when the camera is inside the city.
-  return new THREE.Mesh(geo, mat);
+  return { from, to, lift, rise: roofFrom || from, fall: roofTo || to, radius };
 }
+
+// Ring k of an arc's centre line, in world space: 0 is the roof it rises
+// from, 1 to ARC_BOW + 1 the bow, the last the roof it lands on. The vertex
+// shader below is the same function; picking and ?check=1 use this one.
+function arcRing(shape, k, out) {
+  if (k <= 0) return out.set(shape.rise[0], shape.rise[1], shape.rise[2]);
+  if (k >= ARC_RINGS - 1) return out.set(shape.fall[0], shape.fall[1], shape.fall[2]);
+  const t = (k - 1) / ARC_BOW;
+  const u = 1 - t;
+  const a = u * u * u;
+  const b = 3 * u * u * t;
+  const c = 3 * u * t * t;
+  const d = t * t * t;
+  const { from, to, lift } = shape;
+  return out.set(
+    a * from[0] + b * from[0] + c * to[0] + d * to[0],
+    a * from[1] + b * (from[1] + lift) + c * (to[1] + lift) + d * to[1],
+    a * from[2] + b * from[2] + c * to[2] + d * to[2],
+  );
+}
+
 function isStdPackage(id) {
   const pkg = byPackage.get(id);
   if (!pkg || !pkg.external) return false;
@@ -2330,56 +2654,50 @@ function isStdPackage(id) {
   return head.length > 0 && !head.includes(".");
 }
 
-const flows = [];
 const flowScratch = [0, 0, 0];
 
-// Particles run on the GPU. Each flow is one row of a path texture; the vertex
-// shader walks the row and the fragment shader cuts a disc out of the sprite.
-// The CPU writes a path once and never touches a position again, and the point
-// is round instead of the square a bare PointsMaterial draws.
-const FLOW_SAMPLES = 64;
-let flowTexture = null;
-let flowData = null;
-let flowRows = 0;
+// Particles run on the GPU. Every arc's dots are one instance of an eight-dot
+// template: the vertex shader walks the arc's own bow, the same cubic the tube
+// is drawn along, and the fragment shader cuts a disc out of the sprite. The
+// CPU writes an arc once and never touches a position again, and the point is
+// round instead of the square a bare PointsMaterial draws.
+const FLOW_DOTS = 8;
 
 const flowMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    uPath: { value: null },
-    uRows: { value: 1 },
     uTime: { value: 0 },
     uScale: { value: 800 },
   },
   vertexShader: `
-    #define SAMPLES ${FLOW_SAMPLES}.0
-    attribute float aRow;
-    attribute float aU;
-    attribute float aSpeed;
-    attribute float aSize;
+    attribute float aDot;
+    attribute vec3 aFrom;
+    attribute vec3 aTo;
+    attribute vec4 aFlow;
     attribute vec3 aColor;
-    uniform sampler2D uPath;
-    uniform float uRows;
     uniform float uTime;
     uniform float uScale;
     varying vec3 vColor;
     void main() {
-      float u = fract(aU + uTime * aSpeed);
-      float x = u * (SAMPLES - 1.0);
-      float i0 = floor(x);
-      float f = x - i0;
-      float row = (aRow + 0.5) / uRows;
-      vec3 p0 = texture2D(uPath, vec2((i0 + 0.5) / SAMPLES, row)).xyz;
-      vec3 p1 = texture2D(uPath, vec2((i0 + 1.5) / SAMPLES, row)).xyz;
-      vec4 mv = modelViewMatrix * vec4(mix(p0, p1, f), 1.0);
+      // aFlow: the bow's lift, how many dots the arc carries, their speed and size.
+      if (aDot >= aFlow.y) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        gl_PointSize = 0.0;
+        return;
+      }
+      float t = fract(aDot / aFlow.y + uTime * aFlow.z);
+      float u = 1.0 - t;
+      vec3 lift = vec3(0.0, aFlow.x, 0.0);
+      vec3 p = u * u * u * aFrom + 3.0 * u * u * t * (aFrom + lift) + 3.0 * u * t * t * (aTo + lift) + t * t * t * aTo;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
       // The dot rides the centre of the arc's tube. Bring it out in front of
       // the tube so the tube does not hide it.
-      mv.xyz += normalize(-mv.xyz) * aSize * 0.6;
+      mv.xyz += normalize(-mv.xyz) * aFlow.w * 0.6;
       gl_Position = projectionMatrix * mv;
-      gl_PointSize = clamp(aSize * uScale / max(0.001, -mv.z), 4.0, 12.0);
+      gl_PointSize = clamp(aFlow.w * uScale / max(0.001, -mv.z), 4.0, 12.0);
       vColor = aColor;
     }
   `,
   fragmentShader: `
-    uniform float uTime;
     varying vec3 vColor;
     void main() {
       vec2 d = gl_PointCoord - vec2(0.5);
@@ -2403,94 +2721,233 @@ updatePointScale = () => {
 };
 updatePointScale();
 
-function ensureFlowTexture(height) {
-  if (flowTexture && flowTexture.image.height === height) return flowTexture;
-  const data = new Float32Array(FLOW_SAMPLES * 4 * height);
-  if (flowData) data.set(flowData.subarray(0, Math.min(flowData.length, data.length)));
-  flowData = data;
-  flowTexture = new THREE.DataTexture(data, FLOW_SAMPLES, height, THREE.RGBAFormat, THREE.FloatType);
-  flowTexture.minFilter = THREE.NearestFilter;
-  flowTexture.magFilter = THREE.NearestFilter;
-  flowTexture.needsUpdate = true;
-  flowMaterial.uniforms.uPath.value = flowTexture;
-  flowMaterial.uniforms.uRows.value = height;
-  return flowTexture;
-}
-
-function writeFlowRow(flow, row) {
-  ensureFlowTexture(Math.max(1, flowRows));
-  flow.row = row;
-  const base = row * FLOW_SAMPLES * 4;
-  for (let i = 0; i < FLOW_SAMPLES; i++) {
-    const s = i * 3;
-    const o = base + i * 4;
-    flowData[o] = flow.samples[s] || 0;
-    flowData[o + 1] = flow.samples[s + 1] || 0;
-    flowData[o + 2] = flow.samples[s + 2] || 0;
-    flowData[o + 3] = 1;
-  }
-  flowTexture.needsUpdate = true;
-}
-function syncFlowTexture() {
-  flowRows = Math.max(1, flows.length);
-  ensureFlowTexture(flowRows);
-  for (let i = 0; i < flows.length; i++) {
-    writeFlowRow(flows[i].userData.flow, i);
-    const rows = flows[i].geometry.getAttribute("aRow");
-    rows.array.fill(i);
-    rows.needsUpdate = true;
-  }
-}
-
 function wrapUnit(value) {
   if (!Number.isFinite(value)) return 0;
   const wrapped = value % 1;
   return wrapped < 0 ? wrapped + 1 : wrapped;
 }
 
-// Particles run from the caller (t = 0) to the callee (t = 1).
-// The bow is stored as numbers. CatmullRomCurve3 keeps one shared scratch
-// vector and throws once many arcs are sampled in the same frame.
-function makeFlow(from, to, color, lift) {
-  if (!from || !to) return null;
-  const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  if (dist < 0.35) return null;
-  // The particle path is the same curve the line is drawn along, sampled evenly.
-  // writeFlowRow reads x, y, z flat, three numbers per sample.
-  const samples = arcSamples(from, to, lift, FLOW_SAMPLES - 1).flat();
-  const count = Math.max(3, Math.min(8, Math.round(dist / 9)));
-  const size = Math.max(1.2, Math.min(dist * 0.016, 2.4));
-  const speed = Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1)));
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-  const rows = new Float32Array(count);
-  const params = new Float32Array(count);
-  const speeds = new Float32Array(count);
-  const sizes = new Float32Array(count);
-  const colors = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    rows[i] = flows.length;
-    params[i] = i / count;
-    speeds[i] = speed;
-    sizes[i] = size;
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
-  }
-  geo.setAttribute("aRow", new THREE.BufferAttribute(rows, 1));
-  geo.setAttribute("aU", new THREE.BufferAttribute(params, 1));
-  geo.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
-  geo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-  geo.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
-  const mesh = new THREE.Points(geo, flowMaterial);
-  mesh.frustumCulled = false;
-  mesh.userData.flow = { samples, count, speed, row: flows.length };
-  flows.push(mesh);
-  flowRows = Math.max(1, flows.length);
-  ensureFlowTexture(flowRows);
-  writeFlowRow(mesh.userData.flow, flowRows - 1);
-  return mesh;
+// Particles run from the caller (t = 0) to the callee (t = 1), along the bow.
+function flowOf(shape) {
+  const dist = Math.hypot(shape.to[0] - shape.from[0], shape.to[1] - shape.from[1], shape.to[2] - shape.from[2]);
+  return {
+    count: Math.max(3, Math.min(8, Math.round(dist / 9))),
+    size: Math.max(1.2, Math.min(dist * 0.016, 2.4)),
+    speed: Math.min(0.45, Math.max(0.12, 14 / Math.max(dist, 1))),
+  };
 }
+
+// The arcs of a group are one instanced tube and one instanced dot cloud,
+// however many there are: a fan of thousands of calls is two draw calls and a
+// few numbers per arc. addArc only queues an arc; the group is rebuilt the
+// next time it is drawn or picked (flushArcs).
+const arcMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+arcMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = [
+    "#define ARC_BOW " + ARC_BOW + ".0",
+    "#define ARC_LAST " + (ARC_RINGS - 1) + ".0",
+    "attribute vec2 aTube;",
+    "attribute vec3 aFrom;",
+    "attribute vec3 aTo;",
+    "attribute vec3 aRise;",
+    "attribute vec3 aFall;",
+    "attribute vec2 aShape;",
+    "attribute vec3 aColor;",
+    "varying vec3 vArc;",
+    shader.vertexShader,
+  ].join("\n").replace("#include <begin_vertex>", `
+    // aTube: the ring and the angle round it. aShape: the bow's lift and the radius.
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    vec3 lift = up * aShape.x;
+    vec3 p;
+    vec3 along;
+    if (aTube.x < 0.5) {
+      p = aRise;
+      along = aFrom - aRise;
+    } else if (aTube.x > ARC_LAST - 0.5) {
+      p = aFall;
+      along = aFall - aTo;
+    } else {
+      float t = (aTube.x - 1.0) / ARC_BOW;
+      float u = 1.0 - t;
+      p = u * u * u * aFrom + 3.0 * u * u * t * (aFrom + lift) + 3.0 * u * t * t * (aTo + lift) + t * t * t * aTo;
+      along = 3.0 * u * u * lift + 6.0 * u * t * (aTo - aFrom) + 3.0 * t * t * (-lift);
+    }
+    if (dot(along, along) < 1e-12) along = up;
+    vec3 across = vec3(aTo.x - aFrom.x, 0.0, aTo.z - aFrom.z);
+    vec3 side = dot(across, across) > 1e-10 ? normalize(cross(up, across)) : vec3(1.0, 0.0, 0.0);
+    vec3 bend = normalize(cross(normalize(along), side));
+    vec3 transformed = p + aShape.y * (cos(aTube.y) * bend + sin(aTube.y) * side);
+    vArc = aColor;`);
+  shader.fragmentShader = "varying vec3 vArc;\n" +
+    shader.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n\tdiffuseColor.rgb *= vArc;");
+};
+
+// The ring template every tube is drawn from: ARC_RINGS rings of ARC_SIDES.
+const arcTemplate = (() => {
+  const tube = new Float32Array(ARC_RINGS * ARC_SIDES * 2);
+  for (let k = 0; k < ARC_RINGS; k++) {
+    for (let j = 0; j < ARC_SIDES; j++) {
+      tube[(k * ARC_SIDES + j) * 2] = k;
+      tube[(k * ARC_SIDES + j) * 2 + 1] = (j / ARC_SIDES) * Math.PI * 2;
+    }
+  }
+  const index = [];
+  for (let k = 0; k + 1 < ARC_RINGS; k++) {
+    for (let j = 0; j < ARC_SIDES; j++) {
+      const a = k * ARC_SIDES + j;
+      const b = k * ARC_SIDES + ((j + 1) % ARC_SIDES);
+      const c = a + ARC_SIDES;
+      const d = b + ARC_SIDES;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  return { tube, index };
+})();
+
+function arcBatch(group) {
+  if (!group.userData.arcBatch) {
+    group.userData.arcBatch = { parts: [], dirty: false, mesh: null, points: null };
+  }
+  return group.userData.arcBatch;
+}
+
+function dropMerged(batch, group) {
+  for (const key of ["mesh", "points"]) {
+    const obj = batch[key];
+    if (!obj) continue;
+    group.remove(obj);
+    obj.geometry.dispose();
+    batch[key] = null;
+  }
+}
+
+function instanced(geo, name, size, n) {
+  const attr = new THREE.InstancedBufferAttribute(new Float32Array(n * size), size);
+  geo.setAttribute(name, attr);
+  return attr.array;
+}
+
+function flushArcs(group) {
+  const batch = group.userData.arcBatch;
+  if (!batch || !batch.dirty) return;
+  batch.dirty = false;
+  dropMerged(batch, group);
+  const parts = batch.parts;
+  if (!parts.length) return;
+  const n = parts.length;
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(ARC_RINGS * ARC_SIDES * 3), 3));
+  geo.setAttribute("aTube", new THREE.BufferAttribute(arcTemplate.tube, 2));
+  geo.setIndex(arcTemplate.index);
+  const from = instanced(geo, "aFrom", 3, n);
+  const to = instanced(geo, "aTo", 3, n);
+  const rise = instanced(geo, "aRise", 3, n);
+  const fall = instanced(geo, "aFall", 3, n);
+  const shape = instanced(geo, "aShape", 2, n);
+  instanced(geo, "aColor", 3, n);
+  parts.forEach((part, i) => {
+    const sh = part.shape;
+    from.set(sh.from, i * 3);
+    to.set(sh.to, i * 3);
+    rise.set(sh.rise, i * 3);
+    fall.set(sh.fall, i * 3);
+    shape[i * 2] = sh.lift;
+    shape[i * 2 + 1] = sh.radius;
+  });
+  geo.instanceCount = n;
+  batch.mesh = new THREE.Mesh(geo, arcMaterial);
+  batch.mesh.frustumCulled = false;
+  batch.mesh.userData.arcs = batch;
+  batch.mesh.raycast = raycastArcs;
+  group.add(batch.mesh);
+
+  const flowing = parts.filter((part) => part.flow);
+  if (flowing.length) {
+    const m = flowing.length;
+    const cloud = new THREE.InstancedBufferGeometry();
+    cloud.setAttribute("position", new THREE.BufferAttribute(new Float32Array(FLOW_DOTS * 3), 3));
+    cloud.setAttribute("aDot", new THREE.BufferAttribute(Float32Array.from({ length: FLOW_DOTS }, (_, i) => i), 1));
+    const dFrom = instanced(cloud, "aFrom", 3, m);
+    const dTo = instanced(cloud, "aTo", 3, m);
+    const flow = instanced(cloud, "aFlow", 4, m);
+    instanced(cloud, "aColor", 3, m);
+    flowing.forEach((part, i) => {
+      part.dot = i;
+      dFrom.set(part.shape.from, i * 3);
+      dTo.set(part.shape.to, i * 3);
+      flow.set([part.shape.lift, part.flow.count, part.flow.speed, part.flow.size], i * 4);
+    });
+    cloud.instanceCount = m;
+    batch.points = new THREE.Points(cloud, flowMaterial);
+    batch.points.frustumCulled = false;
+    group.add(batch.points);
+  }
+  paintBatch(batch);
+}
+
+// Each arc's colour, on its tube and on its dots.
+function paintBatch(batch) {
+  const tube = batch.mesh && batch.mesh.geometry.getAttribute("aColor");
+  const dots = batch.points && batch.points.geometry.getAttribute("aColor");
+  batch.parts.forEach((part, i) => {
+    const c = part.color;
+    if (tube) tube.setXYZ(i, c.r, c.g, c.b);
+    if (dots && part.dot != null) dots.setXYZ(part.dot, c.r, c.g, c.b);
+  });
+  if (tube) tube.needsUpdate = true;
+  if (dots) dots.needsUpdate = true;
+}
+
+const arcSphere = new THREE.Sphere();
+const arcA = new THREE.Vector3();
+const arcB = new THREE.Vector3();
+const arcOnRay = new THREE.Vector3();
+
+// The bounds of an arc's tube: its ends, its roofs and the bow's two control
+// points hold the whole curve, and the radius pads it.
+function arcBounds(shape) {
+  const pts = [shape.rise, shape.from, shape.to, shape.fall,
+    [shape.from[0], shape.from[1] + shape.lift, shape.from[2]], [shape.to[0], shape.to[1] + shape.lift, shape.to[2]]];
+  const box = new THREE.Box3();
+  for (const p of pts) box.expandByPoint(arcA.set(p[0], p[1], p[2]));
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  sphere.radius += shape.radius;
+  return sphere;
+}
+
+// Picking an arc tests its own bounds first and then its own centre line,
+// as a tube of its radius. A hit carries the arc.
+function raycastArcs(raycaster, intersects) {
+  const batch = this.userData.arcs;
+  const ray = raycaster.ray;
+  for (const part of batch.parts) {
+    const shape = part.shape;
+    if (!part.bounds) part.bounds = arcBounds(shape);
+    arcSphere.copy(part.bounds).applyMatrix4(this.matrixWorld);
+    if (!ray.intersectsSphere(arcSphere)) continue;
+    let best = null;
+    arcRing(shape, 0, arcA);
+    for (let k = 1; k < ARC_RINGS; k++) {
+      arcRing(shape, k, arcB);
+      if (ray.distanceSqToSegment(arcA, arcB, arcOnRay) <= shape.radius * shape.radius) {
+        const distance = ray.origin.distanceTo(arcOnRay);
+        if (distance >= raycaster.near && distance <= raycaster.far && (!best || distance < best.distance)) {
+          best = { distance, point: arcOnRay.clone(), object: this, arc: part.data };
+        }
+      }
+      arcA.copy(arcB);
+    }
+    if (best) intersects.push(best);
+  }
+}
+
+function flushAllArcs() {
+  flushArcs(arcGroup);
+  flushArcs(selectArcs);
+  flushArcs(focusGroup);
+}
+
 function flowShown(mesh) {
   let node = mesh;
   while (node) {
@@ -2504,10 +2961,12 @@ function flowShown(mesh) {
 // this only reports whether anything needs a frame.
 function tickFlows(dt) {
   let shown = false;
-  for (const mesh of flows) {
-    if (!flowShown(mesh)) continue;
-    shown = true;
-    break;
+  for (const group of [arcGroup, selectArcs, focusGroup]) {
+    const points = group.userData.arcBatch && group.userData.arcBatch.points;
+    if (points && flowShown(points)) {
+      shown = true;
+      break;
+    }
   }
   if (shown) flowMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   return shown;
@@ -2523,18 +2982,17 @@ function arcCollisions() {
   const v = new THREE.Vector3();
   const tops = new Map();
   for (const box of laid.packages) tops.set(box.id, shownOwnTop(box.id));
-  for (const child of arcGroup.children) {
-    // Particles compute their positions in the shader, so their buffer is all
-    // zeros: only the tube meshes are real geometry to test.
-    if (!child.isMesh) continue;
-    const attr = child.geometry && child.geometry.attributes && child.geometry.attributes.position;
-    if (!attr) continue;
+  // Particles and tubes are both built in the shader: the arc's centre line
+  // is the geometry to test, its underside a radius below it.
+  const parts = (arcGroup.userData.arcBatch || { parts: [] }).parts;
+  for (const part of parts) {
+    const child = { userData: part.data };
     let worst = null;
     let count = 0;
     const ends = child.userData.ends || [];
-    for (let i = 0; i < attr.count; i++) {
-      v.fromBufferAttribute(attr, i);
-      child.localToWorld(v);
+    for (let i = 0; i < ARC_RINGS; i++) {
+      arcRing(part.shape, i, v);
+      v.y -= part.shape.radius;
       // The riser is meant to run up its own building: skip the part of the
       // path that is below the anchor and inside reach of either end.
       let riser = false;
@@ -2558,7 +3016,7 @@ function arcCollisions() {
     }
     if (count) {
       const d = child.userData || {};
-      hits.push({ arc: (d.from || "?") + " -> " + (d.label || d.id || "?"), verts: attr.count, inside: count, worst });
+      hits.push({ arc: (d.from || "?") + " -> " + (d.label || d.id || "?"), rings: ARC_RINGS, inside: count, worst });
     }
   }
   hits.sort((a, b) => b.worst.depth - a.worst.depth);
@@ -2567,7 +3025,7 @@ function arcCollisions() {
 
 window.citydiffCheck = () => {
   const hits = arcCollisions();
-  console.log("COLLIDE total=" + hits.length + " of " + arcGroup.children.length + " arcs");
+  console.log("COLLIDE total=" + hits.length + " of " + (arcGroup.userData.arcBatch || { parts: [] }).parts.length + " arcs");
   for (const hit of hits.slice(0, 25)) {
     console.log("COLLIDE " + JSON.stringify(hit));
   }
@@ -2577,76 +3035,94 @@ window.citydiffCheck = () => {
 // fromId and toId name the packages whose roofs the arc rises from and lands
 // on. A call arc between towers has neither.
 function addArc(group, from, to, color, lift, data, fromId, toId) {
-  const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
-  if (!mesh) return;
+  if (!from || !to) return;
+  const shape = arcShape(from, to, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
+  if (!shape) return;
   const tint = { kind: data.kind, change: data.change, std: !!data.std };
-  mesh.userData = data;
-  mesh.userData.tint = tint;
-  group.add(mesh);
+  data.tint = tint;
+  const batch = arcBatch(group);
   // A thin reference arc carries no particle traffic: the dots are what a
   // traced call has, and the quiet line is the point.
-  const flow = data.thin ? null : makeFlow(from, to, color, lift);
-  if (flow) {
-    flow.userData.tint = tint;
-    group.add(flow);
-  }
+  batch.parts.push({ data, tint, shape, color: color.clone(), flow: data.thin ? null : flowOf(shape) });
+  batch.dirty = true;
+}
+
+// A standard or outside reference keeps the quiet grey whatever the diff
+// says: the colour is what tells it apart from a traced call.
+function tintColor(tint) {
+  return tint.std ? paint.std : tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
 }
 
 function paintLinks(group) {
   if (!group) return;
   for (const child of group.children) {
     const tint = child.userData && child.userData.tint;
-    if (!tint) continue;
-    // A standard or outside reference keeps the quiet grey whatever the diff
-    // says: the colour is what tells it apart from a traced call.
-    const color = tint.std ? paint.std : tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
-    if (child.material && child.material.color) child.material.color.copy(color);
-    const attr = child.geometry && child.geometry.getAttribute && child.geometry.getAttribute("aColor");
-    if (!attr) continue;
-    for (let i = 0; i < attr.count; i++) attr.setXYZ(i, color.r, color.g, color.b);
-    attr.needsUpdate = true;
+    if (tint && child.material && child.material.color) child.material.color.copy(tintColor(tint));
   }
+  const batch = group.userData.arcBatch;
+  if (!batch) return;
+  for (const part of batch.parts) part.color.copy(tintColor(part.tint));
+  paintBatch(batch);
 }
 
 function paintPlinths() {
   const overlay = mode === "overlay";
+  const color = new THREE.Color();
+  const glow = new THREE.Color();
   for (const plinth of plinths) {
     const pkgObj = byPackage.get(plinth.id);
     const change = (pkgObj || {}).change || "same";
     const role = packageRole(plinth.id);
     const marked = overlay && change !== "same";
-    if (!plinth.material) continue;
     if (plinth.external) {
-      if (marked) plinth.material.color.copy(changeColor(change));
-      else if (role === "dep") plinth.material.color.copy(paint.call);
-      else plinth.material.color.set(theme.external.color);
-      if (role === "dep" || marked) plinth.material.emissive.copy(plinth.material.color);
-      else plinth.material.emissive.set(theme.external.emissive);
-      plinth.material.emissiveIntensity = role === "dep" ? theme.external.depEmissive : theme.external.emissiveIntensity;
-      plinth.material.metalness = theme.external.metalness;
-      plinth.material.roughness = theme.external.roughness;
+      if (!extMesh) continue;
+      if (marked) color.copy(changeColor(change));
+      else if (role === "dep") color.copy(paint.call);
+      else color.set(theme.external.color);
+      if (role === "dep" || marked) glow.copy(color);
+      else glow.set(theme.external.emissive);
+      glow.multiplyScalar(role === "dep" ? theme.external.depEmissive : theme.external.emissiveIntensity);
       if (role === "dim") {
-        plinth.material.color.multiplyScalar(theme.dim.external);
-        plinth.material.emissive.multiplyScalar(theme.dim.external);
+        color.multiplyScalar(theme.dim.external);
+        glow.multiplyScalar(theme.dim.external);
       }
+      extMesh.setColorAt(plinth.index, color);
+      extMesh.geometry.getAttribute("aGlow").setXYZ(plinth.index, glow.r, glow.g, glow.b);
       continue;
     }
+    if (!pkgMesh) continue;
     // A package whose file changed but whose declarations did not is a quiet
     // change: it keeps the modified hue, muted, instead of the bright one.
     const low = isLowLevel(pkgObj);
-    if (role === "dep" && !marked) plinth.material.color.copy(paint.call);
-    else if (marked && low) plinth.material.color.copy(lowLevelColor());
-    else plinth.material.color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
-    plinth.material.emissive.set(theme.package.emissive);
-    plinth.material.emissiveIntensity = role === "dep" ? theme.package.depEmissive : (marked && !low ? theme.package.markedEmissive : theme.package.emissiveIntensity);
-    if (plinth.plate) plinth.plate.visible = change !== "removed" || overlay;
+    if (role === "dep" && !marked) color.copy(paint.call);
+    else if (marked && low) color.copy(lowLevelColor());
+    else color.copy(marked ? changeColor(change) : plinthColor(plinth.box.depth, plinth.box.synthetic));
+    let intensity = role === "dep" ? theme.package.depEmissive : (marked && !low ? theme.package.markedEmissive : theme.package.emissiveIntensity);
     if (role === "dim") {
-      plinth.material.color.multiplyScalar(theme.dim.package);
-      plinth.material.emissiveIntensity = theme.dim.emissive;
-      setPlateOpacity(plinth.plate, theme.dim.plate);
-    } else {
-      setPlateOpacity(plinth.plate, 1);
+      color.multiplyScalar(theme.dim.package);
+      intensity = theme.dim.emissive;
     }
+    pkgMesh.setColorAt(plinth.index, color);
+    pkgMesh.geometry.getAttribute("aGlow").setXYZ(plinth.index, intensity, intensity, intensity);
+    if (signs && plinth.sign >= 0) {
+      signs.set(plinth.sign, change === "removed" && !overlay ? 0 : role === "dim" ? theme.dim.plate : 1);
+    }
+  }
+  if (pkgMesh) {
+    pkgMesh.material.color.set(0xffffff);
+    pkgMesh.material.emissive.set(theme.package.emissive);
+    pkgMesh.material.emissiveIntensity = 1;
+    pkgMesh.instanceColor.needsUpdate = true;
+    pkgMesh.geometry.getAttribute("aGlow").needsUpdate = true;
+  }
+  if (extMesh) {
+    extMesh.material.color.set(0xffffff);
+    extMesh.material.emissive.set(0xffffff);
+    extMesh.material.emissiveIntensity = 1;
+    extMesh.material.metalness = theme.external.metalness;
+    extMesh.material.roughness = theme.external.roughness;
+    extMesh.instanceColor.needsUpdate = true;
+    extMesh.geometry.getAttribute("aGlow").needsUpdate = true;
   }
   recolor(solidMesh);
   if (solidMat) {
@@ -2662,20 +3138,20 @@ function paintPlinths() {
 function applyMode() {
   linkFrame = [];
   syncLit();
+  instancesDirty = true;
   updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
+    if (plinth.external) continue;
     const change = (byPackage.get(plinth.id) || {}).change || "same";
-    const removed = change === "removed";
-    const show = plinth.external || !removed || overlay;
-    plinth.mesh.visible = show;
-    if (plinth.plate) plinth.plate.visible = !removed || overlay;
-    if (!plinth.external && plinth.material) {
-      plinth.material.transparent = false;
-      plinth.material.opacity = 1;
-      plinth.material.depthWrite = true;
-      plinth.material.wireframe = false;
-    }
+    placePlinth(pkgMesh, plinth, change !== "removed" || overlay);
+  }
+  if (pkgMesh) {
+    pkgMesh.instanceMatrix.needsUpdate = true;
+    pkgMesh.material.transparent = false;
+    pkgMesh.material.opacity = 1;
+    pkgMesh.material.depthWrite = true;
+    pkgMesh.material.wireframe = false;
   }
   if (solidMat) {
     solidMat.transparent = false;
@@ -2801,10 +3277,15 @@ function packageRole(id) {
     return "dep";
   }
   if (lit.entities) {
-    for (const entityId of lit.entities) {
-      const found = byEntity.get(entityId);
-      if (found && found.pkg && found.pkg.id === id) return "subject";
+    // Worked out once per selection: this is asked for every package.
+    if (!lit.entityPackages) {
+      lit.entityPackages = new Set();
+      for (const entityId of lit.entities) {
+        const found = byEntity.get(entityId);
+        if (found && found.pkg) lit.entityPackages.add(found.pkg.id);
+      }
     }
+    if (lit.entityPackages.has(id)) return "subject";
   }
   return "dim";
 }
@@ -2841,16 +3322,39 @@ function packageEdges(id, inbound) {
   return edges;
 }
 
+// The links of a declaration and of a package do not change within a scene,
+// and one click used to work them out three or four times over (the arcs, the
+// Calls / Callers counts, the list), resolving every call again each time.
+// Callers only read what these return.
+const linkMemo = new Map();
+
+function memo(key, make) {
+  let hit = linkMemo.get(key);
+  if (!hit) {
+    hit = make();
+    linkMemo.set(key, hit);
+  }
+  return hit;
+}
+
 function entityLinks(found) {
   if (!found) return [];
+  let hit = linkMemo.get(found);
+  if (!hit) {
+    hit = makeEntityLinks(found);
+    linkMemo.set(found, hit);
+  }
+  return hit;
+}
+
+function makeEntityLinks(found) {
   if (found.entity.kind === "type") {
     // A type does not call its methods: they are drawn on top of it, as towers
     // on its own base. The links are kept for the list — a method is one click
     // away there — and marked so the city does not also draw a curve to a
     // tower the eye can already see standing on the type.
     const links = [];
-    for (const other of byEntity.values()) {
-      if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
+    for (const other of methodsOf.get(found.entity.id) || []) {
       links.push({ target: other, change: other.entity.change || "same", step: null, attached: true });
     }
     return links;
@@ -2908,8 +3412,7 @@ function isType(found) {
 // callers are the functions that call any method it declares.
 function typeCallerLinks(found) {
   const byCaller = new Map();
-  for (const other of byEntity.values()) {
-    if (other.entity.kind !== "method" || other.entity.parent !== found.entity.id || !other.box) continue;
+  for (const other of methodsOf.get(found.entity.id) || []) {
     for (const link of callerLinks(other)) {
       const prev = byCaller.get(link.target.entity.id);
       if (!prev) byCaller.set(link.target.entity.id, { target: link.target, change: link.change, step: link.step });
@@ -2955,9 +3458,12 @@ function litForEntity(found) {
 // not one caller: the arc starts at the function or method that writes the
 // call, so the city shows which declaration reaches where.
 function packageCallLinks(id) {
+  return memo("calls\0" + id, () => makePackageCallLinks(id));
+}
+
+function makePackageCallLinks(id) {
   const links = [];
-  for (const found of byEntity.values()) {
-    if (!found.box || !found.pkg || found.pkg.id !== id) continue;
+  for (const found of entitiesOf.get(id) || []) {
     for (const link of entityLinks(found)) {
       // A method attached to a type is already a tower on that type: no curve.
       if (link.attached) continue;
@@ -2970,9 +3476,12 @@ function packageCallLinks(id) {
 // The calls that enter a package land on the towers that are called, and they
 // start at the tower that makes the call.
 function packageCallerLinks(id) {
+  return memo("callers\0" + id, () => makePackageCallerLinks(id));
+}
+
+function makePackageCallerLinks(id) {
   const links = [];
-  for (const found of byEntity.values()) {
-    if (!found.box || !found.pkg || found.pkg.id !== id) continue;
+  for (const found of entitiesOf.get(id) || []) {
     for (const link of callerLinks(found)) {
       links.push({ from: link.target, target: found, far: link.target, change: link.change, step: link.step });
     }
@@ -3144,14 +3653,35 @@ function changeColor(change, part) {
   return paint.same;
 }
 
+// A declaration's own colour depends on the theme and the mode; a selection
+// only dims it or not. The own colours are kept and made again when the theme
+// or the mode moved, so a click is one multiply per declaration.
+let ownColors = null;
+let ownKey = "";
+
 function recolor(mesh) {
   if (!mesh) return;
-  const color = new THREE.Color();
-  mesh.userData.slots.forEach((slot, index) => {
-    color.copy(entityColor(slot.entity));
-    if (!entityIsLit(slot.id, slot.pkgId)) color.multiplyScalar(theme.dim.entity);
-    mesh.setColorAt(index, color);
-  });
+  const slots = mesh.userData.slots;
+  const key = mode + [paint.type, paint.method, paint.function, paint.added, paint.removed, paint.modified, paint.body, paint.both, paint.moved, paint.same]
+    .map((c) => "," + c.r + "," + c.g + "," + c.b).join("");
+  if (!ownColors || ownColors.length !== slots.length * 3 || key !== ownKey) {
+    ownColors = new Float32Array(slots.length * 3);
+    slots.forEach((slot, i) => {
+      const c = entityColor(slot.entity);
+      ownColors[i * 3] = c.r;
+      ownColors[i * 3 + 1] = c.g;
+      ownColors[i * 3 + 2] = c.b;
+    });
+    ownKey = key;
+  }
+  const out = mesh.instanceColor.array;
+  const dim = theme.dim.entity;
+  for (let i = 0; i < slots.length; i++) {
+    const k = entityIsLit(slots[i].id, slots[i].pkgId) ? 1 : dim;
+    out[i * 3] = ownColors[i * 3] * k;
+    out[i * 3 + 1] = ownColors[i * 3 + 1] * k;
+    out[i * 3 + 2] = ownColors[i * 3 + 2] * k;
+  }
   mesh.instanceColor.needsUpdate = true;
 }
 
@@ -3164,13 +3694,29 @@ function slotOpen(slot) {
   return 0;
 }
 
+// What the shader needs to draw each declaration at its size: whether it and
+// its type are open, and whether anything is lit or the mode is Changes. Only
+// the flags that moved are written.
 function refreshInstances() {
   if (!solidMesh) return;
+  towerUniforms.uLit.value = lit ? 1 : 0;
+  towerUniforms.uOverlay.value = mode === "overlay" ? 1 : 0;
+  const slots = solidMesh.userData.slots;
+  const attr = solidMesh.geometry.getAttribute("aOpen");
+  const open = attr.array;
   let changed = false;
-  solidMesh.userData.slots.forEach((slot, index) => {
-    if (writeSlot(solidMesh, index, slot, slotOpen(slot))) changed = true;
-  });
-  if (changed) solidMesh.instanceMatrix.needsUpdate = true;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const parent = slot.parentSlot;
+    const own = slotOpen(slot);
+    const type = parent ? slotOpen(parent) : 1;
+    if (open[i * 4] !== own || open[i * 4 + 1] !== type) {
+      open[i * 4] = own;
+      open[i * 4 + 1] = type;
+      changed = true;
+    }
+  }
+  if (changed) attr.needsUpdate = true;
 }
 
 function selectPackage(id, fly) {
@@ -3192,7 +3738,7 @@ function selectExternal(id, inbound = true) {
   entitySubject = null;
   arcSubject = { id };
   applyMode();
-  const ext = laid.externals.find((item) => item.id === id);
+  const ext = extById.get(id);
   if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
   noteJump();
 }
@@ -3253,7 +3799,7 @@ function circlePositions(segments) {
 }
 
 function placeRing(id) {
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (!box) {
     ring.visible = false;
     return;
@@ -3317,7 +3863,7 @@ function flyToPackage(id) {
       if (at) points.push(at);
     }
   }
-  const box = laid.packages.find((item) => item.id === id);
+  const box = boxById.get(id);
   if (box) {
     points.push([box.x, box.y + box.h, box.z]);
     points.push([box.x + box.w, box.y + box.h, box.z + box.d]);
@@ -3413,19 +3959,19 @@ function focusCamera() {
 }
 
 function clearGroup(group) {
-  let dropped = false;
+  const batch = group.userData.arcBatch;
+  if (batch) {
+    batch.parts = [];
+    batch.dirty = false;
+    dropMerged(batch, group);
+  }
   for (const child of [...group.children]) {
     child.traverse((obj) => {
-      if (obj.userData && obj.userData.flow) {
-        const index = flows.indexOf(obj);
-        if (index >= 0) flows.splice(index, 1);
-        dropped = true;
-      }
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
         const list = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const mat of list) {
-          if (mat === flowMaterial || mat === haloMaterial) continue;
+          if (mat === flowMaterial || mat === haloMaterial || mat === arcMaterial) continue;
           if (mat.map) mat.map.dispose();
           // The material itself is left to the garbage collector, not
           // disposed: disposing the last user of a shader program deletes
@@ -3436,10 +3982,10 @@ function clearGroup(group) {
     });
     group.remove(child);
   }
-  if (dropped) syncFlowTexture();
 }
 
 function hitTest() {
+  flushAllArcs();
   raycaster.setFromCamera(pointer, camera);
   const objects = [];
   const pushLinks = (root) => {
@@ -3454,9 +4000,8 @@ function hitTest() {
     pushLinks(arcGroup);
   }
   if (solidMesh && solidMesh.visible) objects.push(solidMesh);
-  for (const plinth of plinths) {
-    if (plinth.mesh.visible) objects.push(plinth.mesh);
-  }
+  if (pkgMesh && pkgMesh.visible) objects.push(pkgMesh);
+  if (extMesh && extMesh.visible) objects.push(extMesh);
   const hits = raycaster.intersectObjects(objects, false);
   return hits[0] || null;
 }
@@ -3473,7 +4018,12 @@ function linkPayload(obj) {
 
 function describeHit(hit) {
   if (!hit) return null;
-  const data = linkPayload(hit.object);
+  const pick = hit.object.userData.pick;
+  if (pick && hit.instanceId != null) {
+    const id = hit.object.userData.ids[hit.instanceId];
+    return id ? { kind: pick, id, point: hit.point } : null;
+  }
+  const data = hit.arc || linkPayload(hit.object);
   if (data.kind === "package" || data.kind === "external") return { kind: data.kind, id: data.id, point: hit.point };
   if (data.kind === "call") {
     return { kind: "call", entityId: data.entityId, step: data.step, label: data.label, point: hit.point };
@@ -3596,6 +4146,13 @@ function updateHUD() {
   hud.title.textContent = root;
   hud.overview.classList.toggle("on", mode === "overview");
   hud.changes.classList.toggle("on", mode === "overlay");
+  updateNote();
+  renderDetail();
+}
+
+// The line under the title: a snapshot's hint, the jump counter, a skin's
+// warning.
+function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
     if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
@@ -3606,10 +4163,20 @@ function updateHUD() {
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   hud.note.textContent = note;
-  renderDetail();
 }
 
+// The panel (the sidebar, or the bottom sheet on a phone) is built again only
+// when what it shows moved: the node, the mode, the direction of the calls, or
+// folds a jump put back. A theme change, the second applyMode of one click or a
+// skin's note changes no row, and rebuilding threw away the scroll and every
+// row with it.
+let detailKey = "";
+let foldsVersion = 0;
+
 function renderDetail() {
+  const key = [subjectKey(), mode, callInbound, foldsVersion].join("\0");
+  if (key === detailKey) return;
+  detailKey = key;
   stopMarches();
   const subject = subjectKey();
   if (subject !== detailSubject) {
@@ -3807,7 +4374,7 @@ function splitChanges(list, changeOf) {
 }
 
 function childPackages(id) {
-  return (sceneDoc.packages || []).filter((item) => !item.external && item.parent === id);
+  return (childrenOf.get(id) || []).slice();
 }
 
 function packageTouched(pkg) {
@@ -3947,6 +4514,18 @@ function roster(pkg) {
   return wrap;
 }
 
+// A package's declarations of one kind by name. They do not change within a
+// scene, and sorting thousands of names on every click was a visible part of
+// it; the collator is the order localeCompare gives. Callers only read it.
+const nameOrder = new Intl.Collator();
+function sortedDeclared(pkg, kind) {
+  return memo("sorted\0" + kind + "\0" + pkg.id, () => declaredEntities(pkg)
+    .filter((entity) => entity.kind === kind)
+    .map((entity) => ({ entity, label: entityLabel(entity) }))
+    .sort((a, b) => nameOrder.compare(a.label, b.label))
+    .map((item) => item.entity));
+}
+
 function rosterSections(pkg) {
   const children = childPackages(pkg.id);
   children.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
@@ -3969,8 +4548,7 @@ function rosterSections(pkg) {
     ["methods", "Methods", "method"],
   ];
   for (const [key, label, kind] of groups) {
-    const list = declaredEntities(pkg).filter((entity) => entity.kind === kind);
-    list.sort((a, b) => entityLabel(a).localeCompare(entityLabel(b)));
+    const list = sortedDeclared(pkg, kind);
     const split = splitChanges(list, (item) => item.change);
     sections.push({ key, label, hot: deletedFirst(split.hot), same: split.same, row: entityRow });
   }
@@ -4021,9 +4599,49 @@ function sectionBlock(section, open) {
   const body = document.createElement("div");
   body.className = "section-body";
   body.inert = !open;
-  for (const item of [...section.hot, ...section.same]) body.append(section.row(item));
+  growRows(body, [...section.hot, ...section.same], section.row);
   wrap.append(head, body);
   return wrap;
+}
+
+// A long section builds its rows as they are scrolled to, a chunk at a time:
+// a package with thousands of declarations built every row of every section on
+// every click, folded ones included. Whichever box scrolls (a section's own
+// body, or the whole sidebar on a phone) pulls the next chunk in well before
+// its end comes into view.
+const ROW_CHUNK = 120;
+const growing = new Set();
+
+function growRows(body, items, row) {
+  let shown = 0;
+  const more = () => {
+    const frag = document.createDocumentFragment();
+    const end = Math.min(items.length, shown + ROW_CHUNK);
+    for (; shown < end; shown++) frag.append(row(items[shown]));
+    body.append(frag);
+    if (shown >= items.length) growing.delete(body);
+  };
+  more();
+  if (shown >= items.length) return;
+  // Rows down to `px` below the top of the box that scrolls are built.
+  body.growTo = (px) => {
+    while (shown < items.length && body.isConnected && body.scrollHeight < px) more();
+  };
+  body.growNear = () => {
+    if (!body.isConnected) {
+      growing.delete(body);
+      return;
+    }
+    if (body.inert) return;
+    const rect = body.getBoundingClientRect();
+    const limit = Math.min(rect.bottom, window.innerHeight) + window.innerHeight;
+    while (shown < items.length && body.lastElementChild && body.lastElementChild.getBoundingClientRect().top < limit) more();
+  };
+  growing.add(body);
+}
+
+function growVisibleRows() {
+  for (const body of [...growing]) body.growNear();
 }
 
 // A folded section is out of the tab order: its rows are clipped, and Tab
@@ -4033,6 +4651,7 @@ function setSectionOpen(wrap, head, key, open) {
   head.setAttribute("aria-expanded", open ? "true" : "false");
   const body = wrap.querySelector(".section-body");
   if (body) body.inert = !open;
+  if (open) requestAnimationFrame(growVisibleRows);
   sectionsTouched = true;
   if (open) openSections.add(key);
   else openSections.delete(key);
@@ -4093,8 +4712,7 @@ function sectionCounts(section) {
 
 function packageLabel(pkg) {
   const name = pkg.name || pkg.id;
-  const same = (sceneDoc.packages || []).filter((item) => (item.name || item.id) === name && !item.external);
-  if (same.length < 2) return name;
+  if ((namesake.get(name) || 0) < 2) return name;
   const parts = pkg.id.split("/");
   return parts.slice(-2).join("/");
 }
@@ -4478,18 +5096,22 @@ function stageJumpSidebar(entry) {
   if (state) for (const key of state.open || []) openSections.add(key);
   detailSubject = entrySubjectKey(entry);
   pendingSidebarScroll = state;
+  foldsVersion++;
 }
 
 // The sidebar body and each open section body scroll on their own, so both
 // offsets go back once the render has rebuilt the panel.
 function applySidebarScroll(state) {
   if (!state) return;
-  hud.detailBody.scrollTop = state.scroll || 0;
   for (const wrap of hud.detailBody.querySelectorAll(".section.open")) {
     const top = wrap.dataset.section ? state.bodies[wrap.dataset.section] : null;
     const body = wrap.querySelector(".section-body");
-    if (body && top != null) body.scrollTop = top;
+    if (!body) continue;
+    // Rows come in as they are scrolled to: build down to where the list was.
+    if (body.growTo) body.growTo(Math.max(top || 0, state.scroll || 0) + window.innerHeight * 2);
+    if (top != null) body.scrollTop = top;
   }
+  hud.detailBody.scrollTop = state.scroll || 0;
 }
 
 // Apply once now and once on the next frame: the flex sizes that decide how far
@@ -4546,7 +5168,9 @@ function noteJump() {
   jumps = jumps.slice(0, jumpIndex + 1);
   jumps.push(now);
   jumpIndex = jumps.length - 1;
-  updateHUD();
+  // The panel already shows the node: only the counter moved. Building the
+  // panel again cost as much as the selection itself on a large package.
+  updateNote();
   // The node is on screen now, so its folds and scrolls are the entry's own.
   jumps[jumpIndex].sidebar = sidebarState();
 }
@@ -4582,7 +5206,7 @@ function restoreSubject(entry) {
     return;
   }
   if (entry.selected.kind === "external") {
-    const ext = laid.externals.find((item) => item.id === entry.selected.id);
+    const ext = extById.get(entry.selected.id);
     if (ext) flyTo(new THREE.Vector3(ext.x + 8, ext.y + 7, ext.z + 10), new THREE.Vector3(ext.x, ext.y, ext.z));
     return;
   }
@@ -4663,6 +5287,87 @@ function flyCamera(dt, now) {
   return true;
 }
 
+// On a phone or a tablet the city's resolution follows how fast its frames
+// come. When the frames drawn back to back run slower than about 45 a second,
+// the pixel ratio steps down a quarter, to 1 at the least; when they run at
+// full speed for a few seconds it steps back up toward the screen's own, which
+// is still capped at 2. A ratio that just proved too slow is not tried again
+// for half a minute, so the picture does not pump. Anti-aliasing stays on.
+// Desktop keeps the full ratio.
+
+function setResolution(ratio, t) {
+  renderer.setPixelRatio(ratio);
+  updatePointScale();
+  adapt.gaps.length = 0;
+  adapt.span = 0;
+  adapt.good = 0;
+  // The frames right after a resize are not a measure of the new size.
+  adapt.settled = t + 600;
+  viewDirty = true;
+}
+
+function adaptResolution(t) {
+  if (!touchUI.matches) return;
+  const top = Math.min(window.devicePixelRatio || 1, 2);
+  const floor = Math.min(1, top);
+  const ratio = renderer.getPixelRatio();
+  if (ratio > top) {
+    setResolution(top, t);
+    return;
+  }
+  const gap = adapt.last ? t - adapt.last : 0;
+  adapt.last = t;
+  // Only frames drawn back to back count: the loop parking clears `last`, so
+  // the wait after a pause is never a sample. A long task (a selection on a
+  // large package) is one sample, and the median below does not see it.
+  if (document.hidden || gap <= 0 || gap > 2000 || t < adapt.settled) return;
+  adapt.gaps.push(gap);
+  adapt.span += gap;
+  if (adapt.gaps.length < ADAPT_FRAMES && !(adapt.span >= ADAPT_WINDOW_MS && adapt.gaps.length >= 8)) return;
+  adapt.span = 0;
+  // The median, so one slow frame does not move the resolution.
+  const median = adapt.gaps.sort((a, b) => a - b)[adapt.gaps.length >> 1];
+  adapt.gaps.length = 0;
+  if (t > adapt.until) adapt.ceiling = top;
+  if (median > ADAPT_SLOW_MS && ratio > floor) {
+    adapt.ceiling = ratio - ADAPT_STEP;
+    adapt.until = t + 30000;
+    setResolution(Math.max(floor, ratio - ADAPT_STEP), t);
+  } else if (median < ADAPT_FAST_MS && ratio < Math.min(top, adapt.ceiling)) {
+    adapt.good++;
+    if (adapt.good >= 3) setResolution(Math.min(top, adapt.ceiling, ratio + ADAPT_STEP), t);
+  } else {
+    adapt.good = 0;
+  }
+}
+
+// A floor nobody can see is not drawn. The built-in skins set the plane's
+// opacity to 0, and it was still a lit, blended quad over half the screen.
+// The near plane follows how far the camera stands from what it looks at.
+// A fixed 0.1 spent nearly all of the depth buffer on the first metres in
+// front of the eye, so from the overview, hundreds of units away, surfaces
+// close together (the ring on the ground, a sign on its wall) fought over the
+// same depth and flickered as the camera moved. Up close it is 0.1 as before;
+// at the overview it is a few units, and the precision there is many times
+// finer. Nothing drawn is that near the camera at that distance.
+function fitNear() {
+  const near = Math.min(10, Math.max(0.1, camera.position.distanceTo(controls.target) * 0.005));
+  if (Math.abs(near - camera.near) > camera.near * 0.1) {
+    camera.near = near;
+    camera.updateProjectionMatrix();
+  }
+}
+
+function drawCity() {
+  fitNear();
+  if (instancesDirty && laid) {
+    instancesDirty = false;
+    refreshInstances();
+  }
+  if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
+  renderer.render(scene, camera);
+}
+
 function animate(now) {
   frameQueued = false;
   if (loading) return;
@@ -4695,7 +5400,6 @@ function animate(now) {
   const moved = tweening || flying ||
     camera.position.distanceToSquared(settledPos) > 1e-6 ||
     controls.target.distanceToSquared(settledTarget) > 1e-6;
-  if (viewDirty && laid) refreshInstances();
   if (moved) {
     settledPos.copy(camera.position);
     settledTarget.copy(controls.target);
@@ -4706,6 +5410,7 @@ function animate(now) {
   // so the only cost is the frame itself, and a frame that carries nothing but
   // decoration is paced lower than one the user is driving.
   const motion = tweening || viewDirty || (flying && !idleSpin);
+  flushAllArcs();
   const flowing = tickFlows(dt);
   const fading = tickThemeFade(t);
   const launching = !!show;
@@ -4722,9 +5427,20 @@ function animate(now) {
     hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading || launching)) {
-    renderer.render(scene, camera);
+  // A frame that carries nothing but decoration (the particles, the halo, a
+  // live skin, the idle orbit) is drawn at most 60 times a second. On a 120 Hz
+  // phone the city was drawn twice as often for motion nobody is driving, and
+  // the heat that makes is what slows the phone down a minute later. Anything
+  // the user drives, and every transition, still draws on every frame.
+  const driven = tweening || viewDirty || hovered || fading || launching || (flying && !idleSpin) || (moved && !idleSpin);
+  decorBudget = Math.min(DECOR_FRAME_MS, decorBudget + (t - lastDecor));
+  lastDecor = t;
+  const decorDue = decorBudget >= DECOR_FRAME_MS - 1.5;
+  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading || launching) && (driven || decorDue)) {
+    drawCity();
     viewDirty = false;
+    if (decorDue) decorBudget -= DECOR_FRAME_MS;
+    adaptResolution(t);
   }
   if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading || launching) {
     requestFrame();
@@ -5615,12 +6331,12 @@ function showThemeNow(next) {
   theme = next;
   syncPaint(next);
   repaintScene();
-  redrawPlates(next.label.text, next.label.background);
+  paintSigns(next.label.text, next.label.background);
   applySky(scene, next);
   snapPage(next);
   skinWarning = next.shadeWarning || "";
   updateHUD();
-  renderer.render(scene, camera);
+  drawCity();
   viewDirty = false;
 }
 
