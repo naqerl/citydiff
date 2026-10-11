@@ -323,7 +323,7 @@ Choose each field to serve the sentence the note is making:
   or a deliberate "here is the plain city".
 - `select` — a package and its dependencies; it draws that package's changed arcs.
 - `focus` — one function's callees, or one type or variable; `code` — when the reader must see
-  the body, especially a line diff.
+  the body as text. The diff of a selected node stays on `D`.
 - `highlight` — a set of nodes that changed together; `path` — when the sentence is "this
   reaches that".
 - `camera` / `zoom` — fit the sentence: `top` for a whole package, `close` for one node,
@@ -392,7 +392,7 @@ over from the step before except the mode.
 | `dim` | bool | With `highlight`/`path`: `false` keeps the rest of the city bright. Default `true`. |
 | `camera` | `"overview"` \| `"top"` \| `"fit"` \| `"close"` | `overview` frames the city, `top` looks down on the step's nodes, `fit` frames them, `close` moves in. Default: the select/focus camera, else `fit` when the step names nodes, else `overview`. |
 | `zoom` | number > 0 | Multiplies the camera distance after the camera move: `0.5` is twice as close, `1.5` farther. |
-| `code` | declaration | Shows the declaration's git diff under the note: the same hunks, line numbers and syntax colours the viewer's `D` key opens. A declaration that did not change says so. |
+| `code` | declaration | Shows the declaration's source under the note as text: the body after the change, or the old body when it was removed. A tour does not show a diff. |
 
 ### Names
 
@@ -425,11 +425,10 @@ https://github.com/naqerl/citydiff/blob/main/examples/barse-flashcard-versions.t
 | `?` | the legend, with every key the viewer answers to |
 
 Dragging, wheeling or a fly key in the city pauses autoplay. The × in the
-sidebar header closes the tour. A `code` step's diff has a ⤢ button that
-opens it full screen the way `D` opens a selected node's diff (and pauses
-autoplay too); `esc` there closes it. In the city, `esc` puts the current
+sidebar header closes the tour. In the city, `esc` puts the current
 step's selection, highlights and camera back instead of flying to the whole
-tree. Loading a tour switches the viewer to the tour's
+tree. `D` still opens the diff of a selected node; a tour step does not.
+Loading a tour switches the viewer to the tour's
 range, so the left sidebar shows
 that range's changes; a range that does not resolve is reported in the
 tour sidebar.

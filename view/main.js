@@ -1363,9 +1363,6 @@ async function main() {
   tourUI = mountTour({
     apply: applyTourStep,
     clear: clearTour,
-    // A code step asks for the same diff the D keybind opens: the node's file
-    // and the lines it covers, resolved the same way.
-    codeTarget: (node) => diffTarget({ kind: "entity", id: node.id }, byEntity, byPackage),
     layout: () => {
       syncSheet();
       requestAnimationFrame(resizeView);
