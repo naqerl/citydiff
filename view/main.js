@@ -3739,9 +3739,9 @@ function packageDetail(pkg) {
     line.title = "The file changed but no declaration did: imports, re-exports, comments, formatting.";
     wrap.append(line);
   }
-  // Declarations and dependencies are read the same way: the total first,
-  // then the stats that are not zero. Overview has no diff to count, so it
-  // keeps the plain total.
+  // Declarations and dependencies are read the same way — word, total, then
+  // the stats that are not zero — and the same way as the Calls / Callers
+  // tabs. Overview has no diff to count, so it keeps the plain total.
   const deps = pkg.deps || [];
   if (deps.length) wrap.append(tallyLine("dependencies", deps));
   appendRefs(wrap);
@@ -3770,13 +3770,13 @@ function appendStats(parent, stats) {
   if (stats.modified) parent.append(tallySpan("modified", "~" + stats.modified, stats.modified + " changed"));
 }
 
-// One tally line, shared by what a package declares and what it imports: the
-// total, then only the nonzero stats. Overview mode counts no diff, so it
-// keeps the total alone.
+// One tally line, shared by what a package declares and what it imports, and
+// shaped the way the Calls / Callers tabs are: the word, the total, then only
+// the nonzero stats. Overview mode counts no diff, so it keeps the total alone.
 function tallyLine(noun, items) {
   const line = document.createElement("p");
   line.className = "tally";
-  line.append(items.length + " " + noun);
+  line.append(noun + " " + items.length);
   if (mode === "overlay") appendStats(line, statsOf(items));
   return line;
 }
