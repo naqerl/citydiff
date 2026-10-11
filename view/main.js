@@ -191,13 +191,7 @@ function adoptShaders(next) {
   if (solidMesh && next.entity.vertexSource && next.entity.vertexSource.includes("aHouse") && !solidMesh.geometry.getAttribute("aHouse")) {
     solidMesh.geometry.setAttribute("aHouse", houseAttribute(solidMesh.userData.slots));
   }
-  if (solidMesh) {
-    solidMat = swapMaterial(solidMesh, next.entity, next, () => {
-      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-      tintEmissive(mat);
-      return dress(mat, next.entity, next);
-    });
-  }
+  if (solidMesh) solidMat = swapMaterial(solidMesh, next.entity, next, () => towerMaterial(next));
 }
 
 // The per-vertex and per-instance colours a theme fade blends: the particle
@@ -1877,14 +1871,10 @@ async function buildCity(progress = () => {}) {
   if (theme.entity.vertexSource && theme.entity.vertexSource.includes("aHouse")) {
     geo.setAttribute("aHouse", houseAttribute(solids));
   }
-  solidMat = new THREE.MeshLambertMaterial({
-    color: theme.entity.color,
-    emissive: theme.entity.emissive,
-    emissiveIntensity: theme.entity.emissiveIntensity,
-    vertexColors: true,
-  });
-  tintEmissive(solidMat);
-  rememberShade(dress(solidMat, theme.entity, theme), theme.entity);
+  solidMat = towerMaterial(theme);
+  solidMat.color.set(theme.entity.color);
+  solidMat.emissive.set(theme.entity.emissive);
+  solidMat.emissiveIntensity = theme.entity.emissiveIntensity;
   solidMesh = await makeInstances(geo, solidMat, solids, (f) => progress(0.65 + f * 0.35));
   if (solidMesh) city.add(solidMesh);
 }
@@ -1943,14 +1933,22 @@ function plinthMesh(geo, material, list, kind) {
   mesh.frustumCulled = false;
   for (const plinth of list) placePlinth(mesh, plinth, true);
   mesh.instanceMatrix.needsUpdate = true;
-  // Bounds for picking, taken while every instance is shown.
-  mesh.computeBoundingSphere();
+  if (kind === "package") {
+    mesh.userData.plinths = list;
+    mesh.userData.top = list.reduce((top, plinth) => Math.max(top, plinth.box.y + plinth.box.h), 0);
+    mesh.userData.grid = pickGrid(list, (plinth) => [plinth.box.x, plinth.box.z, plinth.box.w, plinth.box.d]);
+    mesh.raycast = raycastPlinths;
+  } else {
+    // Bounds for picking, taken while every instance is shown.
+    mesh.computeBoundingSphere();
+  }
   return mesh;
 }
 
 // A hidden plinth is an instance shrunk to nothing: it draws no pixel and no
 // ray can hit it.
 function placePlinth(mesh, plinth, shown) {
+  plinth.shown = shown;
   const box = plinth.box;
   if (plinth.external) scratch.pos.set(box.x, box.y + 1.2, box.z);
   else scratch.pos.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
@@ -1959,6 +1957,167 @@ function placePlinth(mesh, plinth, shown) {
   else scratch.scale.set(box.w, box.h, box.d);
   scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
   mesh.setMatrixAt(plinth.index, scratch.mat);
+}
+
+// The declarations draw at the size the view asks for: a removed one in the
+// overview, a shut one while something is lit, a method on its type's drawn
+// roof. The instance matrix is the laid-out box; the vertex shader moves each
+// vertex into the drawn box, by the same rule as drawnSize and drawnBox in
+// layout.js (visualBox, which picking and the arcs use). A selection writes
+// the open flags that moved, not a matrix for every declaration. A skin's
+// vertex shader still sees the unit box: this runs after it.
+const towerUniforms = { uLit: { value: 0 }, uOverlay: { value: 0 } };
+
+function towerMaterial(skin) {
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  tintEmissive(mat);
+  const prev = mat.onBeforeCompile;
+  const below = mat.customProgramCacheKey();
+  mat.onBeforeCompile = (shader, renderer) => {
+    prev.call(mat, shader, renderer);
+    shader.uniforms.uLit = towerUniforms.uLit;
+    shader.uniforms.uOverlay = towerUniforms.uOverlay;
+    shader.vertexShader = [
+      // x, y, z, w and h, d, the type's h (0 without one), removed.
+      "attribute vec4 aLaidA;",
+      "attribute vec4 aLaidB;",
+      // open, the type open, the type removed.
+      "attribute vec4 aOpen;",
+      "uniform float uLit;",
+      "uniform float uOverlay;",
+      shader.vertexShader,
+    ].join("\n").replace("#include <project_vertex>", `
+    {
+      vec3 laid = vec3(aLaidA.w, aLaidB.x, aLaidB.y);
+      vec3 base = max(laid, vec3(0.05));
+      vec3 size;
+      if (aLaidB.w > 0.5 && uOverlay < 0.5) size = vec3(0.001);
+      else if (uLit > 0.5 && aOpen.x < 0.5) size = vec3(max(laid.x * 0.4, 0.04), 0.03, max(laid.z * 0.4, 0.04));
+      else size = vec3(base.x, max(laid.y * (0.045 + 0.955 * aOpen.x), 0.05), base.z);
+      float floorY = aLaidA.y;
+      if (aLaidB.z > 0.0) {
+        float typeH;
+        if (aOpen.z > 0.5 && uOverlay < 0.5) typeH = 0.001;
+        else if (uLit > 0.5 && aOpen.y < 0.5) typeH = 0.03;
+        else typeH = max(aLaidB.z * (0.045 + 0.955 * aOpen.y), 0.05);
+        floorY = aLaidA.y - aLaidB.z + typeH;
+      }
+      vec3 laidCenter = aLaidA.xyz + base * 0.5;
+      vec3 drawnCenter = vec3(aLaidA.x, floorY, aLaidA.z) + size * 0.5;
+      transformed = (drawnCenter - laidCenter) / base + transformed * (size / base);
+    }
+    #include <project_vertex>`);
+  };
+  mat.customProgramCacheKey = () => below + "\ntower";
+  return rememberShade(dress(mat, skin.entity, skin), skin.entity);
+}
+
+// Picking walks a grid over the ground along the ray and tests only the
+// boxes standing in the cells it crosses. Three's InstancedMesh.raycast
+// tested every instance on every mouse move, which at 100k declarations was
+// most of a frame. An item is listed in every cell its footprint, grown by
+// half a cell, touches, so the samples the walk takes half a cell apart
+// cannot step past it.
+function pickGrid(items, rectOf) {
+  const b = laid.bounds;
+  const span = Math.max(b.maxX - b.minX, b.maxZ - b.minZ, 1);
+  const cell = Math.max(0.5, span / 256);
+  const cols = Math.ceil((b.maxX - b.minX) / cell) + 3;
+  const rows = Math.ceil((b.maxZ - b.minZ) / cell) + 3;
+  const x0 = b.minX - cell;
+  const z0 = b.minZ - cell;
+  const clampCol = (x) => Math.min(cols - 1, Math.max(0, Math.floor((x - x0) / cell)));
+  const clampRow = (z) => Math.min(rows - 1, Math.max(0, Math.floor((z - z0) / cell)));
+  const reach = (i, visit) => {
+    const [x, z, w, d] = rectOf(items[i]);
+    const pad = cell * 0.5;
+    for (let r = clampRow(z - pad); r <= clampRow(z + d + pad); r++) {
+      for (let c = clampCol(x - pad); c <= clampCol(x + w + pad); c++) visit(r * cols + c);
+    }
+  };
+  // Compressed rows: each cell's items are one run of `list`.
+  const start = new Int32Array(cols * rows + 1);
+  for (let i = 0; i < items.length; i++) reach(i, (k) => { start[k + 1]++; });
+  for (let k = 0; k < cols * rows; k++) start[k + 1] += start[k];
+  const fill = start.slice(0, cols * rows);
+  const list = new Int32Array(start[cols * rows]);
+  for (let i = 0; i < items.length; i++) reach(i, (k) => { list[fill[k]++] = i; });
+  return { cell, cols, rows, x0, z0, start, list, seen: new Int32Array(items.length), stamp: 0 };
+}
+
+const pickBox = new THREE.Box3();
+const pickPoint = new THREE.Vector3();
+
+// The nearest box along the ray among the grid's items. boxOf fills pickBox
+// for item i, or returns false when the item cannot be hit.
+function pickAlong(grid, ray, top, boxOf) {
+  const b = laid.bounds;
+  // The stretch of the ray above the city's footprint and below its roofs.
+  let t0 = 0;
+  let t1 = Infinity;
+  const lo = [grid.x0, -1, grid.z0];
+  const hi = [grid.x0 + grid.cols * grid.cell, top, grid.z0 + grid.rows * grid.cell];
+  const o = [ray.origin.x, ray.origin.y, ray.origin.z];
+  const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(dir[k]) < 1e-12) {
+      if (o[k] < lo[k] || o[k] > hi[k]) return null;
+      continue;
+    }
+    let a = (lo[k] - o[k]) / dir[k];
+    let c = (hi[k] - o[k]) / dir[k];
+    if (a > c) [a, c] = [c, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, c);
+  }
+  if (t0 > t1) return null;
+  const flat = Math.hypot(dir[0], dir[2]);
+  const step = flat > 1e-9 ? (grid.cell * 0.5) / flat : Math.max(t1 - t0, 1);
+  grid.stamp++;
+  let best = null;
+  for (let t = t0; t <= t1 + step; t += step) {
+    // Every later cell holds only hits further along the ray than this one.
+    if (best && t > best.distance + step) break;
+    const at = Math.min(t, t1);
+    const c = Math.floor((o[0] + dir[0] * at - grid.x0) / grid.cell);
+    const r = Math.floor((o[2] + dir[2] * at - grid.z0) / grid.cell);
+    if (c < 0 || r < 0 || c >= grid.cols || r >= grid.rows) continue;
+    const k = r * grid.cols + c;
+    for (let j = grid.start[k]; j < grid.start[k + 1]; j++) {
+      const i = grid.list[j];
+      if (grid.seen[i] === grid.stamp) continue;
+      grid.seen[i] = grid.stamp;
+      if (!boxOf(i)) continue;
+      if (!ray.intersectBox(pickBox, pickPoint)) continue;
+      const distance = ray.origin.distanceTo(pickPoint);
+      if (!best || distance < best.distance) best = { distance, point: pickPoint.clone(), instanceId: i };
+    }
+  }
+  return best;
+}
+
+function raycastTowers(raycaster, intersects) {
+  const slots = this.userData.slots;
+  const hit = pickAlong(this.userData.grid, raycaster.ray, laid.bounds.maxY + 1, (i) => {
+    const box = visualBox(slots[i], slotOpen(slots[i]));
+    pickBox.min.set(box.x, box.y, box.z);
+    pickBox.max.set(box.x + box.w, box.y + box.h, box.z + box.d);
+    return true;
+  });
+  if (hit && hit.distance >= raycaster.near && hit.distance <= raycaster.far) intersects.push({ ...hit, object: this });
+}
+
+function raycastPlinths(raycaster, intersects) {
+  const list = this.userData.plinths;
+  const hit = pickAlong(this.userData.grid, raycaster.ray, this.userData.top + 1, (i) => {
+    const plinth = list[i];
+    if (!plinth.shown) return false;
+    const box = plinth.box;
+    pickBox.min.set(box.x, box.y, box.z);
+    pickBox.max.set(box.x + box.w, box.y + box.h, box.z + box.d);
+    return true;
+  });
+  if (hit && hit.distance >= raycaster.near && hit.distance <= raycaster.far) intersects.push({ ...hit, object: this });
 }
 
 function coloredBox() {
@@ -1994,21 +2153,41 @@ async function makeInstances(geo, material, slots, progress = null) {
     if (progress) progress(1);
     return null;
   }
-  const mesh = new THREE.InstancedMesh(geo, material, slots.length);
-  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(slots.length * 3), 3);
+  const n = slots.length;
+  const mesh = new THREE.InstancedMesh(geo, material, n);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+  const laidA = new Float32Array(n * 4);
+  const laidB = new Float32Array(n * 4);
+  const open = new Float32Array(n * 4);
   const color = new THREE.Color();
   // One matrix and one colour per declaration: slicing it keeps the bar alive
-  // on a codebase with tens of thousands of them.
-  await sliced(slots.length, progress, (index) => {
+  // on a codebase with tens of thousands of them. The matrix is the laid-out
+  // box and never changes; the shader draws the box at its drawn size.
+  await sliced(n, progress, (index) => {
     const slot = slots[index];
     color.copy(entityColor(slot.entity));
     mesh.setColorAt(index, color);
-    writeSlot(mesh, index, slot, 1);
+    const parent = towerParent(slot);
+    laidA.set([slot.x, slot.y, slot.z, slot.w], index * 4);
+    laidB.set([slot.h, slot.d, parent ? parent.h : 0, slot.entity.change === "removed" ? 1 : 0], index * 4);
+    open.set([1, 1, parent && parent.entity.change === "removed" ? 1 : 0, 0], index * 4);
+    const w = Math.max(slot.w, 0.05);
+    const h = Math.max(slot.h, 0.05);
+    const d = Math.max(slot.d, 0.05);
+    scratch.pos.set(slot.x + w / 2, slot.y + h / 2, slot.z + d / 2);
+    scratch.scale.set(w, h, d);
+    scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
+    mesh.setMatrixAt(index, scratch.mat);
   });
+  geo.setAttribute("aLaidA", new THREE.InstancedBufferAttribute(laidA, 4));
+  geo.setAttribute("aLaidB", new THREE.InstancedBufferAttribute(laidB, 4));
+  geo.setAttribute("aOpen", new THREE.InstancedBufferAttribute(open, 4));
   mesh.instanceColor.needsUpdate = true;
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   mesh.userData.slots = slots;
+  mesh.userData.grid = pickGrid(slots, (slot) => [slot.x, slot.z, Math.max(slot.w, 0.05), Math.max(slot.d, 0.05)]);
+  mesh.raycast = raycastTowers;
   return mesh;
 }
 
@@ -2024,12 +2203,16 @@ function slotSize(slot, open) {
 // on the mode, on whether anything is lit, and on whether the slot and its
 // type are open, so each slot keeps its last box under those four and a
 // selection works out again only the boxes it changed. Callers only read it.
-function visualBox(slot, open) {
+function towerParent(slot) {
   if (slot.parentSlot === undefined) {
     const parentId = slot.entity && slot.entity.kind === "method" ? slot.entity.parent : "";
     slot.parentSlot = (parentId && slotById.get(parentId)) || null;
   }
-  const parent = slot.parentSlot;
+  return slot.parentSlot;
+}
+
+function visualBox(slot, open) {
+  const parent = towerParent(slot);
   const parentOpen = parent ? slotOpen(parent) : 0;
   const key = (mode === "overlay" ? 1 : 0) | (lit ? 2 : 0) | (open << 2) | (parentOpen << 3);
   if (slot.boxKey !== key) {
@@ -2037,23 +2220,6 @@ function visualBox(slot, open) {
     slot.boxKey = key;
   }
   return slot.box;
-}
-
-function writeSlot(mesh, index, slot, open) {
-  const box = visualBox(slot, open);
-  // The same box object is the same box: nothing to write.
-  if (slot.drawnBox === box) return false;
-  slot.drawnBox = box;
-  const drawn = slot.drawn;
-  if (drawn && drawn[0] === box.x && drawn[1] === box.y && drawn[2] === box.z && drawn[3] === box.w && drawn[4] === box.h && drawn[5] === box.d) {
-    return false;
-  }
-  slot.drawn = [box.x, box.y, box.z, box.w, box.h, box.d];
-  scratch.pos.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
-  scratch.scale.set(box.w, box.h, box.d);
-  scratch.mat.compose(scratch.pos, scratch.quat, scratch.scale);
-  mesh.setMatrixAt(index, scratch.mat);
-  return true;
 }
 
 // The ink and the plate behind every package name. Both are colours on the
@@ -3509,14 +3675,29 @@ function slotOpen(slot) {
   return 0;
 }
 
+// What the shader needs to draw each declaration at its size: whether it and
+// its type are open, and whether anything is lit or the mode is Changes. Only
+// the flags that moved are written.
 function refreshInstances() {
   if (!solidMesh) return;
-  let changed = false;
+  towerUniforms.uLit.value = lit ? 1 : 0;
+  towerUniforms.uOverlay.value = mode === "overlay" ? 1 : 0;
   const slots = solidMesh.userData.slots;
-  for (let index = 0; index < slots.length; index++) {
-    if (writeSlot(solidMesh, index, slots[index], slotOpen(slots[index]))) changed = true;
+  const attr = solidMesh.geometry.getAttribute("aOpen");
+  const open = attr.array;
+  let changed = false;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const parent = slot.parentSlot;
+    const own = slotOpen(slot);
+    const type = parent ? slotOpen(parent) : 1;
+    if (open[i * 4] !== own || open[i * 4 + 1] !== type) {
+      open[i * 4] = own;
+      open[i * 4 + 1] = type;
+      changed = true;
+    }
   }
-  if (changed) solidMesh.instanceMatrix.needsUpdate = true;
+  if (changed) attr.needsUpdate = true;
 }
 
 function selectPackage(id, fly) {
@@ -5078,6 +5259,10 @@ function flyCamera(dt, now) {
 // A floor nobody can see is not drawn. The built-in skins set the plane's
 // opacity to 0, and it was still a lit, blended quad over half the screen.
 function drawCity() {
+  if (instancesDirty && laid) {
+    instancesDirty = false;
+    refreshInstances();
+  }
   if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
   renderer.render(scene, camera);
 }
@@ -5114,10 +5299,6 @@ function animate(now) {
   const moved = tweening || flying ||
     camera.position.distanceToSquared(settledPos) > 1e-6 ||
     controls.target.distanceToSquared(settledTarget) > 1e-6;
-  if (instancesDirty && laid) {
-    instancesDirty = false;
-    refreshInstances();
-  }
   if (moved) {
     settledPos.copy(camera.position);
     settledTarget.copy(controls.target);
