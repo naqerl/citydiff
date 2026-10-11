@@ -308,6 +308,7 @@ These colours paint marked packages and declarations, and changed call arcs. The
 | [`color`](view/main.js#L48) | `#23afd0` | The halo on the selected declaration. |
 | [`ring`](view/main.js#L59) | `#a1a1aa` | The ring drawn on the roof of an entered package. |
 | [`ringOpacity`](view/main.js#L60) | `0.35` | How solid that ring is, from 0 to 1. |
+| [`hover`](view/skin.js#L183) | worked out | The outline on the node under the mouse. Left out, it is the hue furthest from every colour the city already uses (the changes, the calls, the halo and the blocks), at the accent's saturation and light enough to read on `hud.bg`. A grey skin, whose accent has no hue, uses `hud.fg`. |
 
 ### [`label`](view/skin.js#L22)
 

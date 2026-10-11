@@ -55,6 +55,9 @@
       --scrim: rgba(9, 9, 11, 0.78);
       --on: rgba(24, 24, 27, 0.55);
       --current-bg: rgba(255, 197, 61, 0.08);
+      /* What the mouse is on: the outline in the city. skin.js works it out
+         for a skin that names none. */
+      --hover: #ff3def;
       /* The diff's syntax colours. A skin sets these from its own palette;
          these are what the dark skin's derivation comes out as. */
       --syn-keyword: #7d66d9;
@@ -111,6 +114,7 @@
     @property --scrim { syntax: "<color>"; inherits: true; initial-value: rgba(9, 9, 11, 0.78); }
     @property --on { syntax: "<color>"; inherits: true; initial-value: rgba(24, 24, 27, 0.55); }
     @property --current-bg { syntax: "<color>"; inherits: true; initial-value: rgba(255, 197, 61, 0.08); }
+    @property --hover { syntax: "<color>"; inherits: true; initial-value: #ff3def; }
     html.theme-ready {
       transition:
         --bg 0.45s ease, --elev 0.45s ease, --panel 0.45s ease, --search 0.45s ease,
@@ -123,7 +127,7 @@
         --added-bg 0.45s ease, --added-fg 0.45s ease, --removed-bg 0.45s ease, --removed-fg 0.45s ease,
         --added-line 0.45s ease, --removed-line 0.45s ease, --modified-line 0.45s ease,
         --code-bg 0.45s ease, --drop 0.45s ease, --drop-border 0.45s ease,
-        --scrim 0.45s ease, --on 0.45s ease, --current-bg 0.45s ease;
+        --scrim 0.45s ease, --on 0.45s ease, --current-bg 0.45s ease, --hover 0.45s ease;
     }
     @media (prefers-reduced-motion: reduce) {
       html.theme-ready { transition: none; }
@@ -462,7 +466,20 @@
       display: flex;
       flex-direction: column;
     }
-    #editor .editor-term { flex: 1; min-height: 0; }
+    #editor .editor-term { flex: 1; min-height: 0; overflow: hidden; }
+    /* The keys a phone's keyboard lacks, under the terminal (editor.js), in
+       the terminal's own colours. Ctrl lights while it waits for its key. */
+    #editor .editor-keys { flex: none; display: flex; gap: 4px; padding-top: 6px; }
+    #editor .editor-keys button {
+      flex: 1;
+      min-width: 0;
+      height: 40px;
+      padding: 0;
+      background: #161b26;
+      color: #d6dbe4;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    #editor .editor-keys button.on { background: #d6dbe4; color: #0d1017; }
     #editor .editor-msg {
       margin: 0;
       padding: 16px;
@@ -486,9 +503,14 @@
     }
     #diff-head { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); min-width: 0; }
     #diff .diff-title { font-size: 14px; }
-    #diff .diff-where, #diff .diff-note, #diff .diff-hint { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #diff .diff-where, #diff .diff-note { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #diff .diff-note { color: var(--muted); }
     #diff .diff-spacer { flex: 1; }
+    #diff .diff-title, #diff .diff-where, #diff .diff-note { min-width: 0; }
+    #diff .diff-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+    /* Escape as a button, never pushed off the header, for a screen with no key for it. */
+    #diff .diff-close { flex: none; background: var(--bg); color: var(--muted); border: 1px solid var(--line-strong); padding: 4px 8px; }
+    #diff .diff-close:hover { color: var(--fg); }
     #diff-body { flex: 1; min-height: 0; overflow: auto; }
     /* diff-view is the D overlay's diff surface: hunk headers, line numbers
        and the sign column. A tour does not use it. */
@@ -549,6 +571,117 @@
     }
     #confirm button:hover, #confirm button:focus-visible { background: var(--on); outline: none; }
     #confirm button.primary { border-color: var(--fg); }
+    /* The action ring (ring.js). It lives for one press, and the press is
+       the pointer's, not the ring's: ring.js lights the item the pointer
+       points at, so nothing here takes a pointer event. On a desktop it opens
+       at the pointer over the running city. On a touch screen it opens in the
+       middle of the screen, and the city behind it blurs and holds still, so
+       that blur is worked out once. Everything else here is square, but a ring
+       is round: the dial is a disc of glass, with no lines on it at all. */
+    #ring {
+      --ring-size: 240px;
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      pointer-events: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
+    #ring[hidden] { display: none; }
+    #ring.is-touch {
+      --ring-size: min(264px, 80vw, 80vh);
+      /* The blur keeps a stray second finger off the city under it. */
+      pointer-events: auto;
+      background: var(--panel);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      animation: ring-scrim 180ms ease-out;
+    }
+    .ring-dial {
+      position: absolute;
+      width: var(--ring-size);
+      height: var(--ring-size);
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      /* Glass: a thin film of the panel colour with a pale sheen from the top,
+         over a blur that lifts the colour of what is behind it. */
+      background: linear-gradient(170deg, var(--edge), transparent 60%), var(--panel);
+      background: linear-gradient(170deg, var(--edge), transparent 60%), color-mix(in srgb, var(--panel) 55%, transparent);
+      backdrop-filter: blur(16px) saturate(1.6);
+      -webkit-backdrop-filter: blur(16px) saturate(1.6);
+      box-shadow: 0 18px 48px -18px var(--shadow);
+      outline: none;
+      animation: ring-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .ring-dial[hidden] { display: none; }
+    .ring-dial svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    /* The glyphs and words are the page's own text colours, flat on the
+       glass. Nothing else is drawn on the ring but the lit item's slice. */
+    .ring-icon { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-linecap: square; }
+    .ring-item[data-id="deselect"] .ring-icon { stroke-dasharray: 2.5 2; }
+    .ring-label, .ring-key { text-anchor: middle; }
+    .ring-label { fill: var(--fg); font-size: 11px; }
+    .ring-key { fill: var(--faint); font-size: 9.5px; }
+    /* A finger has no keys to learn: no letters, and the glyph and its word
+       drop to where the letter was, to sit in the middle of their slice. */
+    #ring.is-touch .ring-key { display: none; }
+    #ring.is-touch .ring-ink { transform: translateY(6px); }
+    /* An item that is on (the bird view) has its glyph and word in the
+       accent, at their usual weight; lit, it also has its slice and rim. */
+    .ring-item.on .ring-icon { stroke: var(--accent); }
+    .ring-item.on .ring-label { fill: var(--accent); }
+    /* An item with nothing to act on keeps its place, so the ring is learned
+       by where things are; only its glyph and words dim, like the player's. */
+    .ring-item[aria-disabled="true"] .ring-icon { stroke: var(--faint); }
+    .ring-item[aria-disabled="true"] .ring-label { fill: var(--faint); }
+    .ring-item[aria-disabled="true"] .ring-key { fill: var(--fainter); }
+    /* The lit item: its glyph and words in the skin's accent, and an accent
+       rim along the outer edge of its slice; all of it at half strength when
+       it cannot act. */
+    /* A finger's cursor: a small square in the page's text colour, edged in
+       its background so it shows over the glass and over a lit slice alike. */
+    .ring-cursor { fill: var(--fg); stroke: var(--bg); stroke-width: 1.5; }
+    .ring-rim { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: butt; stroke-opacity: 0; }
+    .ring-item.is-hot .ring-rim { stroke-opacity: 1; }
+    .ring-item.is-hot[aria-disabled="true"] .ring-rim { stroke-opacity: 0.5; }
+    /* Its slice is shaded 15% darker, half that when it cannot act. Black,
+       not a skin colour: darker is darker on every skin, and a light skin's
+       shadow colour is white. */
+    .ring-cell { fill: #000000; fill-opacity: 0; }
+    .ring-item.is-hot .ring-cell { fill-opacity: 0.15; }
+    .ring-item.is-hot[aria-disabled="true"] .ring-cell { fill-opacity: 0.075; }
+    .ring-item.is-hot .ring-icon { stroke: var(--accent); }
+    .ring-item.is-hot .ring-label, .ring-item.is-hot .ring-key { fill: var(--accent); }
+    .ring-item.is-hot[aria-disabled="true"] .ring-icon { stroke: var(--accent); stroke-opacity: 0.5; }
+    .ring-item.is-hot[aria-disabled="true"] .ring-label,
+    .ring-item.is-hot[aria-disabled="true"] .ring-key { fill: var(--accent); fill-opacity: 0.5; }
+    /* Why the lit item cannot act: one line right above the ring (under it
+       when the ring is at the top of the screen), on the same glass. */
+    .ring-why {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      max-width: calc(100vw - 24px);
+      box-sizing: border-box;
+      padding: 5px 10px;
+      background: var(--panel);
+      background: color-mix(in srgb, var(--panel) 55%, transparent);
+      backdrop-filter: blur(16px) saturate(1.6);
+      -webkit-backdrop-filter: blur(16px) saturate(1.6);
+      color: var(--fg);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ring-why.is-below { transform: translate(-50%, 0); }
+    .ring-why[hidden] { display: none; }
+    #ring.is-touch .ring-why { font-size: 13px; }
+    @keyframes ring-in { from { opacity: 0; transform: translate(-50%, -50%) scale(0.92); } }
+    @keyframes ring-scrim { from { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      #ring.is-touch, .ring-dial { animation: none; }
+    }
     .legend-card {
       width: min(680px, calc(100vw - 48px));
       max-height: min(82vh, 760px);
@@ -791,7 +924,7 @@
       pointer-events: none;
     }
     #detail .refs { margin: 8px 0 6px; }
-    #sheet-tabs, #side-theme, .sheet-grip, #skin-find { display: none; }
+    #sheet-tabs, #side-theme, #sheet-handle, #skin-find { display: none; }
     #perf {
       position: fixed;
       z-index: 60;
@@ -827,6 +960,18 @@
       #tour-controls button { width: 44px; height: 38px; }
       #tour-keys { display: none; }
       #diff, #editor { inset: 0; }
+      /* Border-box, so the height editor.js sets from the visible viewport is
+         the whole overlay, padding and key bar included, and nothing of it
+         hangs below the screen or behind the keyboard. */
+      #editor { box-sizing: border-box; padding: calc(4px + env(safe-area-inset-top)) 4px calc(4px + env(safe-area-inset-bottom)); }
+      /* The diff fits the phone: no sideways scroll, long lines wrap under
+         their own code column, and the gutters are narrower. */
+      #diff-head { padding: calc(8px + env(safe-area-inset-top)) 10px 8px; gap: 8px; }
+      #diff .diff-where, #diff .diff-note { display: none; }
+      #diff .diff-close { padding: 8px 14px; }
+      .diff-view { font-size: 11px; }
+      .diff-view .diff-line { grid-template-columns: 2.8em 2.8em 1.2em minmax(0, 1fr); min-width: 0; white-space: pre-wrap; }
+      .diff-view .diff-line code { padding-right: 8px; overflow-wrap: anywhere; }
       .legend-card { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 14px; }
       .keys { grid-template-columns: 1fr; }
 
@@ -901,7 +1046,7 @@
        the gesture. With a tour the tabs under it pick which sidebar it shows,
        and on the tour tab the player sits between the two. */
     @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
-      body { --tabs-h: 0px; --player-h: 0px; --peek: 76px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
+      body { --tabs-h: 0px; --player-h: 0px; --peek: 88px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
       body.has-tour { --tabs-h: calc(48px + env(safe-area-inset-bottom)); }
       body.has-player { --player-h: 54px; }
       #sheet-tabs {
@@ -980,24 +1125,56 @@
       #side.is-collapsed #side-logo, #tour-side.is-collapsed #tour-logo { display: none; }
       #side.is-collapsed #side-head, #side.is-collapsed #detail { display: flex; }
       #side.is-collapsed #side-head { border-bottom: 1px solid var(--line); }
-      #tour-side.is-collapsed > #tour-head, #tour-side.is-collapsed > #tour-grip,
+      #tour-side.is-collapsed > #tour-head,
       #tour-side.is-collapsed > #tour-controls:not([hidden]) { display: flex; }
       #tour-side.is-collapsed > #tour-scroll { display: block; }
       #side.is-collapsed #title-row, #tour-side.is-collapsed #tour-title-row { cursor: pointer; }
 
-      .sheet-grip {
-        display: flex;
-        flex: none;
-        height: 22px;
-        margin-bottom: -10px;
-        align-items: center;
-        justify-content: center;
+      /* The sheet's handle: a square button sitting on the sheet's top edge,
+         a third above it and two thirds on the sheet. A tap steps the sheet through
+         its detents, a drag moves it, and a hold opens the action ring. It is
+         outside the sheet, which clips what sticks out of it, and main.js
+         (placeSheet) moves it with the sheet's top edge. Solid, like the
+         player's buttons, so it reads over the city above the sheet, and
+         outlined in the accent, so it reads as the thing to hold. */
+      #sheet-handle {
+        position: absolute;
+        left: 50%;
+        bottom: calc(var(--tabs-h) + var(--player-h));
+        z-index: 6;
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        box-sizing: border-box;
+        padding: 0;
+        background: var(--elev);
+        color: var(--muted);
+        border: 1px solid var(--accent);
+        /* Until main.js places it, it sits on the peeking sheet's edge. */
+        transform: translate(-50%, calc(44px * 2 / 3 - var(--peek)));
+        will-change: transform;
+        touch-action: none;
         cursor: grab;
       }
-      /* The theme's muted text colour is made to read on its own background, so
-         the grabber shows in every theme without shouting. */
-      .sheet-grip::before { content: ""; width: 40px; height: 4px; background: var(--muted); opacity: 0.6; }
-      #side-head, #tour-head { padding-top: 12px; }
+      body.skin-open #sheet-handle { display: none; }
+      /* Two short bars, the grabber's own sign, in the muted text colour so
+         it shows in every theme without shouting. Held, they widen over the
+         time a hold takes to open the action ring, and the button lights. */
+      #sheet-handle i {
+        display: block;
+        width: 16px;
+        height: 2px;
+        margin-top: -5px;
+        background: currentColor;
+        box-shadow: 0 5px 0 currentColor;
+        transition: width 150ms ease;
+      }
+      #sheet-handle.is-holding { color: var(--accent); }
+      #sheet-handle.is-holding i { width: 28px; transition: width 450ms linear; }
+      /* The handle's lower two thirds lie over the top of the sheet: the head
+         starts under them. */
+      #side-head, #tour-head { padding-top: 34px; }
 
       /* The fold arrows point the way the sheet will go. */
       #side-toggle svg { transform: rotate(-90deg); }
@@ -1027,7 +1204,6 @@
             <rect x="16" y="9" width="6" height="13" fill="var(--modified)"/>
           </svg>
         </button>
-        <div id="side-grip" class="sheet-grip" aria-hidden="true"></div>
         <div id="side-head">
           <div id="title-row">
             <div id="title">citydiff</div>
@@ -1070,7 +1246,6 @@
         <button id="tour-logo" type="button" aria-label="Show tour" title="Show tour (t)">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M5 3 L12 8 L5 13 Z" fill="currentColor"/></svg>
         </button>
-        <div id="tour-grip" class="sheet-grip" aria-hidden="true"></div>
         <div id="tour-head">
           <div id="tour-title-row">
             <div id="tour-title">tour</div>
@@ -1095,6 +1270,7 @@
         </div>
         <div id="tour-keys"><kbd>space</kbd> play · <kbd>,</kbd> <kbd>.</kbd> step · <kbd>t</kbd> hide</div>
       </aside>
+      <button id="sheet-handle" type="button" aria-label="Sheet: tap to open or close, drag to move, hold for actions"><i aria-hidden="true"></i></button>
       <div id="tour-drop" hidden>Drop a tour script</div>
       <div id="results" hidden></div>
       <nav id="sheet-tabs" aria-label="Panels">

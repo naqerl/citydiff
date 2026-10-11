@@ -39,6 +39,51 @@ export function editQuery(target, cols, rows) {
   return q.toString();
 }
 
+// A phone's keyboard has no Escape, no Ctrl and no Alt, and keeps the
+// punctuation nvim lives on behind a second page. On a touch screen a bar
+// under the terminal has them. Ctrl and Alt hold for the next key, typed on
+// the keyboard or pressed on the bar.
+export const TOUCH_KEYS = [
+  { label: "esc", send: "\x1b" },
+  { label: "ctrl", hold: "ctrl" },
+  { label: "alt", hold: "alt" },
+  { label: "/", send: "/" },
+  { label: ":", send: ":" },
+  { label: ";", send: ";" },
+  { label: "(", send: "(" },
+  { label: ")", send: ")" },
+];
+
+// withCtrl is what a key typed with Ctrl held sends: a letter is its control
+// code, the few punctuation keys that have one send it, and anything else is
+// sent as it is.
+export function withCtrl(data) {
+  if (typeof data !== "string" || data.length !== 1) return data;
+  const code = data.toLowerCase().charCodeAt(0);
+  if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
+  const punct = { "@": "\x00", " ": "\x00", "[": "\x1b", "\\": "\x1c", "]": "\x1d", "^": "\x1e", "_": "\x1f", "?": "\x7f" };
+  return punct[data] ?? data;
+}
+
+// withMods is what a key sends with Ctrl or Alt held for it: Ctrl as above,
+// and Alt an Escape in front, the way a terminal sends Meta.
+export function withMods(data, { ctrl = false, alt = false } = {}) {
+  const out = ctrl ? withCtrl(data) : data;
+  return alt ? "\x1b" + out : out;
+}
+
+// typed applies the held Ctrl and Alt to one key and lets go of them.
+function typed(s, data) {
+  if (!s.mods.ctrl && !s.mods.alt) return data;
+  const out = withMods(data, s.mods);
+  s.mods.ctrl = false;
+  s.mods.alt = false;
+  for (const button of s.modKeys) button.classList.remove("on");
+  return out;
+}
+
+const touchScreen = () => window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+
 let session = null;
 
 // editorActive is true while the overlay is up; the viewer's keys stay off.
@@ -62,10 +107,60 @@ export function closeEditor() {
   const s = session;
   session = null;
   window.removeEventListener("resize", s.fit);
+  if (s.keep) {
+    window.visualViewport?.removeEventListener("resize", s.keep);
+    window.visualViewport?.removeEventListener("scroll", s.keep);
+  }
+  clearTimeout(s.fitTimer);
   try { s.ws?.close(); } catch {}
   try { s.term?.dispose(); } catch {}
   s.root.remove();
   s.onClose?.();
+}
+
+// mountKeys puts the bar of missing keys under the terminal, and keeps the
+// overlay to the part of the screen the phone's keyboard leaves, so the bar
+// sits on top of the keyboard when it is up and on the bottom of the screen
+// when it is not. A key acts on the press and never takes the focus: it
+// neither brings the keyboard up nor puts it away. The bar goes in before
+// the terminal's first fit, so the terminal is fitted round it.
+function mountKeys(s) {
+  const bar = document.createElement("div");
+  bar.className = "editor-keys";
+  for (const key of TOUCH_KEYS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.tabIndex = -1;
+    button.textContent = key.label;
+    if (key.hold) s.modKeys.push(button);
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      if (key.hold) {
+        s.mods[key.hold] = !s.mods[key.hold];
+        button.classList.toggle("on", s.mods[key.hold]);
+      } else {
+        s.send?.(typed(s, key.send));
+      }
+    });
+    bar.append(button);
+  }
+  s.root.append(bar);
+  const vv = window.visualViewport;
+  if (vv) {
+    // The keyboard slides, and the viewport reports every step of it; ghostty
+    // drops a fit that comes within 50 ms of the last one, so the terminal is
+    // fitted once the steps stop, and only the overlay follows each one.
+    s.keep = () => {
+      s.root.style.top = vv.offsetTop + "px";
+      s.root.style.height = vv.height + "px";
+      s.root.style.bottom = "auto";
+      clearTimeout(s.fitTimer);
+      s.fitTimer = setTimeout(() => s.fit?.(), 120);
+    };
+    vv.addEventListener("resize", s.keep);
+    vv.addEventListener("scroll", s.keep);
+    s.keep();
+  }
 }
 
 export async function openEditor(target, onClose) {
@@ -74,14 +169,21 @@ export async function openEditor(target, onClose) {
   root.id = "editor";
   root.innerHTML = '<div class="editor-term"></div><p class="editor-msg" hidden></p>';
   document.body.append(root);
-  const s = { root, onClose, failed: false };
+  const touch = touchScreen();
+  const s = { root, onClose, failed: false, mods: { ctrl: false, alt: false }, modKeys: [] };
   session = s;
+  if (touch) mountKeys(s);
   const msg = root.querySelector(".editor-msg");
+  // A phone has no Escape to close a failed editor with: the message is
+  // the way out there.
   const fail = (text) => {
     s.failed = true;
-    msg.textContent = text + " (esc closes)";
+    msg.textContent = text + (touch ? " (tap to close)" : " (esc closes)");
     msg.hidden = false;
   };
+  msg.addEventListener("click", () => {
+    if (session === s) closeEditor();
+  });
   let mod;
   try {
     mod = await load();
@@ -90,10 +192,14 @@ export async function openEditor(target, onClose) {
     return;
   }
   if (session !== s) return;
-  const term = new mod.Terminal({ fontSize: 14, cursorBlink: false, theme: { background: "#0d1017", foreground: "#d6dbe4" } });
+  // A phone gets a smaller face, so a line of code mostly fits its width.
+  const term = new mod.Terminal({ fontSize: touch ? 10 : 14, cursorBlink: false, theme: { background: "#0d1017", foreground: "#d6dbe4" } });
   const fitter = new mod.FitAddon();
   term.loadAddon(fitter);
   term.open(root.querySelector(".editor-term"));
+  // ghostty takes the focus as it opens, and once more a moment later. On a
+  // phone that would bring the keyboard up unasked: let go of it after both.
+  if (touch) setTimeout(() => term.blur(), 60);
   fitter.fit();
   s.term = term;
   s.fit = () => fitter.fit();
@@ -103,11 +209,15 @@ export async function openEditor(target, onClose) {
   ws.binaryType = "arraybuffer";
   s.ws = ws;
   const enc = new TextEncoder();
-  term.onData((d) => ws.readyState === 1 && ws.send(enc.encode(d)));
+  const send = (d) => ws.readyState === 1 && ws.send(enc.encode(d));
+  s.send = send;
+  term.onData((d) => send(typed(s, d)));
   term.onResize(({ cols, rows }) => ws.readyState === 1 && ws.send(JSON.stringify({ type: "resize", cols, rows })));
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-    term.focus();
+    // On a phone the focus is the keyboard: it comes up when the terminal is
+    // tapped, not when the editor opens.
+    if (!touch) term.focus();
   };
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { editAction } from "./keys.js";
-import { editTarget, editQuery } from "./editor.js";
+import { TOUCH_KEYS, editTarget, editQuery, withCtrl, withMods } from "./editor.js";
 
 const key = (k, extra = {}) => ({ key: k, target: { tagName: "CANVAS" }, ...extra });
 
@@ -56,4 +56,15 @@ test("the city does not render under the editor, and restarts when it closes", a
   assert.match(close, /noteActivity\(\)[\s\S]*requestFrame\(\)/, "closing resets the idle clock, then restarts the guarded loop");
   const editor = readFileSync(new URL("./editor.js", import.meta.url), "utf8");
   assert.match(editor, /cursorBlink: false/);
+});
+
+test("a phone's key bar has what its keyboard lacks", () => {
+  assert.deepEqual(TOUCH_KEYS.map((key) => key.label), ["esc", "ctrl", "alt", "/", ":", ";", "(", ")"]);
+  assert.equal(withCtrl("c"), "\x03");
+  assert.equal(withCtrl("W"), "\x17");
+  assert.equal(withCtrl("["), "\x1b");
+  assert.equal(withCtrl("ab"), "ab");
+  assert.equal(withMods("x", { alt: true }), "\x1bx");
+  assert.equal(withMods("c", { ctrl: true, alt: true }), "\x1b\x03");
+  assert.equal(withMods(":", {}), ":");
 });

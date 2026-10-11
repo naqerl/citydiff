@@ -169,6 +169,65 @@ export function rootColor(skin) {
   return best;
 }
 
+// hoverColor is the colour of the outline on the node under the mouse. It is
+// the skin's own selection.hover when it names one. Otherwise it is an accent
+// of the skin's own saturation and lightness on the hue furthest round the
+// colour wheel from every hue the city already means something by — the
+// changes, the calls, the selection's halo and the blocks themselves — so a
+// hovered node never reads as one of them. A grey skin has no hue to spare:
+// its hover is its text colour, and it stays grey.
+const HOVER_GREY = 0.2;
+const HOVER_CONTRAST = 4.5;
+
+export function hoverColor(skin) {
+  const selection = (skin && skin.selection) || {};
+  if (hexChannels(selection.hover)) return selection.hover;
+  const hud = (skin && skin.hud) || {};
+  const accent = hexChannels(hud.accent) || hexChannels(selection.color);
+  if (!accent) return hexChannels(hud.fg) ? hud.fg : "#93c5fd";
+  const [h, s, l] = channelsToHsl(accent);
+  if (s < HOVER_GREY) return hexChannels(hud.fg) ? hud.fg : channelsToHex(accent);
+  const change = (skin && skin.change) || {};
+  const pick = (key) => (skin && skin[key] && skin[key].color);
+  const taken = [
+    change.added, change.removed, change.modified, change.body, change.both, change.moved,
+    pick("call"), selection.color, pick("type"), pick("function"), pick("method"),
+  ]
+    .map(hexChannels)
+    .filter(Boolean)
+    .map(channelsToHsl)
+    .filter(([, sat]) => sat >= HOVER_GREY)
+    .map(([hue]) => hue);
+  // Hues are turns, 0 to 1. The distance between two is the short way round.
+  const apart = (a, b) => {
+    const d = Math.abs(a - b) % 1;
+    return Math.min(d, 1 - d);
+  };
+  let hue = h;
+  let gap = -1;
+  for (let step = 0; step < 360; step++) {
+    const at = step / 360;
+    const near = taken.length ? Math.min(...taken.map((t) => apart(at, t))) : 0.5;
+    // Of two hues as free as each other, the one nearer the skin's accent.
+    if (near > gap + 1e-9 || (Math.abs(near - gap) <= 1e-9 && apart(at, h) < apart(hue, h))) {
+      hue = at;
+      gap = near;
+    }
+  }
+  // The skin's lightness, moved away from the page background until the
+  // outline stands off the city as plainly as the page's text does.
+  const sat = Math.max(s, 0.6);
+  const bg = hexChannels(hud.bg) ? hud.bg : "#09090b";
+  const dir = (luminance(bg) || 0) < 0.5 ? 0.01 : -0.01;
+  let light = Math.min(0.72, Math.max(0.42, l));
+  let hex = channelsToHex(hslToChannels([hue, sat, light]));
+  while ((contrastRatio(hex, bg) || 0) < HOVER_CONTRAST && light > 0.2 && light < 0.85) {
+    light += dir;
+    hex = channelsToHex(hslToChannels([hue, sat, light]));
+  }
+  return hex;
+}
+
 export function pageVars(skin) {
   const hud = skin.hud || {};
   const steps = (skin.package && skin.package.steps) || [];
@@ -227,6 +286,7 @@ export function pageVars(skin) {
     "--scrim": hud.scrim,
     "--on": hud.on,
     "--current-bg": hud.currentBg,
+    "--hover": hoverColor(skin),
     "--syn-keyword": syn.keyword || hud.movedText || change.moved || hud.accent,
     "--syn-string": syn.string || hud.code,
     "--syn-comment": syn.comment || hud.faint,
@@ -286,6 +346,7 @@ export async function loadSkin(spec, fetchImpl = globalThis.fetch) {
   }
   const skin = mergeSkin(structuredClone(base), overlay);
   skin.package.root = rootColor(skin);
+  skin.selection.hover = hoverColor(skin);
   skin.url = record.url;
   return skin;
 }
