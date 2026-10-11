@@ -21,8 +21,8 @@ import (
 	"citydiff/lib/tour"
 )
 
-// snapshot is one built scene with the sources it came from, so the viewer
-// can show a declaration's code on either side.
+// snapshot is one built scene with the sources it came from, so the editor
+// can open a file from either side of the range.
 type snapshot struct {
 	path, commitRange string
 	scene             scene.Scene
@@ -107,37 +107,6 @@ func short(hash string) string {
 
 func (s *snapshot) check(t tour.Tour) (tour.Resolved, []tour.Problem) {
 	return tour.Check(t, s.scene, s.sameRange)
-}
-
-// codeView is one declaration's source on both sides of the range.
-type codeView struct {
-	Name   string `json:"name"`
-	File   string `json:"file"`
-	Change string `json:"change"`
-	Before string `json:"before,omitempty"`
-	After  string `json:"after,omitempty"`
-}
-
-func (s *snapshot) code(id string) (codeView, bool) {
-	ix := tour.NewIndex(s.scene)
-	node, ok := ix.Node(id)
-	if !ok || node.File == "" {
-		return codeView{}, false
-	}
-	recv := ""
-	for _, pkg := range s.scene.Packages {
-		for _, e := range pkg.Entities {
-			if e.ID == id {
-				recv = e.Recv
-			}
-		}
-	}
-	out := codeView{Name: node.Name, File: node.File, Change: node.Change}
-	out.After = tour.Snippet(s.after[node.File], node, recv)
-	if s.before != nil {
-		out.Before = tour.Snippet(s.before[node.File], node, recv)
-	}
-	return out, true
 }
 
 // parseArgs lets flags and positional arguments mix, as in
@@ -297,9 +266,6 @@ func runTour(args []string, stdout, stderr io.Writer) error {
 				names[j] = n.Name
 			}
 			parts = append(parts, "path "+strings.Join(names, " -> "))
-		}
-		if t.Code != nil {
-			parts = append(parts, "code "+t.Code.Name)
 		}
 		fmt.Fprintf(stdout, "  %2d. %s\n", i+1, s.Title)
 		for _, p := range parts {

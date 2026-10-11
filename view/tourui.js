@@ -1,5 +1,5 @@
-// The tour sidebar on the right: title and range, the note, the source text,
-// and the player controls at the bottom. It mirrors the left sidebar: t hides
+// The tour sidebar on the right: title and range, the description, and the
+// player controls at the bottom. It mirrors the left sidebar: t hides
 // and shows it like b does the left one. Everything here runs on a step
 // change or a click, never per frame. The step itself is applied by the
 // scene through apply().
@@ -17,7 +17,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     scroll: el("tour-scroll"),
     stepTitle: el("tour-step-title"),
     body: el("tour-body"),
-    code: el("tour-code"),
     title: el("tour-title"),
     range: el("tour-range"),
     play: el("tour-play"),
@@ -28,17 +27,12 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
 
   let tour = null;
   let player = null;
-  const codeCache = new Map();
-  let codeWant = null;
 
   function show(index, step) {
     ui.stepTitle.textContent = step.title;
     ui.body.innerHTML = renderMarkdown(step.note || "");
-    clearCode();
-    codeWant = step.targets && step.targets.code ? step.targets.code.id : null;
-    if (codeWant) loadCode(codeWant);
-    // A step change starts at the top, so the new step's note and code read
-    // from their first line; the player's counter and bar carry the position.
+    // A step change starts at the top, so the new description reads from its
+    // first line; the player's counter and bar carry the position.
     ui.scroll.scrollTop = 0;
     apply(step);
   }
@@ -58,39 +52,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     } else {
       bar$.style.width = state.ended ? "100%" : "0";
     }
-  }
-
-  // clearCode empties the source panel. A step shows text, never a diff.
-  function clearCode() {
-    ui.code.hidden = true;
-    ui.code.replaceChildren();
-  }
-
-  // loadCode asks for the declaration's source and draws it as text: the
-  // body after the change, or the old body when the declaration was removed.
-  // A diff of that change stays on D, for a selected node.
-  async function loadCode(id) {
-    let view = codeCache.get(id);
-    if (!view) {
-      try {
-        const res = await fetch("./api/code?id=" + encodeURIComponent(id));
-        if (!res.ok) return;
-        view = await res.json();
-        codeCache.set(id, view);
-      } catch {
-        return;
-      }
-    }
-    if (codeWant !== id) return;
-    const text = view.after || view.before || "";
-    if (!text) return;
-    const head = document.createElement("div");
-    head.className = "tour-code-head";
-    head.textContent = view.file || "";
-    const pre = document.createElement("pre");
-    pre.textContent = text;
-    ui.code.replaceChildren(head, pre);
-    ui.code.hidden = false;
   }
 
   // hold: the address bar already named a view, so the first tour comes up
@@ -114,7 +75,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     if (player) player.stop();
     player = null;
     tour = null;
-    clearCode();
     show$(false);
     clear();
   }
@@ -146,7 +106,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
       `<p>${escapeHTML(source)}</p><ul>` +
       list.map((p) => `<li><code>${escapeHTML(p.step ? "step " + p.step + " " + p.field : p.field)}</code> ${escapeHTML(p.message)}</li>`).join("") +
       "</ul>";
-    clearCode();
     ui.title.textContent = "Tour";
     ui.range.textContent = "";
   }

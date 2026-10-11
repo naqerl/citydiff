@@ -71,8 +71,8 @@ func TestResolveSwiftNames(t *testing.T) {
 	}
 }
 
-func TestSwiftCallPathAndSnippet(t *testing.T) {
-	sc, src := swiftScene(t)
+func TestSwiftCallPath(t *testing.T) {
+	sc, _ := swiftScene(t)
 	resolved, probs := Check(Tour{Version: 1, Steps: []Step{{Title: "p", Path: &Path{From: "App.run", To: "Widget.render"}}}}, sc, nil)
 	if len(probs) > 0 {
 		t.Fatalf("problems: %v", probs)
@@ -83,18 +83,5 @@ func TestSwiftCallPathAndSnippet(t *testing.T) {
 	}
 	if strings.Join(names, " -> ") != "App.run -> Core.Widget.draw -> Core.Widget.render" {
 		t.Fatalf("path = %v", names)
-	}
-	ix := NewIndex(sc)
-	draw, _ := ix.Resolve("Widget.draw")
-	if got := Snippet(src, draw, "Widget"); got != "    public func draw() {\n        render()\n    }" {
-		t.Fatalf("draw snippet: %q", got)
-	}
-	eq, _ := ix.Resolve("Widget.==")
-	if got := Snippet(src, eq, "<Widget as Equatable>"); !strings.Contains(got, "static func ==") {
-		t.Fatalf("== snippet: %q", got)
-	}
-	typ, _ := ix.Resolve("Core.Widget")
-	if got := Snippet(src, typ, ""); !strings.HasPrefix(got, "/// A widget.\npublic struct Widget {") || !strings.HasSuffix(got, "\n}") {
-		t.Fatalf("type snippet: %q", got)
 	}
 }

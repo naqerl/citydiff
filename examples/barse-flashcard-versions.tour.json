@@ -31,7 +31,6 @@
       "title": "Picking the final version",
       "note": "`review.Service.SelectFinal` is new. It refuses once the lesson is published, checks the run finished, then marks it final.",
       "focus": "review.Service.SelectFinal",
-      "code": "review.Service.SelectFinal",
       "duration": 10
     },
     {
@@ -50,7 +49,6 @@
       "title": "The generation run changed",
       "note": "`runGeneration` now records each phase so the lesson page can show progress per version.",
       "focus": "Generator.runGeneration",
-      "code": "Generator.runGeneration",
       "duration": 10
     },
     {

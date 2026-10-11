@@ -698,7 +698,7 @@
       border: 1px solid var(--line);
       padding: 10px 12px;
     }
-    /* An empty note is no note: no empty box above the source. */
+    /* An empty description is no box. */
     #tour-body:empty { display: none; }
     #tour-body p { margin: 0 0 8px; }
     #tour-body > :last-child { margin-bottom: 0; }
@@ -708,24 +708,6 @@
     #tour-body pre { background: var(--bg); border: 1px solid var(--line); padding: 8px; overflow-x: auto; }
     #tour-body pre code { border: 0; padding: 0; background: transparent; color: var(--pre); }
     #tour-body a { color: var(--link); }
-    /* The source under a note is text: the declaration, not a diff. The
-       panel is opaque so it reads over the city. */
-    #tour-code { margin-top: 10px; }
-    #tour-code[hidden] { display: none; }
-    .tour-code-head { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
-    #tour-code pre {
-      margin: 0;
-      font-size: 11px;
-      line-height: 1.45;
-      max-height: 40vh;
-      overflow: auto;
-      background: var(--elev);
-      color: var(--pre);
-      border: 1px solid var(--line);
-      padding: 8px 10px;
-      tab-size: 4;
-      white-space: pre;
-    }
     #tour-controls { display: flex; align-items: center; gap: 6px; padding: 10px 14px 12px; border-top: 1px solid var(--line); }
     /* Solid, not the frosted panel: prev, play and next stay readable over the city. */
     #tour-controls button { width: 30px; height: 26px; background: var(--elev); border: 1px solid var(--line); color: var(--pre); padding: 0; }
@@ -1047,7 +1029,6 @@
         <div id="tour-scroll">
           <h2 id="tour-step-title"></h2>
           <div id="tour-body"></div>
-          <div id="tour-code" hidden></div>
         </div>
         <div id="tour-controls">
           <button type="button" id="tour-prev" title="Previous step (,)">‹</button>

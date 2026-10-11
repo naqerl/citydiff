@@ -139,17 +139,6 @@ func (v *viewer) handler() http.Handler {
 		v.tour = append([]byte(nil), body.Bytes()...)
 		writeJSON(w, http.StatusOK, tourReply{Resolved: resolved, Scene: sceneInfo{Range: v.snap.commitRange, Switched: switched}})
 	})
-	mux.HandleFunc("GET /api/code", func(w http.ResponseWriter, r *http.Request) {
-		v.mu.Lock()
-		snap := v.snap
-		v.mu.Unlock()
-		view, ok := snap.code(r.URL.Query().Get("id"))
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		writeJSON(w, http.StatusOK, view)
-	})
 	mountSkins(mux, skinsDir())
 	mux.HandleFunc("GET /api/edit", v.serveEditor)
 	mux.HandleFunc("GET /api/diff", v.serveDiff)

@@ -37,6 +37,9 @@ func TestParseRejectsUnknownFieldsAndTrailingData(t *testing.T) {
 	if _, err := Parse(strings.NewReader(`{"version":1,"steps":[{"title":"a","foucs":"x"}]}`)); err == nil || !strings.Contains(err.Error(), "foucs") {
 		t.Fatalf("unknown field: %v", err)
 	}
+	if _, err := Parse(strings.NewReader(`{"version":1,"steps":[{"title":"a","code":"Func"}]}`)); err == nil || !strings.Contains(err.Error(), "code") {
+		t.Fatalf("code field: %v", err)
+	}
 	if _, err := Parse(strings.NewReader(`{"version":1,"steps":[]} {}`)); err == nil {
 		t.Fatal("trailing data accepted")
 	}
@@ -60,7 +63,7 @@ func TestSchemaIsJSONAndListsEveryStepField(t *testing.T) {
 	if err := json.Unmarshal(Schema, &doc); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(Step{Path: &Path{}, Dim: new(bool), Highlight: []string{"x"}, Title: "t", Note: "n", Duration: 1, Mode: "m", Select: "s", Focus: "f", Camera: "c", Zoom: 1, Code: "c"})
+	raw, _ := json.Marshal(Step{Path: &Path{}, Dim: new(bool), Highlight: []string{"x"}, Title: "t", Note: "n", Duration: 1, Mode: "m", Select: "s", Focus: "f", Camera: "c", Zoom: 1})
 	var fields map[string]any
 	_ = json.Unmarshal(raw, &fields)
 	for name := range fields {
@@ -147,7 +150,7 @@ func TestResolveExplainsFailures(t *testing.T) {
 func TestCheckResolvesAStep(t *testing.T) {
 	tr := Tour{Version: 1, Range: "a..b", Steps: []Step{
 		{Title: "one", Mode: "changes", Select: "gen"},
-		{Title: "two", Path: &Path{From: "gen.New", To: "Save"}, Highlight: []string{"db"}, Code: "Generator.Run", Duration: 3},
+		{Title: "two", Path: &Path{From: "gen.New", To: "Save"}, Highlight: []string{"db"}, Duration: 3},
 		{Title: "three", Focus: "<Entry as Display>::fmt"},
 	}}
 	res, probs := Check(tr, fixture(), func(string) error { return nil })
@@ -164,7 +167,7 @@ func TestCheckResolvesAStep(t *testing.T) {
 	if strings.Join(ids, " ") != "gen/g.go#function#New gen/g.go#method#Generator#Run db/db.go#function#Save" {
 		t.Fatalf("path = %v", ids)
 	}
-	if res.Steps[1].Duration != 3 || res.Steps[1].Targets.Code.Name != "m/gen.Generator.Run" || res.Steps[1].Targets.Highlight[0].ID != "m/db" {
+	if res.Steps[1].Duration != 3 || res.Steps[1].Targets.Highlight[0].ID != "m/db" {
 		t.Fatalf("step 2: %+v", res.Steps[1])
 	}
 	if res.Steps[2].Targets.Focus.Kind != KindMethod {
@@ -196,39 +199,5 @@ func TestCheckReportsEveryProblem(t *testing.T) {
 	}
 	if _, probs := Check(Tour{Version: 1}, fixture(), nil); len(probs) != 1 || probs[0].Field != "steps" {
 		t.Fatalf("empty tour: %v", probs)
-	}
-}
-
-func TestSnippetCutsTheDeclaration(t *testing.T) {
-	src := []byte(`package gen
-
-// Run runs.
-func (g *Generator) Run(x int) error {
-	s := "}"
-	if x > 0 { // }
-		return nil
-	}
-	return nil
-}
-
-func New() *Generator { return &Generator{} }
-
-type Generator struct {
-	a int
-}
-`)
-	run := Snippet(src, Node{Name: "m/gen.Generator.Run", Kind: KindMethod, File: "gen/g.go"}, "*Generator")
-	if !strings.HasPrefix(run, "// Run runs.\nfunc (g *Generator) Run") || !strings.HasSuffix(run, "\treturn nil\n}") {
-		t.Fatalf("method snippet:\n%s", run)
-	}
-	if got := Snippet(src, Node{Name: "m/gen.New", Kind: KindFunction, File: "gen/g.go"}, ""); got != "func New() *Generator { return &Generator{} }" {
-		t.Fatalf("function snippet: %q", got)
-	}
-	if got := Snippet(src, Node{Name: "m/gen.Generator", Kind: KindType, File: "gen/g.go"}, ""); got != "type Generator struct {\n\ta int\n}" {
-		t.Fatalf("type snippet: %q", got)
-	}
-	rs := []byte("impl fmt::Display for Entry {\n    fn fmt(&self, f: &mut Formatter<'_>) -> Result {\n        write!(f, \"{}\", self.0)\n    }\n}\n")
-	if got := Snippet(rs, Node{Name: "crate::store::<Entry as Display>::fmt", Kind: KindMethod, File: "src/store.rs"}, "<Entry as Display>"); !strings.HasPrefix(got, "    fn fmt") || !strings.HasSuffix(got, "    }") {
-		t.Fatalf("rust snippet: %q", got)
 	}
 }

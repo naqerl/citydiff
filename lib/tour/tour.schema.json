@@ -24,7 +24,7 @@
       "required": ["title"],
       "properties": {
         "title": { "type": "string", "minLength": 1, "description": "Note heading." },
-        "note": { "type": "string", "description": "Markdown shown in the note panel: paragraphs, **bold**, *italic*, `code`, fenced code, lists, headings and http(s) links." },
+        "note": { "type": "string", "description": "The description: paragraphs, **bold**, *italic*, names in backticks, lists, headings and http(s) links. No source listing." },
         "duration": { "type": "number", "minimum": 0, "default": 8, "description": "Seconds the step plays before autoplay moves on." },
         "mode": { "enum": ["changes", "full"], "description": "changes colours the diff and draws the dependency arcs; full is the plain city." },
         "select": { "$ref": "#/$defs/name", "description": "A package or external import to select and fly to. Its dependency or changed-call arcs are drawn." },
@@ -39,8 +39,7 @@
         },
         "dim": { "type": "boolean", "default": true, "description": "With highlight or path, shade everything else. false keeps the rest of the city bright." },
         "camera": { "enum": ["overview", "top", "fit", "close"], "description": "overview frames the city, top looks straight down, fit frames the step's nodes, close moves in on them. Defaults to the camera of select/focus, else fit when there are nodes, else overview." },
-        "zoom": { "type": "number", "exclusiveMinimum": 0, "description": "Multiplies the camera's distance after the camera move; 0.5 is twice as close." },
-        "code": { "$ref": "#/$defs/name", "description": "A declaration whose source is shown under the note as text: the body after the change, or the old body when the declaration was removed. A tour does not show a diff; D does, for a selected node." }
+        "zoom": { "type": "number", "exclusiveMinimum": 0, "description": "Multiplies the camera's distance after the camera move; 0.5 is twice as close." }
       }
     }
   }
