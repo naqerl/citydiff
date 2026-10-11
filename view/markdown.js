@@ -87,32 +87,3 @@ export function renderMarkdown(source) {
   return out.join("");
 }
 
-// lineDiff marks each line of before/after as kept, removed or added, by
-// longest common subsequence. Snippets are short, so the square table is fine.
-export function lineDiff(before, after) {
-  const a = before ? before.split("\n") : [];
-  const b = after ? after.split("\n") : [];
-  const n = a.length;
-  const m = b.length;
-  const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
-  }
-  const out = [];
-  let i = 0;
-  let j = 0;
-  while (i < n || j < m) {
-    if (i < n && j < m && a[i] === b[j]) {
-      out.push({ op: " ", text: a[i] });
-      i++;
-      j++;
-    } else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) {
-      out.push({ op: "+", text: b[j++] });
-    } else {
-      out.push({ op: "-", text: a[i++] });
-    }
-  }
-  return out;
-}

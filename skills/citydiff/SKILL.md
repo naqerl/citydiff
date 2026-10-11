@@ -367,7 +367,7 @@ over from the step before except the mode.
 | `dim` | bool | With `highlight`/`path`: `false` keeps the rest of the city bright. Default `true`. |
 | `camera` | `"overview"` \| `"top"` \| `"fit"` \| `"close"` | `overview` frames the city, `top` looks down on the step's nodes, `fit` frames them, `close` moves in. Default: the select/focus camera, else `fit` when the step names nodes, else `overview`. |
 | `zoom` | number > 0 | Multiplies the camera distance after the camera move: `0.5` is twice as close, `1.5` farther. |
-| `code` | declaration | Shows its source under the note: a line diff when it changed, the new or old body when added or removed. |
+| `code` | declaration | Shows the declaration's git diff under the note: the same hunks, line numbers and syntax colours the viewer's `D` key opens. A declaration that did not change says so. |
 
 ### Names
 
@@ -399,8 +399,12 @@ https://github.com/naqerl/citydiff/blob/main/examples/barse-flashcard-versions.t
 | `t` | hide / show the tour sidebar (`b` does the left one) |
 | `?` | the legend, with every key the viewer answers to |
 
-Dragging or clicking in the city pauses autoplay. The × in the sidebar
-header closes the tour. Loading a tour switches the viewer to the tour's
+Dragging, wheeling or a fly key in the city pauses autoplay. The × in the
+sidebar header closes the tour. A `code` step's diff has a ⤢ button that
+opens it full screen the way `D` opens a selected node's diff (and pauses
+autoplay too); `esc` there closes it. In the city, `esc` puts the current
+step's selection, highlights and camera back instead of flying to the whole
+tree. Loading a tour switches the viewer to the tour's
 range, so the left sidebar shows
 that range's changes; a range that does not resolve is reported in the
 tour sidebar.

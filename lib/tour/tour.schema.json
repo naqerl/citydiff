@@ -40,7 +40,7 @@
         "dim": { "type": "boolean", "default": true, "description": "With highlight or path, shade everything else. false keeps the rest of the city bright." },
         "camera": { "enum": ["overview", "top", "fit", "close"], "description": "overview frames the city, top looks straight down, fit frames the step's nodes, close moves in on them. Defaults to the camera of select/focus, else fit when there are nodes, else overview." },
         "zoom": { "type": "number", "exclusiveMinimum": 0, "description": "Multiplies the camera's distance after the camera move; 0.5 is twice as close." },
-        "code": { "$ref": "#/$defs/name", "description": "A declaration whose source is shown under the note, as a diff when it changed." }
+        "code": { "$ref": "#/$defs/name", "description": "A declaration whose git diff is shown under the note: the same hunks, line numbers and colours the viewer's D key opens, and the same 'unchanged' message when the node did not change." }
       }
     }
   }
