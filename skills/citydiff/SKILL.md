@@ -15,7 +15,8 @@ description: Use when the user asks to describe a pull request, explain what cha
 
 Read the diff with `git diff` too: citydiff shows the structure, the notes a tour writes
 must come from the source. Known limits: **Go, Rust and Swift only**; a commit range needs a
-**git repository**; `-view` is **long-running**; building from source needs **CGO**.
+**git repository**; the default `citydiff` (the viewer) is **long-running**; building from
+source needs **CGO**.
 
 ## What it shows
 
@@ -62,22 +63,28 @@ old `citydiff-tour` skill from any directory a previous install wrote it to.
 ## Flags
 
 ```
-__BIN_NAME__ -path FILE|DIR              parse a file or directory tree
+__BIN_NAME__ -path FILE|DIR              a file or directory tree to read
            -range A..B | A...B         diff two refs; works with git repos (reads the tree at a ref)
-           -json                       machine-readable entries (pipe into jq)
-           -scene                      print the 3D scene as JSON (input for the viewer)
-           -view                       serve the 3D viewer over HTTP
-           -tour FILE                  tour script for -view to load and play
-           -addr 127.0.0.1:8787        listen address for -view (default)
+           -json                       machine-readable entries (pipe into jq) and exit
+           -scene                      print the 3D scene as JSON (input for the viewer) and exit
+           -text                       print the plain text diff (or the file list) and exit
+           -tour FILE                  tour script for the viewer to load and play
+           -addr 127.0.0.1:8787        listen address for the viewer (default)
            -p, -r                      short forms of -path, -range
 ```
+
+With **no** `-json`/`-scene`/`-text`, `__BIN_NAME__` **serves the viewer and never
+returns**. Naming more than one printing flag, or a printing flag together with `-addr` or
+`-tour`, is a usage error. There is no `-view` flag — passing it fails.
+
+Note: the viewer is **long-running** — always launch it in the background, never as a
+foreground call (see below).
 
 ```
 __BIN_NAME__ nodes [-path DIR] [-range A..B] [-changed] [-kind K] [-json]   # nodes a tour can name
 __BIN_NAME__ tour validate|serve|schema ...                                 # see Tours
 ```
 
-Note: `-view` is **long-running** — always launch it in the background (see below).
 Note: for a commit range the path must be a **git repository**, not a plain directory;
 go-git reads the trees at the two refs, so the working tree does not need to be checked out.
 
@@ -105,24 +112,41 @@ base=$(git rev-parse HEAD~20)
 __BIN_NAME__ -path . -range "$base..HEAD" -json > /tmp/range.json
 ```
 
-### Launch the 3D viewer in the background
+### The viewer is long-running — launch it in the background
 
-It serves on 127.0.0.1:8787 by default and never exits, so never call it in the foreground.
+With no output flag, `__BIN_NAME__` **serves the 3D viewer and never returns**. It is a
+long-running process, not a command whose output you wait for:
+
+- **Never** run it as a foreground bash call — the call would block forever.
+- Launch it with your agent's background / run-in-background capability; if there is none,
+  use `nohup … > log 2>&1 &` and keep the pid.
+- **Poll** the address (`curl -fsS -o /dev/null http://127.0.0.1:8787/`) instead of blocking on
+  the process.
+- **Never** pass `-view` to mean this — the flag no longer exists.
+- `kill` is how you stop it. If something is already listening on the port, **someone else
+  owns that viewer** — check before starting another and pick a fresh `-addr`; do not kill a
+  process you did not start.
 
 ```sh
-# long-lived viewer over a whole project
-nohup __BIN_NAME__ -path /home/user/src/barse -view -addr 127.0.0.1:8787 \
+# start it in the background, over a whole project
+nohup __BIN_NAME__ -path /home/user/src/barse -addr 127.0.0.1:8787 \
   > /tmp/citydiff-view.log 2>&1 &
 echo $! > /tmp/citydiff-view.pid
 
-# viewer over a commit range (the diff scene)
-nohup __BIN_NAME__ -path /home/user/src/barse -range A..B -view -addr 127.0.0.1:8788 \
+# start it over a commit range (the diff scene)
+nohup __BIN_NAME__ -path /home/user/src/barse -range A..B -addr 127.0.0.1:8788 \
   > /tmp/citydiff-range.log 2>&1 &
 echo $! > /tmp/citydiff-range.pid
 
-# check / stop
-curl -fsS http://127.0.0.1:8787/scene.json > /dev/null && echo up
+# poll until it is up, then stop it by killing the process
+curl -fsS -o /dev/null http://127.0.0.1:8787/ && echo up
 kill "$(cat /tmp/citydiff-view.pid)"
+```
+
+A one-shot plain-text look at a diff (no browser, safe to wait for):
+
+```sh
+__BIN_NAME__ -path /home/user/src/barse -range A..B -text
 ```
 
 The viewer exposes `GET /scene.json` (the scene graph) and `/` (static assets, embedded in
@@ -267,9 +291,10 @@ to walk through, present or review a change.
    # then open http://127.0.0.1:8787/
    ```
 
-   Equivalent: `citydiff -path REPO -view -tour tour.json`. Either way the viewer shows the
-   script's `range`, whatever `-range` says. A running viewer also plays `?tour=<url>`
-   (fetched by the browser) or a script dropped onto the page; the server checks it the same way.
+   Equivalent: `citydiff -path REPO -tour tour.json` (the default serve mode). Either way the
+   viewer shows the script's `range`, whatever `-range` says. A running viewer also plays
+   `?tour=<url>` (fetched by the browser) or a script dropped onto the page; the server checks
+   it the same way.
 
 ### What a tour must say
 
@@ -410,7 +435,7 @@ tour sidebar.
 | Path | What |
 | --- | --- |
 | `AGENTS.md` | design intent and invariants of the tool |
-| `cmd/cli/main.go` | flags, JSON shapes, the `-view` HTTP server |
+| `cmd/cli/main.go` | flags, JSON shapes, the viewer's HTTP server |
 | `lib/parser.go`, `lib/parser/` | Go source → Entry values (tree-sitter) |
 | `lib/diff/` | comparing two parses at all three levels |
 | `lib/git/` | git source: reads trees at refs via go-git |
