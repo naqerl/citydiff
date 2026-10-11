@@ -12,6 +12,8 @@ import { nameIndex, writeNode, readNode, readState, writeState } from "./state.j
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
 import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
 import { applyPage, cycleSkin, loadSkin } from "./skin.js";
+import { isLaunch, LAUNCH_SKIN } from "./launch.js";
+import { createRocket } from "./rocket.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
 
@@ -1069,6 +1071,14 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(-2, -2);
 
 const city = new THREE.Group();
+const rocket = createRocket({
+  scene,
+  camera,
+  renderer,
+  frame: (points, dir) => fitTo(points, dir),
+  overlay: document.querySelector("#stage"),
+  insets: () => viewInsets,
+});
 scene.add(city);
 const arcGroup = new THREE.Group();
 scene.add(arcGroup);
@@ -4540,9 +4550,21 @@ function animate(now) {
   lastFrame = t;
   if (!lastActivity) lastActivity = t;
   if (held.size && !typingSearch()) tween = null;
-  const tweening = tickTween(t);
-  const flying = flyCamera(dt, t);
-  controls.update();
+  // While /launch runs, the show holds the camera: no tween, no keys, no
+  // orbit, and no controls clamping it under the rocket it looks up at.
+  const show = rocket.tick(dt);
+  let tweening = false;
+  let flying = false;
+  if (show) {
+    camera.position.copy(show.pos);
+    controls.target.copy(show.target);
+    camera.lookAt(show.target);
+    idleSpin = false;
+  } else {
+    tweening = tickTween(t);
+    flying = flyCamera(dt, t);
+    controls.update();
+  }
   const moved = tweening || flying ||
     camera.position.distanceToSquared(settledPos) > 1e-6 ||
     controls.target.distanceToSquared(settledTarget) > 1e-6;
@@ -4559,6 +4581,7 @@ function animate(now) {
   const motion = tweening || viewDirty || (flying && !idleSpin);
   const flowing = tickFlows(dt);
   const fading = tickThemeFade(t);
+  const launching = !!show;
   if (halo.visible) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
   const live = theme && theme.live;
   if (live) theme.uTime.value += dt > 0 ? dt : 0;
@@ -4572,11 +4595,11 @@ function animate(now) {
     hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading)) {
+  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading || launching)) {
     renderer.render(scene, camera);
     viewDirty = false;
   }
-  if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading) {
+  if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading || launching) {
     requestFrame();
   } else {
     parkLoop();
@@ -4677,7 +4700,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   const start = pointerDown;
   const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   pointerDown = null;
-  if (skinPicking) return;
+  if (skinPicking || rocket.showing()) return;
   // A fingertip wobbles more than a mouse does.
   if (moved > (start.touch ? 10 : 5) || start.button !== 0) return;
   if (bird.on) return;
@@ -4889,6 +4912,31 @@ const COMMANDS = [
   { name: "/skin", does: "choose a theme", run: () => openSkinPanel() },
 ];
 
+// /launch is not in the list and completes from nothing: it runs only when
+// typed in full, and only under the starship skin.
+function launchRocket() {
+  if (storedSkin() !== LAUNCH_SKIN || !laid || bird.on || rocket.showing()) return;
+  const giveBack = () => {
+    controls.enabled = true;
+    tween = null;
+    noteActivity();
+    viewDirty = true;
+    requestFrame();
+  };
+  tween = null;
+  held.clear();
+  endIntro();
+  controls.enabled = false;
+  rocket.launch({
+    bounds: laid.bounds,
+    from: { pos: camera.position, target: controls.target },
+    done: giveBack,
+  }).then((started) => {
+    if (started) requestFrame();
+    else giveBack();
+  }).catch(giveBack);
+}
+
 function matchCommands(value) {
   const q = value.trim().toLowerCase();
   if (q === "/") return COMMANDS;
@@ -4969,8 +5017,16 @@ window.addEventListener("pointerdown", (event) => {
 // not reset the idle clock, or the orbit and the animations would never settle.
 window.addEventListener("wheel", () => { noteActivity(); endIntro(); requestFrame(); }, { passive: true });
 
-// Registered first, and on the capture path, so it runs before the viewer's
-// own keys and before the tour. While the menu is open those keys do nothing.
+// The /launch show takes every key; Escape cuts it short.
+window.addEventListener("keydown", (event) => {
+  if (!rocket.showing()) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (event.key === "Escape") rocket.abort();
+}, true);
+
+// Registered before the viewer's own keys, and on the capture path, so it runs
+// before them and before the tour. While the menu is open those keys do nothing.
 window.addEventListener("keydown", (event) => {
   if (event.target === hud.search) return;
   // The theme menu's own find box types freely; Enter and Escape are its.
@@ -5123,7 +5179,8 @@ window.addEventListener("keydown", (event) => {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (commandHits.length) runCommand(commandHits[searchCursor]);
+      if (isLaunch(hud.search.value)) runCommand({ run: launchRocket });
+      else if (commandHits.length) runCommand(commandHits[searchCursor]);
       else if (searchHits[searchCursor]) goToResult(searchHits[searchCursor]);
       return;
     }
