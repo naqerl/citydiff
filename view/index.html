@@ -324,6 +324,9 @@
     #detail button.row .mark.stats { display: flex; gap: 7px; }
     /* The package a reference lives in, so a hop out of this one is obvious. */
     #detail button.row .where { margin-left: auto; flex: none; color: var(--faint); font-size: 11px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* A package outside the snapshot: named in the same quiet grey its arc is
+       drawn in, so the Calls list and the city agree on which hops leave it. */
+    #detail button.row.ext .where { color: var(--call-std); }
     #detail button.row:hover, #detail button.row.on { background: var(--elev); }
     .added { color: var(--added-text); }
     .removed { color: var(--removed-text); }
