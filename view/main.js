@@ -4231,6 +4231,7 @@ function noRootDetail() {
   meta.textContent = modules.length + (modules.length === 1 ? " module" : " modules");
   wrap.append(meta);
   wrap.append(tallyLine("declarations", allDeclaredEntities()));
+  wrap.append(plateOf(wrap));
   return wrap;
 }
 
@@ -4319,8 +4320,20 @@ function packageDetail(pkg) {
   // tabs. Overview has no diff to count, so it keeps the plain total.
   const deps = pkg.deps || [];
   if (deps.length) wrap.append(tallyLine("dependencies", deps));
+  wrap.append(plateOf(wrap));
   appendRefs(wrap);
   return wrap;
+}
+
+// plateOf(node) — move what the head says onto one plate that hugs it. The
+// head used to be a slab spanning the sidebar; the plate stops where the text
+// stops, so the frosted panel shows on all four sides of it. Whatever is
+// appended after it — the Calls / Callers pair — sits on that panel instead.
+function plateOf(node) {
+  const plate = document.createElement("div");
+  plate.className = "head-plate";
+  plate.append(...node.childNodes);
+  return plate;
 }
 
 function declaredEntities(pkg) {
@@ -4920,15 +4933,18 @@ function entityDetail(entity) {
     const size = document.createElement("p");
     size.textContent = sizeText(entity);
     wrap.append(size);
-    appendRefs(wrap);
-  } else if (entity.kind === "type") {
-    appendRefs(wrap);
   }
   if (entity.fields && entity.fields.length) {
     const line = document.createElement("p");
     line.textContent = "fields  " + entity.fields.join(", ");
     wrap.append(line);
   }
+  // Everything the head says goes on the plate first, in one block: the name,
+  // the path, the size, the fields. Only then the pair of tabs, on the frosted
+  // panel under it. A variable has no calls and no callers, so it gets none.
+  const paired = entity.kind === "function" || entity.kind === "method" || entity.kind === "type";
+  wrap.append(plateOf(wrap));
+  if (paired) appendRefs(wrap);
   return wrap;
 }
 
@@ -4941,13 +4957,15 @@ function focusDetail(entity) {
   const mark = changeMark(entity.change, entity.part, true);
   if (mark) title.append(mark);
   wrap.append(title);
-  appendRefs(wrap);
   // The calls or the callers are the References section in the body, behind
   // its own header: the head keeps what the node is and how big it is, and
-  // nothing is listed or counted twice.
+  // nothing is listed or counted twice. The size joins the name on the plate;
+  // the pair of tabs sits under the plate, on the frosted panel.
   const meta = document.createElement("p");
   meta.append(sizeText(entity));
   wrap.append(meta);
+  wrap.append(plateOf(wrap));
+  appendRefs(wrap);
   return wrap;
 }
 
