@@ -23,6 +23,11 @@ BIN_NAME="${BIN_NAME:-citydiff}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 SKILL_NAME="${SKILL_NAME:-citydiff}"
 SKILLS_DIR="${SKILLS_DIR:-$HOME/.agents/skills}"
+# Sub-skills of SKILL_NAME, written *inside* $SKILLS_DIR/$SKILL_NAME/ so they are
+# one directory down from the main SKILL.md rather than beside it: a sub-skill is
+# reached by following a link in the skill that names it, not by competing with
+# it in the loader's skill list. The main skill says when each one applies.
+SUBSKILLS="${SUBSKILLS-citydiff-video}"
 AGENTS_MD="${AGENTS_MD:-}"
 NO_PATH="${NO_PATH:-}"
 NO_SKILLS="${NO_SKILLS:-}"
@@ -189,6 +194,22 @@ skill_source() {
   fetch "https://raw.githubusercontent.com/$REPO/main/skills/$SKILL_NAME/SKILL.md"
 }
 
+# fill_placeholders <in> <out> [skill-name] — the skill files carry
+# __PLACEHOLDER__ text so a checkout, a release tag and a local build all read the
+# same once filled. __SKILL_NAME__ is the skill being written, which is the parent
+# for SKILL.md and the sub-skill's own name for one of its files.
+fill_placeholders() {
+  _name="${3:-$SKILL_NAME}"
+  sed -e "s|__REPO_DIR__|${REPO##*/}|g" \
+      -e "s|__REPO__|$REPO|g" \
+      -e "s|__BIN_DIR__|$BIN_DIR|g" \
+      -e "s|__BIN_NAME__|$BIN_NAME|g" \
+      -e "s|__SKILL_NAME__|$_name|g" \
+      -e "s|__VERSION__|${version:-${TAG:-main}}|g" \
+      -e "s|__DATE__|$(date -u +%Y-%m-%d)|g" \
+      "$1" > "$2"
+}
+
 write_skill() {
   skill_dir="$SKILLS_DIR/$SKILL_NAME"
   src="$(mktemp)"
@@ -197,17 +218,10 @@ write_skill() {
     warn "  could not fetch the $SKILL_NAME skill; skipped"
     return 0
   fi
-  # The file carries placeholders, so fill them in before checking that what we
-  # fetched is the skill we think it is.
+  # Fill the placeholders before checking that what we fetched is the skill we
+  # think it is.
   filled="$src.filled.$$"
-  if ! sed -e "s|__REPO_DIR__|${REPO##*/}|g" \
-           -e "s|__REPO__|$REPO|g" \
-           -e "s|__BIN_DIR__|$BIN_DIR|g" \
-           -e "s|__BIN_NAME__|$BIN_NAME|g" \
-           -e "s|__SKILL_NAME__|$SKILL_NAME|g" \
-           -e "s|__VERSION__|${version:-${TAG:-main}}|g" \
-           -e "s|__DATE__|$(date -u +%Y-%m-%d)|g" \
-           "$src" > "$filled" || ! grep -q "^name: $SKILL_NAME$" "$filled"; then
+  if ! fill_placeholders "$src" "$filled" || ! grep -q "^name: $SKILL_NAME$" "$filled"; then
     rm -f "$src" "$filled"
     warn "  the $SKILL_NAME skill we fetched is not ours; skipped"
     return 0
@@ -224,6 +238,46 @@ write_skill() {
   fi
   rm -f "$src" "$filled"
   warn "  cannot write $skill_dir/SKILL.md; skipped"
+}
+
+# write_subskills $1(ref) — write each sub-skill into $SKILLS_DIR/$SKILL_NAME/.
+# A checkout is read from the tree; otherwise the files are listed through the
+# contents API at the ref and fetched, so a release install gets them too.
+write_subskills() {
+  ref="${1:-main}"
+  here=$(dirname "$0" 2>/dev/null || printf .)
+  for sub in $SUBSKILLS; do
+    dst="$SKILLS_DIR/$SKILL_NAME/$sub"
+    mkdir -p "$dst" || { warn "  cannot create $dst; sub-skill $sub skipped"; continue; }
+    n=0
+    put() {  # put <source-file> — filled, into the sub-skill directory
+      base=$(basename "$1")
+      # The sub-skill ships a Python script, so never copy build leftovers.
+      case "$base" in __pycache__*|*.pyc|*.pyo|.DS_Store) return 0 ;; esac
+      fill_placeholders "$1" "$dst/$base" "$sub" 2>/dev/null && n=$((n + 1)) || rm -f "$dst/$base"
+    }
+    if [ -d "$here/skills/$SKILL_NAME/$sub" ]; then
+      for f in "$here/skills/$SKILL_NAME/$sub"/* "$here/skills/$SKILL_NAME/$sub"/.[!.]*; do
+        [ -f "$f" ] || continue
+        put "$f"
+      done
+    else
+      listing="$(fetch "https://api.github.com/repos/$REPO/contents/skills/$SKILL_NAME/$sub?ref=$ref" 2>/dev/null)"
+      for name in $(printf '%s' "$listing" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p'); do
+        tmpf="$(mktemp)"
+        if fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$SKILL_NAME/$sub/$name" > "$tmpf" 2>/dev/null; then
+          put "$tmpf"
+        fi
+        rm -f "$tmpf"
+      done
+    fi
+    if [ "$n" -gt 0 ]; then
+      say "  wrote sub-skill $dst ($n files)"
+    else
+      warn "  no files for sub-skill $sub at $ref; skipped"
+      rmdir "$dst" 2>/dev/null || true
+    fi
+  done
 }
 
 # --------------------------------------------------------------- uninstall ---
@@ -261,6 +315,7 @@ say "  skills dir: $SKILLS_DIR"
 
 if [ -n "$SKILLS_ONLY" ]; then
   write_skill "$TAG"
+  write_subskills "$TAG"
   remove_legacy_tour_skill
   say "skills installed."
   [ -n "$NO_SKILLS" ] || skills_reload_note
@@ -287,7 +342,11 @@ build_from_source() {
 if [ -n "$FROM_SOURCE" ]; then
   build_from_source
   version="${TAG:-main}"
-  if [ -z "$NO_SKILLS" ]; then write_skill "$TAG"; remove_legacy_tour_skill; fi
+  if [ -z "$NO_SKILLS" ]; then
+    write_skill "$TAG"
+    write_subskills "$TAG"
+    remove_legacy_tour_skill
+  fi
   say ""
   say "$BIN_NAME $version installed."
   [ -n "$NO_SKILLS" ] || skills_reload_note
@@ -396,6 +455,7 @@ if [ -n "$NO_SKILLS" ]; then
   say "  skills skipped (--no-skills)"
 else
   write_skill "$version"
+  write_subskills "$version"
   remove_legacy_tour_skill
   add_pointer "$(agents_md_target)"
 fi
