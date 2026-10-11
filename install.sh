@@ -10,7 +10,7 @@
 #   TAG=v0.0.1                  install a specific tag instead of the latest
 #   NO_PATH=1                   do not touch PATH
 #   NO_SKILLS=1                 do not write the skills / AGENTS.md pointer
-#   SKILL_TARGETS="d1 d2"       skill dirs for the citydiff-tour skill
+#   SKILL_TARGETS="d1 d2"       extra dirs scanned for the old citydiff-tour skill
 #                               (default: ~/.agents/skills, plus ~/.claude/skills
 #                               and ~/.cursor/skills when ~/.claude, ~/.cursor exist)
 #   SKILLS_ONLY=1               install the skills only, not the binary
@@ -31,7 +31,6 @@ TAG="${TAG:-}"
 SKILL_TARGETS="${SKILL_TARGETS:-}"
 SKILLS_ONLY="${SKILLS_ONLY:-}"
 FROM_SOURCE="${FROM_SOURCE:-}"
-TOUR_SKILL="citydiff-tour"
 RELEASES_API="https://api.github.com/repos/$REPO/releases"
 
 usage() {
@@ -121,10 +120,13 @@ resolve_asset() {
     | grep -- "-${suffix}\.tar\.gz$" | head -1
 }
 
-# ------------------------------------------------------------ tour skill ---
+# ------------------------------------------------- legacy tour skill -------
 
-# The skill dirs agents read. ~/.agents/skills always; Claude's and Cursor's
-# only when that agent is installed, so no stray dot-directories appear.
+# The skill dirs this installer has ever written to. ~/.agents/skills always;
+# Claude's and Cursor's only when that agent is installed, so no stray
+# dot-directories appear. Older releases wrote a second skill, citydiff-tour,
+# to all of them; the merged skill replaces it, so these are the dirs the old
+# one has to be removed from.
 skill_targets() {
   if [ -n "$SKILL_TARGETS" ]; then printf '%s\n' $SKILL_TARGETS; return 0; fi
   printf '%s\n' "$SKILLS_DIR"
@@ -133,54 +135,39 @@ skill_targets() {
   return 0
 }
 
-# The skill comes from this checkout when install.sh runs from one, else
-# from the repository at the installed tag (or main).
-tour_skill_source() {
-  here=$(dirname "$0" 2>/dev/null || printf .)
-  if [ -f "$here/skills/$TOUR_SKILL/SKILL.md" ]; then
-    cat "$here/skills/$TOUR_SKILL/SKILL.md"
-    return 0
-  fi
-  ref="${1:-main}"
-  fetch "https://raw.githubusercontent.com/$REPO/$ref/skills/$TOUR_SKILL/SKILL.md" 2>/dev/null \
-    || fetch "https://raw.githubusercontent.com/$REPO/main/skills/$TOUR_SKILL/SKILL.md"
-}
+# The old second skill. Only a directory this installer wrote is removed: a
+# foreign skill of the same name is left alone.
+LEGACY_TOUR_SKILL="citydiff-tour"
 
-install_tour_skill() {
-  body_file="$(mktemp)"
-  if ! tour_skill_source "${1:-}" > "$body_file" || ! grep -q "^name: $TOUR_SKILL\$" "$body_file"; then
-    rm -f "$body_file"
-    warn "  could not fetch the $TOUR_SKILL skill; skipped"
-    return 0
-  fi
+remove_legacy_tour_skill() {
   for dir in $(skill_targets); do
-    target="$dir/$TOUR_SKILL"
-    if [ -e "$target" ] && [ ! -d "$target" ]; then
-      warn "  $target exists and is not a directory; skipped"
+    target="$dir/$LEGACY_TOUR_SKILL"
+    [ -e "$target" ] || continue
+    if [ ! -d "$target" ]; then
+      warn "  $target exists and is not a directory; left alone"
       continue
     fi
-    if [ -f "$target/SKILL.md" ] && ! grep -q "^name: $TOUR_SKILL\$" "$target/SKILL.md"; then
+    if [ ! -f "$target/SKILL.md" ]; then
+      warn "  $target has no SKILL.md; left alone"
+      continue
+    fi
+    if ! grep -q "^name: $LEGACY_TOUR_SKILL\$" "$target/SKILL.md"; then
       warn "  $target/SKILL.md is not ours; left alone"
       continue
     fi
-    mkdir -p "$target" || { warn "  cannot create $target; skipped"; continue; }
-    if [ -f "$target/SKILL.md" ] && cmp -s "$body_file" "$target/SKILL.md"; then
-      say "  $target/SKILL.md up to date"
-      continue
-    fi
-    cp "$body_file" "$target/SKILL.md.tmp.$$" && mv "$target/SKILL.md.tmp.$$" "$target/SKILL.md"
-    say "  wrote skill $target/SKILL.md"
+    rm -f "$target/SKILL.md"
+    rmdir "$target" 2>/dev/null || true
+    say "  removed the old $LEGACY_TOUR_SKILL skill at $target"
   done
-  rm -f "$body_file"
 }
 
-# ------------------------------------------------------------- base skill -----
+# ------------------------------------------------------------------ skill -----
 
-# The base skill ships with the release: the copy in the repository at the
+# The skill ships with the release: the copy in the repository at the
 # installed tag, so what lands beside the binary is the text that release
 # carried. A checkout wins when there is one, and a tag older than the file
 # falls back to main with a warning, which is the best it can do.
-base_skill_source() {
+skill_source() {
   here=$(dirname "$0" 2>/dev/null || printf .)
   if [ -f "$here/skills/$SKILL_NAME/SKILL.md" ]; then
     cat "$here/skills/$SKILL_NAME/SKILL.md"
@@ -197,7 +184,7 @@ base_skill_source() {
 write_skill() {
   skill_dir="$SKILLS_DIR/$SKILL_NAME"
   src="$(mktemp)"
-  if ! base_skill_source "${1:-}" > "$src"; then
+  if ! skill_source "${1:-}" > "$src"; then
     rm -f "$src"
     warn "  could not fetch the $SKILL_NAME skill; skipped"
     return 0
@@ -217,6 +204,11 @@ write_skill() {
     warn "  the $SKILL_NAME skill we fetched is not ours; skipped"
     return 0
   fi
+  if [ -f "$skill_dir/SKILL.md" ] && cmp -s "$filled" "$skill_dir/SKILL.md"; then
+    rm -f "$src" "$filled"
+    say "  $skill_dir/SKILL.md up to date"
+    return 0
+  fi
   if mkdir -p "$skill_dir" && mv "$filled" "$skill_dir/SKILL.md"; then
     rm -f "$src"
     say "  wrote skill $skill_dir/SKILL.md"
@@ -232,14 +224,7 @@ uninstall() {
   say "uninstalling $BIN_NAME"
   if [ -e "$BIN_DIR/$BIN_NAME" ]; then rm -f "$BIN_DIR/$BIN_NAME"; say "  removed $BIN_DIR/$BIN_NAME"; fi
   if [ -d "$SKILLS_DIR/$SKILL_NAME" ]; then rm -rf "$SKILLS_DIR/$SKILL_NAME"; say "  removed $SKILLS_DIR/$SKILL_NAME"; fi
-  for dir in $(skill_targets); do
-    # Only a directory this installer wrote: it holds our SKILL.md and nothing else.
-    if [ -f "$dir/$TOUR_SKILL/SKILL.md" ] && grep -q "^name: $TOUR_SKILL\$" "$dir/$TOUR_SKILL/SKILL.md"; then
-      rm -f "$dir/$TOUR_SKILL/SKILL.md"
-      rmdir "$dir/$TOUR_SKILL" 2>/dev/null || true
-      say "  removed $dir/$TOUR_SKILL"
-    fi
-  done
+  remove_legacy_tour_skill
   for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
     if [ -f "$f" ] && grep -q "^# citydiff/bin\|$BIN_DIR$" "$f" 2>/dev/null; then
       say "  note: $f may still export PATH containing $BIN_DIR — edit by hand if wanted"
@@ -268,7 +253,7 @@ say "  skills dir: $SKILLS_DIR"
 
 if [ -n "$SKILLS_ONLY" ]; then
   write_skill "$TAG"
-  install_tour_skill "$TAG"
+  remove_legacy_tour_skill
   say "skills installed."
   exit 0
 fi
@@ -293,7 +278,7 @@ build_from_source() {
 if [ -n "$FROM_SOURCE" ]; then
   build_from_source
   version="${TAG:-main}"
-  if [ -z "$NO_SKILLS" ]; then write_skill "$TAG"; install_tour_skill "$TAG"; fi
+  if [ -z "$NO_SKILLS" ]; then write_skill "$TAG"; remove_legacy_tour_skill; fi
   say ""
   say "$BIN_NAME $version installed."
   exit 0
@@ -401,7 +386,7 @@ if [ -n "$NO_SKILLS" ]; then
   say "  skills skipped (--no-skills)"
 else
   write_skill "$version"
-  install_tour_skill "$version"
+  remove_legacy_tour_skill
   add_pointer "$(agents_md_target)"
 fi
 
@@ -412,4 +397,4 @@ say ""
 say "next:"
 say "  $BIN_NAME -path /path/to/go/repo -range A..B -json"
 say "  $BIN_NAME -path /path/to/go/repo -view &   # then open http://127.0.0.1:8787"
-say "  $BIN_NAME nodes -path /path/to/repo -range A..B -changed   # names for a tour (skill: $TOUR_SKILL)"
+say "  $BIN_NAME nodes -path /path/to/repo -range A..B -changed   # names for a tour"
