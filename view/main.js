@@ -1066,6 +1066,9 @@ controls.minDistance = 2;
 // the next frame; without this a touch drag on the bare city (no halo, no
 // particles keeping the loop awake) drew only now and then.
 controls.addEventListener("change", () => requestFrame());
+// A drag, a pinch or a wheel on the canvas is the user taking the camera
+// back: a running tour stops advancing so their view is not flown away.
+controls.addEventListener("start", () => { if (tourUI) tourUI.userTookOver(); });
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(-2, -2);
@@ -4424,6 +4427,10 @@ function resetCamera() {
 }
 
 function goBack() {
+  // With a tour up, Escape is the tour's: it puts the current step's selection
+  // and camera back instead of flying to the whole city. A step that names
+  // nothing falls through to the ordinary reset.
+  if (tourUI && tourUI.restore()) return;
   const leftNode = !!(selected || focus);
   goBackInner();
   if (leftNode && !selected && !focus && jumpIndex >= 0) {
@@ -5276,6 +5283,7 @@ window.addEventListener("keydown", (event) => {
   }
   const flyKey = flyToken(event.key);
   if (!typing && hud.legend.hidden && flyKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (tourUI) tourUI.userTookOver();
     held.add(flyKey);
     event.preventDefault();
   }
@@ -5328,6 +5336,7 @@ window.addEventListener("keydown", (event) => {
   if (bird.on && !["m", "1", "2"].includes(event.key)) return;
   if (event.key === "0" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
+    if (tourUI) tourUI.userTookOver();
     resetCamera();
     return;
   }
@@ -5344,11 +5353,13 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "o" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
+    if (tourUI) tourUI.userTookOver();
     jumpStep(-1);
     return;
   }
   if (event.key === "i" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
+    if (tourUI) tourUI.userTookOver();
     jumpStep(1);
     return;
   }
@@ -5361,7 +5372,10 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target?.closest?.("button")) return;
   if (event.key === "Enter" && selected && selected.kind === "entity") {
     const found = byEntity.get(selected.id);
-    if (found && (found.entity.kind === "function" || found.entity.kind === "method")) enterFocus(found);
+    if (found && (found.entity.kind === "function" || found.entity.kind === "method")) {
+      if (tourUI) tourUI.userTookOver();
+      enterFocus(found);
+    }
   }
 });
 window.addEventListener("keyup", (event) => {

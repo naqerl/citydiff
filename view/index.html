@@ -712,8 +712,14 @@
        opaque panel colour so it stays readable over the city. */
     #tour-code { margin-top: 10px; background: var(--elev); border: 1px solid var(--line); }
     #tour-code[hidden] { display: none; }
-    #tour-code-note { padding: 6px 12px; color: var(--faint); font-size: 11px; border-bottom: 1px solid var(--line); }
+    #tour-code-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 12px; border-bottom: 1px solid var(--line); }
+    #tour-code-note { flex: 1; min-width: 0; color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #tour-code-note[hidden] { display: none; }
+    /* The maximise button opens the same diff as a full-viewport overlay. */
+    #tour-code-max { flex: none; margin-left: auto; width: 22px; height: 20px; padding: 0; line-height: 1; background: transparent; border: 1px solid var(--line); color: var(--muted); cursor: pointer; }
+    #tour-code-max:hover { border-color: var(--line-strong); color: var(--fg); }
+    #tour-code-max.on { border-color: var(--accent); color: var(--accent); }
+    #tour-code-max[hidden] { display: none; }
     #tour-code-body { max-height: 40vh; overflow: auto; }
     #tour-controls { display: flex; align-items: center; gap: 6px; padding: 10px 14px 12px; border-top: 1px solid var(--line); }
     #tour-controls button { width: 30px; height: 26px; background: transparent; border: 1px solid var(--line); color: var(--pre); padding: 0; }
@@ -1035,7 +1041,10 @@
           <h2 id="tour-step-title"></h2>
           <div id="tour-body"></div>
           <div id="tour-code" hidden>
-            <div id="tour-code-note" hidden></div>
+            <div id="tour-code-head">
+              <span id="tour-code-note" hidden></span>
+              <button id="tour-code-max" type="button" title="Maximise the diff" aria-label="Maximise the diff" hidden>⤢</button>
+            </div>
             <div id="tour-code-body" class="diff-view"></div>
           </div>
         </div>

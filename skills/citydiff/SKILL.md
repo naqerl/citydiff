@@ -399,8 +399,12 @@ https://github.com/naqerl/citydiff/blob/main/examples/barse-flashcard-versions.t
 | `t` | hide / show the tour sidebar (`b` does the left one) |
 | `?` | the legend, with every key the viewer answers to |
 
-Dragging or clicking in the city pauses autoplay. The × in the sidebar
-header closes the tour. Loading a tour switches the viewer to the tour's
+Dragging, wheeling or a fly key in the city pauses autoplay. The × in the
+sidebar header closes the tour. A `code` step's diff has a ⤢ button that
+opens it full screen the way `D` opens a selected node's diff (and pauses
+autoplay too); `esc` there closes it. In the city, `esc` puts the current
+step's selection, highlights and camera back instead of flying to the whole
+tree. Loading a tour switches the viewer to the tour's
 range, so the left sidebar shows
 that range's changes; a range that does not resolve is reported in the
 tour sidebar.

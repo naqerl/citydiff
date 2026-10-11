@@ -89,7 +89,9 @@ export function closeDiff() {
 
 // openDiff asks for the node's hunks and draws them. It resolves when the
 // overlay is up or the request failed, which is what the caller waits for.
-export async function openDiff(target, onClose) {
+// A caller that already holds the reply — the tour's maximise button does —
+// passes it and no request is made.
+export async function openDiff(target, onClose, reply) {
   if (panel || !target) return;
   const root = document.createElement("div");
   root.id = "diff";
@@ -126,13 +128,14 @@ export async function openDiff(target, onClose) {
 
   const body = root.querySelector("#diff-body");
   const note = root.querySelector(".diff-note");
-  let reply;
-  try {
-    const res = await fetch("/api/diff?" + diffQuery(target));
-    reply = await res.json();
-  } catch (err) {
-    fail(body, "cannot read the diff: " + (err && err.message ? err.message : err));
-    return;
+  if (!reply) {
+    try {
+      const res = await fetch("/api/diff?" + diffQuery(target));
+      reply = await res.json();
+    } catch (err) {
+      fail(body, "cannot read the diff: " + (err && err.message ? err.message : err));
+      return;
+    }
   }
   if (panel !== p) return;
   const text = renderDiff(body, reply, target);

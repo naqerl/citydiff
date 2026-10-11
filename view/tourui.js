@@ -7,7 +7,7 @@
 import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
 import { tourAction } from "./keys.js";
 import { renderMarkdown, escapeHTML } from "./markdown.js";
-import { diffQuery, renderDiff } from "./diff.js";
+import { diffQuery, renderDiff, openDiff, closeDiff, diffActive } from "./diff.js";
 
 export function mountTour({ apply, clear, layout, open = true, hold = false, codeTarget }) {
   const root = document.getElementById("tour-side");
@@ -30,6 +30,9 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
   let player = null;
   const codeCache = new Map();
   let codeWant = null;
+  // What the code panel is showing, and whether its full-viewport overlay is up.
+  let codeShown = null;
+  let maxOpen = false;
 
   function show(index, step) {
     ui.stepTitle.textContent = step.title;
@@ -62,12 +65,47 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
 
   // clearCode empties the diff panel and hides it. The note and body are
   // cleared in place: #tour-code holds them, so wiping the outer element
-  // would take its own children with it.
+  // would take its own children with it. A maximised diff goes down with it.
   function clearCode() {
+    if (maxOpen) closeDiff();
+    codeShown = null;
     ui.code.hidden = true;
     el("tour-code-note").hidden = true;
     el("tour-code-note").textContent = "";
     el("tour-code-body").innerHTML = "";
+    updateMaxButton();
+  }
+
+  // updateMaxButton reflects whether this panel's diff is maximised.
+  function updateMaxButton() {
+    const button = el("tour-code-max");
+    button.hidden = !codeShown;
+    button.classList.toggle("on", maxOpen);
+    const label = maxOpen ? "Restore the diff" : "Maximise the diff";
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.textContent = maxOpen ? "⤡" : "⤢";
+  }
+
+  // toggleMax opens the same diff as a full-viewport overlay, the way D does
+  // for a selected node. Autoplay stops first: a diff being read is not a step
+  // to move on from. The reply is already in hand, so nothing is fetched again.
+  function toggleMax() {
+    if (maxOpen) {
+      closeDiff();
+      return;
+    }
+    if (!codeShown || diffActive()) return;
+    if (player && player.state.playing) player.pause();
+    maxOpen = true;
+    updateMaxButton();
+    openDiff(codeShown.target, () => {
+      maxOpen = false;
+      updateMaxButton();
+    }, codeShown.reply).catch(() => {
+      maxOpen = false;
+      updateMaxButton();
+    });
   }
 
   // loadDiff asks for the node's hunks the way the D keybind does and draws
@@ -91,9 +129,11 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
     }
     if (codeWant !== id) return;
     const note = renderDiff(el("tour-code-body"), reply, target);
+    codeShown = { target, reply };
     const head = el("tour-code-note");
     head.textContent = note;
     head.hidden = !note;
+    updateMaxButton();
     ui.code.hidden = false;
   }
 
@@ -118,6 +158,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
     if (player) player.stop();
     player = null;
     tour = null;
+    clearCode();
     show$(false);
     clear();
   }
@@ -199,6 +240,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
   el("tour-prev").addEventListener("click", () => player && player.prev());
   el("tour-next").addEventListener("click", () => player && player.next());
   el("tour-play").addEventListener("click", () => player && player.toggle());
+  el("tour-code-max").addEventListener("click", toggleMax);
   el("tour-close").addEventListener("click", close);
 
   // A mouse folds the tour on the way past the arrow. A tap fires an
@@ -210,9 +252,11 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
   el("tour-toggle").addEventListener("click", () => setOpen(root.classList.contains("is-collapsed")));
   el("tour-logo").addEventListener("click", () => setOpen(true));
 
-  // Capture phase, ahead of the scene's own keys on the window.
+  // Capture phase, ahead of the scene's own keys on the window. A diff
+  // overlay (the maximised tour diff, or D) is a reading surface: its own
+  // Escape must be the one that lands, so no tour key steps underneath it.
   window.addEventListener("keydown", (event) => {
-    if (!player) return;
+    if (!player || diffActive()) return;
     const action = tourAction(event);
     if (!action) return;
     if (action === "toggle") player.toggle();
@@ -250,6 +294,21 @@ export function mountTour({ apply, clear, layout, open = true, hold = false, cod
     // A drag or click in the city takes over from autoplay.
     userTookOver() {
       if (player && player.state.playing) player.pause();
+    },
+    // restore puts the current step's selection or focus, its highlights and
+    // its camera back, so Escape in the viewbox resets to the tour instead of
+    // the whole city. A step that names nothing has nothing to restore, and
+    // the caller falls back to its own reset.
+    restore() {
+      if (!player || !tour) return false;
+      const index = player.state.index;
+      if (index < 0) return false;
+      const step = tour.steps[index];
+      const t = step.targets || {};
+      if (!(t.select || t.focus || (t.highlight && t.highlight.length) || (t.path && t.path.length))) return false;
+      if (player.state.playing) player.pause();
+      apply(step);
+      return true;
     },
     get active() {
       return !!player;
