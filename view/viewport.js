@@ -74,3 +74,93 @@ export function boxOf(points) {
   }
   return { min, max };
 }
+
+// Smallest turn first. Positive is tried before the matching negative, and
+// 180 is last because a nearer side view is the one we want.
+const YAW_DEGREES = [20, -20, 40, -40, 60, -60, 80, -80, 100, -100, 120, -120, 140, -140, 160, -160, 180];
+
+function boxCentre(box) {
+  return [
+    (box.min[0] + box.max[0]) / 2,
+    (box.min[1] + box.max[1]) / 2,
+    (box.min[2] + box.max[2]) / 2,
+  ];
+}
+
+// Yaw around Y. The height and the length stay put, so the elevation is unchanged.
+function yawDir(dir, deg) {
+  if (!deg) return dir;
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return [dir[0] * c + dir[2] * s, dir[1], -dir[0] * s + dir[2] * c];
+}
+
+// The camera swung around the subject by the same yaw as the view direction.
+function orbitEye(eye, subject, deg) {
+  if (!deg) return eye;
+  const c = boxCentre(subject);
+  const spun = yawDir([eye[0] - c[0], eye[1] - c[1], eye[2] - c[2]], deg);
+  return [c[0] + spun[0], c[1] + spun[1], c[2] + spun[2]];
+}
+
+// t along origin → end (1 is end) where the ray first meets the box.
+// 0 when the origin is already inside. Null when the ray misses.
+function entryT(origin, end, box) {
+  let tmin = 0;
+  let tmax = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const d = end[i] - origin[i];
+    if (Math.abs(d) < 1e-12) {
+      if (origin[i] < box.min[i] || origin[i] > box.max[i]) return null;
+      continue;
+    }
+    let a = (box.min[i] - origin[i]) / d;
+    let b = (box.max[i] - origin[i]) / d;
+    if (a > b) {
+      const swap = a;
+      a = b;
+      b = swap;
+    }
+    if (a > tmin) tmin = a;
+    if (b < tmax) tmax = b;
+    if (tmin > tmax) return null;
+  }
+  return tmin;
+}
+
+// Hidden when an obstacle is entered strictly before the subject box.
+// The subject's own box fails that test, so it is not an occluder.
+function occluded(eye, subject, obstacles) {
+  const centre = boxCentre(subject);
+  const gate = entryT(eye, centre, subject);
+  for (const box of obstacles) {
+    const t = entryT(eye, centre, box);
+    if (t == null) continue;
+    if (gate == null ? t < 1 : t < gate) return true;
+  }
+  return false;
+}
+
+// Twice the rise, same heading, normalised. Steeper than the fit, not overhead.
+export function steepDir(dir) {
+  const y = dir[1] * 2;
+  const len = Math.hypot(dir[0], y, dir[2]) || 1;
+  return [dir[0] / len, y / len, dir[2] / len];
+}
+
+// clearDir keeps dir when the subject is already visible and otherwise yaws
+// it around Y. dir points from the look point toward the camera. eye is that
+// camera, or a function (dir) => position when the caller places each yaw
+// itself (a refit). obstacles are {min, max} boxes, or a function (eye) =>
+// true when that eye cannot see the subject. Null when every yaw is blocked.
+export function clearDir(dir, eye, subject, obstacles) {
+  const place = typeof eye === "function" ? (d) => eye(d) : (d, deg) => orbitEye(eye, subject, deg);
+  const blocked = typeof obstacles === "function" ? obstacles : (at) => occluded(at, subject, obstacles || []);
+  if (!blocked(place(dir, 0))) return dir;
+  for (const deg of YAW_DEGREES) {
+    const turned = yawDir(dir, deg);
+    if (!blocked(place(turned, deg))) return turned;
+  }
+  return null;
+}

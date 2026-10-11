@@ -5,7 +5,7 @@ import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layo
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
-import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf } from "./viewport.js";
+import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf, clearDir, steepDir } from "./viewport.js";
 import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
 import { KEYBINDS, birdAction, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
@@ -1468,10 +1468,16 @@ function applyTourStep(step) {
       if (found) {
         entities.add(node.id);
         if (found.pkg) packages.add(found.pkg.id);
+        // A highlighted type keeps the methods that stand on it.
+        if (isType(found)) {
+          for (const method of methodsOf.get(found.entity.id) || []) entities.add(method.entity.id);
+        }
         const at = entityAnchor(found);
         if (at) points.push(at, ...entityExtent(found));
       } else if (byPackage.has(node.id)) {
         packages.add(node.id);
+        containPackages(node.id, packages);
+        containedEntities(node.id, entities);
         points.push(...packagePoints(node.id));
       }
     }
@@ -1503,6 +1509,11 @@ function applyTourStep(step) {
       if (at) points.push(at);
     } else points.push(...packagePoints(subject.id));
   }
+  // Search lands on an entity through selectEntity, which frames that node
+  // and the calls it opens inside the viewbox. A tour focus already did that
+  // above. Replacing it with tourPose centres the fan, and the close zoom
+  // then moves in on that centre, so the node itself can leave the viewbox.
+  const keepSearch = (preset === "fit" || preset === "close" || preset === "") && t.focus && !marks.length && byEntity.get(t.focus.id);
   if (preset === "overview") {
     cityPose = frameCity();
     flyTo(cityPose.pos, cityPose.target);
@@ -1513,11 +1524,11 @@ function applyTourStep(step) {
     // High enough to clear the arcs a selection draws above the roofs.
     const span = pose ? Math.max(pose.pos.distanceTo(look) * 1.6, 70) : citySpan() * 1.25;
     flyTo(new THREE.Vector3(look.x, look.y + span, look.z + span * 0.02), look);
-  } else if (preset === "fit" || preset === "close") {
+  } else if ((preset === "fit" || preset === "close") && !keepSearch) {
     const pose = tourPose(points.length ? points : tweenPoints());
     flyTo(pose.pos, pose.target);
   }
-  const zoom = (preset === "close" ? 0.55 : 1) * (step.zoom > 0 ? step.zoom : 1);
+  const zoom = ((preset === "close" && !keepSearch) ? 0.55 : 1) * (step.zoom > 0 ? step.zoom : 1);
   if (tween && zoom !== 1) {
     tween.toPos.sub(tween.toTarget).multiplyScalar(zoom).add(tween.toTarget);
   }
@@ -2056,6 +2067,9 @@ function pickGrid(items, rectOf) {
 
 const pickBox = new THREE.Box3();
 const pickPoint = new THREE.Vector3();
+const viewRay = new THREE.Ray();
+const viewHead = new THREE.Vector3();
+const viewAim = new THREE.Vector3();
 
 // The nearest box along the ray among the grid's items. boxOf fills pickBox
 // for item i, or returns false when the item cannot be hit.
@@ -3262,6 +3276,19 @@ function lowLevelColor() {
   return color;
 }
 
+// True when id is root, or sits on a package that itself sits on root.
+function containedBy(id, root) {
+  let current = id;
+  const seen = new Set();
+  while (current && !seen.has(current)) {
+    if (current === root) return true;
+    seen.add(current);
+    const pkg = byPackage.get(current);
+    current = pkg && pkg.parent;
+  }
+  return false;
+}
+
 // "dep" is a module on the other end of a module arc. It stays bright and
 // takes the arc color. "dim" is everyone else while a selection is up.
 function packageRole(id) {
@@ -3270,7 +3297,9 @@ function packageRole(id) {
     return overlayInvolvement().packages.has(id) ? "idle" : "dim";
   }
   if (lit.packages && lit.packages.has(id)) {
-    if (arcSubject && arcSubject.id === id) return "subject";
+    // The selected package and the packages stacked on it keep their own
+    // colour. A package reached only by a call is the dependency colour.
+    if (arcSubject && containedBy(id, arcSubject.id)) return "subject";
     return "dep";
   }
   if (lit.entities) {
@@ -3447,6 +3476,11 @@ function typeCallersOutside(found) {
 function litForEntity(found) {
   if (!found) return null;
   const entities = new Set([found.entity.id]);
+  // A type's methods stand on it. They are part of the type, so selecting the
+  // type keeps them up instead of shutting them into the roof.
+  if (isType(found)) {
+    for (const method of methodsOf.get(found.entity.id) || []) entities.add(method.entity.id);
+  }
   for (const link of subjectLinks(found, callInbound)) entities.add(link.target.entity.id);
   return { entities, packages: null };
 }
@@ -3511,11 +3545,31 @@ function mergePairLinks(links) {
   return [...byPair.values()];
 }
 
+// Declarations drawn on this package and on the packages stacked on it.
+// The sidebar already lists them; the city has to raise the same set.
+function containedEntities(id, into) {
+  for (const found of entitiesOf.get(id) || []) into.add(found.entity.id);
+  for (const child of childPackages(id)) containedEntities(child.id, into);
+}
+
+// Packages stacked on this one are part of it. They keep their own colour
+// instead of dimming while the package under them is the selection.
+function containPackages(id, into) {
+  for (const child of childPackages(id)) {
+    if (into.has(child.id)) continue;
+    into.add(child.id);
+    containPackages(child.id, into);
+  }
+}
+
 function litForPackage(id, inbound) {
   const packages = new Set([id]);
+  containPackages(id, packages);
+  const home = new Set();
+  containedEntities(id, home);
   const links = inbound ? packageCallerLinks(id) : packageCallLinks(id);
   if (links.length) {
-    const entities = new Set();
+    const entities = new Set(home);
     for (const link of links) {
       entities.add(link.from.entity.id);
       entities.add(link.target.entity.id);
@@ -3526,12 +3580,14 @@ function litForPackage(id, inbound) {
   }
   // No tower here makes a call, or is called: a package outside the tree has
   // no declarations at all, so its dependency fan is all there is to draw.
+  // A package that does hold declarations raises those, including the ones
+  // on the packages stacked above it, and does not need the browse shortcut.
   if (inbound) {
     for (const edge of packageEdges(id, true)) packages.add(edge.from);
-    return { packages, entities: null, browse: null, links: null };
+    return { packages, entities: home.size ? home : null, browse: null, links: null };
   }
   for (const edge of packageEdges(id, false)) packages.add(edge.to);
-  return { packages, entities: null, browse: id, links: null };
+  return { packages, entities: home.size ? home : null, browse: home.size ? null : id, links: null };
 }
 
 function syncLit() {
@@ -3759,8 +3815,8 @@ function selectEntity(id) {
   entitySubject = id;
   arcSubject = null;
   applyMode();
-  const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
-  const pose = framePose(points);
+  const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found), childExtents(found));
+  const pose = frameEntity(points, found);
   flyTo(pose.pos, pose.target);
   noteJump();
 }
@@ -3840,6 +3896,25 @@ function drawSelectionArcs(id, inbound) {
   }
 }
 
+// Tower tops of the declarations on this package, and the roofs of the
+// packages stacked on it. The camera has to take in what the selection raises.
+function addContainedTops(id, points, seen = new Set()) {
+  if (seen.has(id)) return;
+  seen.add(id);
+  for (const found of entitiesOf.get(id) || []) {
+    const at = towerTop(found);
+    if (at) points.push(at);
+  }
+  for (const child of childPackages(id)) {
+    const box = boxById.get(child.id);
+    if (box) {
+      points.push([box.x, box.y + box.h, box.z]);
+      points.push([box.x + box.w, box.y + box.h, box.z + box.d]);
+    }
+    addContainedTops(child.id, points, seen);
+  }
+}
+
 function flyToPackage(id) {
   const origin = packageAnchor(id);
   if (!origin) return;
@@ -3866,6 +3941,9 @@ function flyToPackage(id) {
     points.push([box.x + box.w, box.y + box.h, box.z + box.d]);
     points.push([box.x, box.y, box.z + box.d], [box.x + box.w, box.y, box.z]);
   }
+  // The declarations stacked on the package, and on the packages above it,
+  // are part of the frame: a shut roof used to hide them outside the fit.
+  addContainedTops(id, points);
   // The bow crowns above the higher end. Keep it inside the frame with the landings.
   let top = origin[1];
   for (const p of points) top = Math.max(top, p[1]);
@@ -3883,6 +3961,112 @@ function frameFan(points) {
 // is in view from roof to ground.
 function framePose(points) {
   return fitTo(points.concat(linkFrame));
+}
+
+// The drawn box of the entity the camera is trying to see.
+function drawnAabb(found) {
+  if (!found || !found.entity) return null;
+  const slot = slotById.get(found.entity.id);
+  const box = slot ? visualBox(slot, slotOpen(slot)) : found.box;
+  if (!box) return null;
+  return { min: [box.x, box.y, box.z], max: [box.x + box.w, box.y + box.h, box.z + box.d] };
+}
+
+function childExtents(found) {
+  if (!found || !isType(found)) return [];
+  const points = [];
+  for (const method of methodsOf.get(found.entity.id) || []) points.push(...entityExtent(method));
+  return points;
+}
+
+function subjectPoints(found) {
+  const points = [];
+  const boxes = [drawnAabb(found)];
+  if (found && isType(found)) {
+    for (const method of methodsOf.get(found.entity.id) || []) boxes.push(drawnAabb(method));
+  }
+  for (const box of boxes) if (box) points.push(box.min, box.max);
+  return points;
+}
+
+// True when a building stands between the eye and the subject. The ray walks
+// the plinth and tower grids, the same ones picking uses, so it does not test
+// every box. The subject's own tower and the package it stands on are not
+// occluders. A taller tower on that package, and every other plinth, are.
+// Blocked means the nearest of those hits is closer than the subject centre.
+function subjectHidden(pos, found) {
+  if (!found || !found.entity || !laid) return false;
+  const box = drawnAabb(found);
+  if (!box) return false;
+  const eye = Array.isArray(pos) ? pos : [pos.x, pos.y, pos.z];
+  const centre = boxCentreOf(box);
+  viewHead.set(eye[0], eye[1], eye[2]);
+  viewAim.set(centre[0] - eye[0], centre[1] - eye[1], centre[2] - eye[2]);
+  const reach = viewAim.length();
+  if (reach < 1e-4) return false;
+  viewAim.multiplyScalar(1 / reach);
+  viewRay.set(viewHead, viewAim);
+  const subjectId = found.entity.id;
+  const pkgId = found.pkg && found.pkg.id;
+  let best = null;
+  if (solidMesh && solidMesh.userData.grid) {
+    const slots = solidMesh.userData.slots;
+    const hit = pickAlong(solidMesh.userData.grid, viewRay, laid.bounds.maxY + 1, (i) => {
+      const b = visualBox(slots[i], slotOpen(slots[i]));
+      pickBox.min.set(b.x, b.y, b.z);
+      pickBox.max.set(b.x + b.w, b.y + b.h, b.z + b.d);
+      return true;
+    });
+    if (hit) best = { distance: hit.distance, subject: slots[hit.instanceId].id === subjectId };
+  }
+  if (pkgMesh && pkgMesh.userData.grid) {
+    const list = pkgMesh.userData.plinths;
+    const hit = pickAlong(pkgMesh.userData.grid, viewRay, pkgMesh.userData.top + 1, (i) => {
+      const plinth = list[i];
+      if (!plinth.shown || plinth.id === pkgId) return false;
+      const b = plinth.box;
+      pickBox.min.set(b.x, b.y, b.z);
+      pickBox.max.set(b.x + b.w, b.y + b.h, b.z + b.d);
+      return true;
+    });
+    if (hit && (!best || hit.distance < best.distance)) best = { distance: hit.distance, subject: false };
+  }
+  return !!best && !best.subject && best.distance < reach;
+}
+
+function boxCentreOf(box) {
+  return [
+    (box.min[0] + box.max[0]) / 2,
+    (box.min[1] + box.max[1]) / 2,
+    (box.min[2] + box.max[2]) / 2,
+  ];
+}
+
+// One fit direction, yawed until the subject is visible, then refitted so the
+// points stay inside the free area. Null when no yaw sees it.
+function clearedPose(points, found, baseDir) {
+  if (!points.length) return null;
+  const subject = drawnAabb(found);
+  if (!subject) return null;
+  const dir = clearDir(baseDir, (d) => {
+    const pose = fitTo(points, d);
+    return [pose.pos.x, pose.pos.y, pose.pos.z];
+  }, subject, (at) => subjectHidden(at, found));
+  return dir ? fitTo(points, dir) : null;
+}
+
+// The entity camera shared by search and the tour. Overview, package fans,
+// and tour poses keep FIT_DIR. Here a neighbour in front of the subject yaws
+// the view. The whole fan is tried first. Failing that, the subject box alone
+// is fitted, then once more from a steeper angle. The default stands after that.
+function frameEntity(points, found) {
+  const framed = points.concat(linkFrame);
+  if (!found || !found.box) return fitTo(framed);
+  const alone = subjectPoints(found);
+  return clearedPose(framed, found, FIT_DIR)
+    || clearedPose(alone, found, FIT_DIR)
+    || clearedPose(alone, found, steepDir(FIT_DIR))
+    || fitTo(framed);
 }
 
 function flyTo(pos, target) {
@@ -3952,7 +4136,7 @@ function addBodyBars(entity, overlay) {
 
 function focusCamera() {
   const points = ((focus && focus.points) || []).concat(entityExtent(focus));
-  return framePose(points.length ? points : [[0, 0, 0]]);
+  return frameEntity(points.length ? points : [[0, 0, 0]], focus);
 }
 
 function clearGroup(group) {
@@ -4183,11 +4367,10 @@ function renderDetail() {
   }
   hud.detailHead.replaceChildren();
   hud.detailBody.replaceChildren();
-  // A function, method, type or variable contains one thing: the calls it
-  // makes and the calls it takes. The Packages / Types / Variables /
-  // Functions / Methods expanders belong to the package around it — a node
-  // that holds none of them has no business listing them, so the panel shows
-  // only the Calls / Callers section behind its own tabs.
+  // A function or a method contains the calls it makes and the calls it takes.
+  // A type also contains the methods declared on it, and a package contains
+  // the declarations and packages stacked on it. Those children are the
+  // expanders under the node, not only a tally in the header.
   if (focus) {
     hud.detailHead.append(focusDetail(focus.entity));
     hud.detailBody.append(roster(null));
@@ -4506,12 +4689,41 @@ function refsSection() {
   };
 }
 
+function typeMethods(found) {
+  const methods = (methodsOf.get(found.entity.id) || []).map((item) => item.entity);
+  methods.sort((a, b) => nameOrder.compare(entityLabel(a), entityLabel(b)));
+  if (!methods.length) return null;
+  const split = splitChanges(methods, (item) => item.change);
+  return {
+    key: "methods",
+    label: "Methods",
+    hot: deletedFirst(split.hot),
+    same: split.same,
+    row: entityRow,
+  };
+}
+
+function appendSections(wrap, sections) {
+  const first = sections.length ? sections[0].key : "";
+  for (const section of sections) {
+    const open = sectionsTouched ? openSections.has(section.key) : section.key === first;
+    wrap.append(sectionBlock(section, open));
+  }
+}
+
 function roster(pkg) {
   const wrap = document.createElement("div");
   wrap.className = "sections";
   const refs = refsSection();
   if (!pkg) {
-    if (refs) wrap.append(sectionBlock(refs, !sectionsTouched));
+    const sections = [];
+    const found = !focus && selected && selected.kind === "entity" ? byEntity.get(selected.id) : null;
+    if (found && isType(found)) {
+      const methods = typeMethods(found);
+      if (methods) sections.push(methods);
+    }
+    if (refs) sections.push(refs);
+    appendSections(wrap, sections);
     return wrap;
   }
   const sections = rosterSections(pkg).filter((section) => section.hot.length || section.same.length);
@@ -4521,11 +4733,7 @@ function roster(pkg) {
   // One section open to start from, the rest folded: the counts on the folded
   // headers say what they hold. Once the user has folded or unfolded something
   // for this node, their choice is what stands.
-  const first = sections.length ? sections[0].key : "";
-  for (const section of sections) {
-    const open = sectionsTouched ? openSections.has(section.key) : section.key === first;
-    wrap.append(sectionBlock(section, open));
-  }
+  appendSections(wrap, sections);
   return wrap;
 }
 
@@ -4939,6 +5147,10 @@ function entityDetail(entity) {
     line.textContent = "fields  " + entity.fields.join(", ");
     wrap.append(line);
   }
+  if (entity.kind === "type") {
+    const methods = (methodsOf.get(entity.id) || []).map((item) => item.entity);
+    if (methods.length) wrap.append(tallyLine("methods", methods));
+  }
   // Everything the head says goes on the plate first, in one block: the name,
   // the path, the size, the fields. Only then the pair of tabs, on the frosted
   // panel under it. A variable has no calls and no callers, so it gets none.
@@ -5232,8 +5444,8 @@ function restoreSubject(entry) {
   }
   const found = byEntity.get(entry.selected.id);
   if (!found || !found.box) return;
-  const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
-  const pose = framePose(points);
+  const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found), childExtents(found));
+  const pose = frameEntity(points, found);
   flyTo(pose.pos, pose.target);
 }
 
@@ -5507,8 +5719,8 @@ function setCallDirection(inbound, node) {
     if (selected && selected.kind === "entity" && selected.id === subject.id) {
       if (focus) dropFocus();
       applyMode();
-      const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found));
-      const pose = framePose(points);
+      const points = (linkPoints && linkPoints.length ? linkPoints : [entityAnchor(found)]).concat(entityExtent(found), childExtents(found));
+      const pose = frameEntity(points, found);
       flyTo(pose.pos, pose.target);
       return;
     }

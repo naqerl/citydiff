@@ -929,7 +929,8 @@
         letter-spacing: 0.08em;
       }
       #sheet-tabs button:last-child { border-right: 0; }
-      #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 2px 0 var(--accent); }
+      /* The selected panel is marked along its bottom edge. */
+      #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 -2px 0 var(--accent); }
 
       /* On the tour tab the player rests on the tabs, so play and step stay in
          reach however far the sheet is folded. main.js moves it out of the

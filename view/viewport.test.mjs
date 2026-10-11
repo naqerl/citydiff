@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf } from "./viewport.js";
+import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf, clearDir } from "./viewport.js";
 
 const DIR = [0.32, 0.48, 0.78];
 const VIEW = { fov: 50, width: 1600, height: 900 };
@@ -110,4 +110,88 @@ test("minAspect draws a box in a tall view as if the view were that wide", () =>
   assert.ok(wide.dist < plain.dist);
   // A view already wider than minAspect is left alone.
   assert.equal(fitPose(box, DIR, { ...VIEW, minAspect: 1.25 }).dist, fitPose(box, DIR, VIEW).dist);
+});
+
+const YAWS = [20, -20, 40, -40, 60, -60, 80, -80, 100, -100, 120, -120, 140, -140, 160, -160, 180];
+
+function yaw(dir, deg) {
+  if (!deg) return dir;
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return [dir[0] * c + dir[2] * s, dir[1], -dir[0] * s + dir[2] * c];
+}
+
+function along(dir, origin, dist) {
+  const len = Math.hypot(...dir);
+  return origin.map((v, i) => v + (dir[i] / len) * dist);
+}
+
+function centre(box) {
+  return [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2];
+}
+
+// Entry t of origin→end against a box. Independent of clearDir's copy.
+function hitsBefore(eye, subject, box) {
+  const end = centre(subject);
+  let tmin = 0;
+  let tmax = Infinity;
+  let gate = 0;
+  let gmax = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const d = end[i] - eye[i];
+    const slab = (min, max) => {
+      if (Math.abs(d) < 1e-12) return eye[i] < min || eye[i] > max ? null : [0, Infinity];
+      let a = (min - eye[i]) / d;
+      let b = (max - eye[i]) / d;
+      if (a > b) [a, b] = [b, a];
+      return [a, b];
+    };
+    const obstacle = slab(box.min[i], box.max[i]);
+    const door = slab(subject.min[i], subject.max[i]);
+    if (!obstacle || !door) return false;
+    tmin = Math.max(tmin, obstacle[0]);
+    tmax = Math.min(tmax, obstacle[1]);
+    gate = Math.max(gate, door[0]);
+    gmax = Math.min(gmax, door[1]);
+  }
+  if (tmin > tmax || gate > gmax) return false;
+  const enter = Math.max(tmin, 0);
+  const subjectEnter = Math.max(gate, 0);
+  return enter < subjectEnter;
+}
+
+test("no obstacle in front leaves the direction unchanged", () => {
+  const subject = { min: [0, 0, 0], max: [2, 4, 2] };
+  const eye = [14, 12, 18];
+  const beside = { min: [40, 0, -30], max: [52, 30, -18] };
+  const behind = { min: [-8, 0, -8], max: [-2, 6, -2] };
+  assert.equal(clearDir(DIR, eye, subject, []), DIR);
+  assert.equal(clearDir(DIR, eye, subject, [beside, behind]), DIR);
+});
+
+test("the smallest yaw that clears a blocker is the one returned", () => {
+  const subject = { min: [-1, 0, -1], max: [1, 4, 1] };
+  const at = centre(subject);
+  const eye = along(DIR, at, 50);
+  const mid = along(DIR, at, 25);
+  const wall = { min: mid.map((v) => v - 3), max: mid.map((v) => v + 3) };
+  assert.equal(hitsBefore(eye, subject, wall), true);
+  const got = clearDir(DIR, eye, subject, [wall]);
+  const open = [0, ...YAWS].find((deg) => {
+    const spun = yaw([eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]], deg);
+    const from = [at[0] + spun[0], at[1] + spun[1], at[2] + spun[2]];
+    return !hitsBefore(from, subject, wall);
+  });
+  assert.ok(Math.abs(open) > 0 && Math.abs(open) < 180, "a nearer yaw than 180 already clears, got " + open);
+  assert.deepEqual(got, yaw(DIR, open));
+  const len0 = Math.hypot(...DIR);
+  const len1 = Math.hypot(...got);
+  assert.ok(Math.abs(DIR[1] / len0 - got[1] / len1) < 1e-9, "elevation stays put");
+});
+
+test("the subject's own box is not an obstacle", () => {
+  const subject = { min: [-1, 0, -1], max: [1, 6, 1] };
+  const eye = along(DIR, centre(subject), 30);
+  assert.equal(clearDir(DIR, eye, subject, [subject]), DIR);
 });
