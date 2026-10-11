@@ -1625,6 +1625,10 @@ function namePlate(box) {
 }
 
 function plinthColor(depth, synthetic) {
+  // The package the whole city stands on gets its own colour, so the biggest
+  // box on the ground disk does not vanish into it. Deeper synthetic packages
+  // keep the quiet synthetic grey.
+  if (depth === 0) return new THREE.Color(theme.package.root || theme.package.synthetic);
   if (synthetic) return new THREE.Color(theme.package.synthetic);
   const steps = theme.package.steps;
   return new THREE.Color(steps[Math.min(Math.max(depth, 0), steps.length - 1)]);
@@ -1910,7 +1914,7 @@ function entityAnchor(found) {
   return null;
 }
 
-function makeLink(from, to, color, lift, roofFrom, roofTo) {
+function makeLink(from, to, color, lift, roofFrom, roofTo, thin) {
   if (!from || !to) return null;
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
   if (dist < 0.35) return null;
@@ -1924,7 +1928,11 @@ function makeLink(from, to, color, lift, roofFrom, roofTo) {
   for (const p of road) path.push(new THREE.Vector3(p[0], p[1], p[2]));
   for (const p of [to, roofTo]) if (p) path.push(new THREE.Vector3(p[0], p[1], p[2]));
   const curve = new THREE.CatmullRomCurve3(path);
-  const radius = Math.max(0.07, Math.min(dist * 0.0028, 0.22));
+  // A thin arc is a reference, not a traced call: barely more than half the
+  // radius of a call arc, and never as thick as one.
+  const radius = thin
+    ? Math.max(0.03, Math.min(dist * 0.0013, 0.1))
+    : Math.max(0.07, Math.min(dist * 0.0028, 0.22));
   // As many segments as main's bows had. Twice that doubled the triangles the
   // overview draws and bought nothing visible at this radius.
   const segs = (dist > 48 ? 28 : 16) + (roofFrom ? 2 : 0) + (roofTo ? 2 : 0);
@@ -2188,13 +2196,15 @@ window.citydiffCheck = () => {
 // fromId and toId name the packages whose roofs the arc rises from and lands
 // on. A call arc between towers has neither.
 function addArc(group, from, to, color, lift, data, fromId, toId) {
-  const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null);
+  const mesh = makeLink(from, to, color, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
   if (!mesh) return;
   const tint = { kind: data.kind, change: data.change, std: !!data.std };
   mesh.userData = data;
   mesh.userData.tint = tint;
   group.add(mesh);
-  const flow = makeFlow(from, to, color, lift);
+  // A thin reference arc carries no particle traffic: the dots are what a
+  // traced call has, and the quiet line is the point.
+  const flow = data.thin ? null : makeFlow(from, to, color, lift);
   if (flow) {
     flow.userData.tint = tint;
     group.add(flow);
@@ -2206,7 +2216,9 @@ function paintLinks(group) {
   for (const child of group.children) {
     const tint = child.userData && child.userData.tint;
     if (!tint) continue;
-    const color = tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
+    // A standard or outside reference keeps the quiet grey whatever the diff
+    // says: the colour is what tells it apart from a traced call.
+    const color = tint.std ? paint.std : tint.kind === "call" ? linkColor(tint.change, tint.std) : changeColor(tint.change);
     if (child.material && child.material.color) child.material.color.copy(color);
     const attr = child.geometry && child.geometry.getAttribute && child.geometry.getAttribute("aColor");
     if (!attr) continue;
@@ -2657,6 +2669,56 @@ function drawEntityLinks(group, found) {
   }
 }
 
+function packageIsExternal(id) {
+  const pkg = byPackage.get(id);
+  return !!(pkg && pkg.external);
+}
+
+function externalLabel(id) {
+  const pkg = byPackage.get(id);
+  if (!pkg) return id;
+  // A standard package reads at its short name; a module path keeps its path,
+  // because the base of go-git/v5 is only "v5".
+  return isStdPackage(id) ? (pkg.name || pkg.id) : pkg.id;
+}
+
+// The packages outside the snapshot a focused node's package imports. A Call
+// keeps only its expression, so an unresolved call cannot be pinned to one of
+// them; the package's own external deps are the closest the scene can say, and
+// the city draws them thin and grey so they read as references, not traced
+// calls.
+function externalLinks(found) {
+  if (!found || !found.pkg || !isCallable(found)) return [];
+  return packageEdges(found.pkg.id, false)
+    .filter((edge) => packageIsExternal(edge.to))
+    .map((edge) => ({ to: edge.to, change: edge.change }));
+}
+
+// One thin grey arc from the focused tower to each package outside the
+// snapshot its package imports. The focus camera deliberately does not make
+// room for them: the node is the subject, and a package can import a whole
+// ring of std libraries. The arcs leave the tower toward the octahedrons and
+// the user can pull back to follow them.
+function drawExternalLinks(group, found) {
+  const links = externalLinks(found);
+  if (!links.length) return;
+  const from = towerTop(found);
+  if (!from) return;
+  for (const link of links) {
+    const to = packageAnchor(link.to);
+    if (!to) continue;
+    addArc(group, from, to, paint.std, callLift(from, to), {
+      kind: "dep",
+      id: link.to,
+      label: externalLabel(link.to),
+      external: true,
+      std: true,
+      thin: true,
+      change: "same",
+    });
+  }
+}
+
 // The arcs for a list of links. The initial build passes a progress callback and
 // is sliced across frames; every interactive caller passes none, so the loop
 // runs in one go and linkPoints / linkFrame are ready before the call returns.
@@ -2936,6 +2998,9 @@ function buildFocus() {
     return;
   }
   drawEntityLinks(focusGroup, found);
+  // The outside hops belong to the node's own calls, not to the callers that
+  // reach it, so they follow the Calls direction only.
+  if (!callInbound) drawExternalLinks(focusGroup, found);
   // The ghost of the old body sits on the tower itself (#17). The call arcs
   // are drawn from whichever end the direction picks.
   addBodyBars(found.entity, mode === "overlay");
@@ -3417,26 +3482,53 @@ function mergeByNode(entries) {
   return [...byNode.values()];
 }
 
+// One package outside the snapshot the focused node's package imports. It has
+// no declaration to open, only the octahedron it stands for, so clicking it is
+// the same as clicking its arc: the external package gets selected.
+function externalRow(dep) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "row ext";
+  const name = clipText(externalLabel(dep.to));
+  button.append(name);
+  attachMarquee(button, name);
+  const where = document.createElement("span");
+  where.className = "where";
+  where.textContent = isStdPackage(dep.to) ? "std" : "outside";
+  button.append(where);
+  button.title = dep.to;
+  button.addEventListener("click", () => {
+    dropFocus();
+    selectExternal(dep.to);
+  });
+  return button;
+}
+
 function refsSection() {
   const subject = subjectNode();
   if (!subject) return null;
   let entries = [];
+  let outside = [];
   if (subject.kind === "entity") {
     const found = byEntity.get(subject.id);
     if (!found || !found.box || !hasDirection(found)) return null;
     entries = subjectLinks(found).map((link) => ({ node: link.target, change: link.change }));
+    // A node's calls reach outside the snapshot too. A call keeps only its
+    // expression, so which outside package it lands in cannot be read off it;
+    // the package's external deps are listed instead, the way they are drawn.
+    if (!callInbound) outside = externalLinks(found).map((dep) => ({ dep, change: "same" }));
   } else {
     const links = callInbound ? packageCallerLinks(subject.id) : packageCallLinks(subject.id);
     entries = links.map((link) => ({ node: callInbound ? link.from : link.target, change: link.change }));
   }
-  const merged = mergeByNode(entries);
+  const merged = [...mergeByNode(entries), ...outside];
   if (!merged.length) return null;
   return {
     key: "refs",
     label: callInbound ? "Callers" : "Calls",
     hot: deletedFirst(merged.filter((entry) => entry.change !== "same")),
     same: merged.filter((entry) => entry.change === "same"),
-    row: (entry) => refRow(entry.node, entry.change),
+    row: (entry) => (entry.dep ? externalRow(entry.dep) : refRow(entry.node, entry.change)),
   };
 }
 
@@ -3920,6 +4012,15 @@ function resetView() {
   jumpDetached = false;
   ring.visible = false;
   applyMode();
+  cityPose = frameCity();
+  applyFitLimits(cityPose);
+  flyTo(cityPose.pos, cityPose.target);
+}
+
+// 0 puts the camera back on the whole city without letting go of the node on
+// screen: the reset is the camera's, and the selection is the user's. Escape
+// is the key that drops the node and the camera with it.
+function resetCamera() {
   cityPose = frameCity();
   applyFitLimits(cityPose);
   flyTo(cityPose.pos, cityPose.target);
@@ -4627,7 +4728,7 @@ window.addEventListener("keydown", (event) => {
   if (bird.on && !["m", "1", "2"].includes(event.key)) return;
   if (event.key === "0" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
-    resetView();
+    resetCamera();
     return;
   }
   if (event.key === "m" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {

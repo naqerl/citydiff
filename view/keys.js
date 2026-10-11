@@ -9,7 +9,7 @@ export const KEYBINDS = [
   { keys: ["-", "+"], does: "zoom" },
   { keys: ["b"], does: "left sidebar" },
   { keys: ["t"], does: "tour sidebar" },
-  { keys: ["0"], does: "reset view" },
+  { keys: ["0"], does: "reset camera" },
   { keys: ["y"], does: "bird view" },
   { keys: ["m"], does: "overview / changes" },
   { keys: ["1"], does: "overview" },

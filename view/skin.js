@@ -65,6 +65,99 @@ export function mergeSkin(base, overlay) {
   return overlay;
 }
 
+// The root package is the big box the rest of the city stands on. When the
+// skin does not name one, it would take the ground's own colour, and the box
+// would vanish into the disk under it. Every skin that does not set
+// package.root gets a colour with a visible separation from the ground it
+// stands on and the plane behind it: the base colour moved in lightness away
+// from the ground until the contrast is enough. A skin that names its own
+// package.root keeps it, whatever it is.
+const ROOT_CONTRAST = 1.6;
+
+function hexChannels(hex) {
+  const value = String(hex == null ? "" : hex).replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) return null;
+  return [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16));
+}
+
+function linearChannel(value) {
+  const v = value / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
+
+function luminance(hex) {
+  const rgb = hexChannels(hex);
+  if (!rgb) return null;
+  return 0.2126 * linearChannel(rgb[0]) + 0.7152 * linearChannel(rgb[1]) + 0.0722 * linearChannel(rgb[2]);
+}
+
+function contrastRatio(a, b) {
+  const la = luminance(a);
+  const lb = luminance(b);
+  if (la == null || lb == null) return null;
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function channelsToHex(rgb) {
+  return "#" + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+}
+
+function channelsToHsl(rgb) {
+  const [r, g, b] = rgb.map((v) => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h / 6, s, l];
+}
+
+function hslToChannels([h, s, l]) {
+  if (s === 0) return [l, l, l].map((v) => v * 255);
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const channel = (t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)].map((v) => v * 255);
+}
+
+// rootColor is the colour of the package the whole city stands on. It is the
+// skin's own package.root when it names one, and a derived colour otherwise.
+export function rootColor(skin) {
+  const pkg = (skin && skin.package) || {};
+  if (hexChannels(pkg.root)) return pkg.root;
+  const ground = hexChannels(skin && skin.ground && skin.ground.color) ? skin.ground.color : "#18181b";
+  const plane = skin && skin.plane && Number(skin.plane.opacity) > 0 ? skin.plane.color : null;
+  const targets = plane ? [ground, plane] : [ground];
+  const enough = (hex) => targets.every((t) => {
+    const ratio = contrastRatio(hex, t);
+    return ratio != null && ratio >= ROOT_CONTRAST;
+  });
+  const base = pkg.synthetic || (Array.isArray(pkg.steps) && pkg.steps[0]) || ground;
+  if (enough(base)) return base;
+  const channels = hexChannels(base) || hexChannels(ground);
+  const [h, s, l] = channelsToHsl(channels);
+  const step = (luminance(ground) || 0) < 0.5 ? 0.012 : -0.012;
+  let best = base;
+  for (let i = 1; i <= 90; i++) {
+    const nl = Math.min(1, Math.max(0, l + step * i));
+    const hex = channelsToHex(hslToChannels([h, s, nl]));
+    best = hex;
+    if (enough(hex)) return hex;
+    if (nl <= 0 || nl >= 1) break;
+  }
+  return best;
+}
+
 export function pageVars(skin) {
   const hud = skin.hud || {};
   const steps = (skin.package && skin.package.steps) || [];
@@ -105,6 +198,7 @@ export function pageVars(skin) {
     "--both-text": hud.bothText || (skin.change && skin.change.both),
     "--moved-text": hud.movedText || (skin.change && skin.change.moved),
     "--call": skin.call && skin.call.color,
+    "--call-std": skin.call && skin.call.std,
     "--function": skin.function && skin.function.color,
     "--method": skin.method && skin.method.color,
     "--type": skin.type && skin.type.color,
@@ -180,6 +274,7 @@ export async function loadSkin(spec, fetchImpl = globalThis.fetch) {
     base = await darkRes.json();
   }
   const skin = mergeSkin(structuredClone(base), overlay);
+  skin.package.root = rootColor(skin);
   skin.url = record.url;
   return skin;
 }
