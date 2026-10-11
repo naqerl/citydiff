@@ -857,6 +857,11 @@ const held = new Set();
 const flyDir = new THREE.Vector3();
 let lastFrame = 0;
 let lastActivity = 0;
+// Decoration-only frames are paced to 60 a second: the time owed since the
+// last one drawn, and the frame that last added to it.
+const DECOR_FRAME_MS = 1000 / 60;
+let decorBudget = 0;
+let lastDecor = 0;
 const IDLE_SPIN_MS = 15000;
 // Q and E orbit at 1.4 rad/s. The idle orbit is a fifth of that.
 const IDLE_YAW = 0.28;
@@ -869,6 +874,10 @@ let idleSpin = false;
 // view: overview, a selected package, and a call focus.
 let introSpin = true;
 let viewDirty = true;
+// The declarations' drawn boxes depend on the mode and on what is lit, so
+// they are worked out again when applyMode runs, not on every frame the view
+// is redrawn: a sheet slide or a pinch redraws every frame and changes none.
+let instancesDirty = true;
 // The loader is up until main() paints the finished city. While it is, the
 // animate loop must not draw: the loader covers the canvas, and rendering a
 // half-built city every frame the loader yields is pure waste — on a large
@@ -1361,7 +1370,7 @@ async function main() {
   resizeView();
   flushAllArcs();
   warmPrograms();
-  renderer.render(scene, camera);
+  drawCity();
   hideLoad();
   loading = false;
   requestFrame();
@@ -2055,11 +2064,30 @@ function entityColor(entity) {
   return vary(entity.id, base);
 }
 
+// A declaration's colour is its kind's, a step lighter or darker by its id.
+// There are 17 steps, so each kind's colour is shaded 17 times per theme and
+// looked up, instead of converted to HSL and back for every declaration on
+// every repaint. The result is shared: callers copy it.
+const varySteps = new Map();
+const varyStep = new Map();
+
 function vary(id, color) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 33 + id.charCodeAt(i)) >>> 0;
-  const shift = ((hash % 17) - 8) / 220;
-  return color.clone().offsetHSL(0, 0, shift);
+  let step = varyStep.get(id);
+  if (step === undefined) {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = (hash * 33 + id.charCodeAt(i)) >>> 0;
+    step = hash % 17;
+    varyStep.set(id, step);
+  }
+  const key = color.r + "," + color.g + "," + color.b;
+  let steps = varySteps.get(key);
+  if (!steps) {
+    if (varySteps.size > 64) varySteps.clear();
+    steps = [];
+    for (let k = 0; k < 17; k++) steps.push(color.clone().offsetHSL(0, 0, (k - 8) / 220));
+    varySteps.set(key, steps);
+  }
+  return steps[step];
 }
 
 // The overview draws an arc for every import that was added or deleted, and
@@ -2853,6 +2881,7 @@ function paintPlinths() {
 function applyMode() {
   linkFrame = [];
   syncLit();
+  instancesDirty = true;
   updateHalo();
   const overlay = mode === "overlay";
   for (const plinth of plinths) {
@@ -4852,6 +4881,13 @@ function flyCamera(dt, now) {
   return true;
 }
 
+// A floor nobody can see is not drawn. The built-in skins set the plane's
+// opacity to 0, and it was still a lit, blended quad over half the screen.
+function drawCity() {
+  if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
+  renderer.render(scene, camera);
+}
+
 function animate(now) {
   frameQueued = false;
   if (loading) return;
@@ -4884,7 +4920,10 @@ function animate(now) {
   const moved = tweening || flying ||
     camera.position.distanceToSquared(settledPos) > 1e-6 ||
     controls.target.distanceToSquared(settledTarget) > 1e-6;
-  if (viewDirty && laid) refreshInstances();
+  if (instancesDirty && laid) {
+    instancesDirty = false;
+    refreshInstances();
+  }
   if (moved) {
     settledPos.copy(camera.position);
     settledTarget.copy(controls.target);
@@ -4912,9 +4951,19 @@ function animate(now) {
     hovered = pointerDirty;
     pointerDirty = false;
   }
-  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading || launching)) {
-    renderer.render(scene, camera);
+  // A frame that carries nothing but decoration (the particles, the halo, a
+  // live skin, the idle orbit) is drawn at most 60 times a second. On a 120 Hz
+  // phone the city was drawn twice as often for motion nobody is driving, and
+  // the heat that makes is what slows the phone down a minute later. Anything
+  // the user drives, and every transition, still draws on every frame.
+  const driven = tweening || viewDirty || hovered || fading || launching || (flying && !idleSpin) || (moved && !idleSpin);
+  decorBudget = Math.min(DECOR_FRAME_MS, decorBudget + (t - lastDecor));
+  lastDecor = t;
+  const decorDue = decorBudget >= DECOR_FRAME_MS - 1.5;
+  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading || launching) && (driven || decorDue)) {
+    drawCity();
     viewDirty = false;
+    if (decorDue) decorBudget -= DECOR_FRAME_MS;
   }
   if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading || launching) {
     requestFrame();
@@ -5810,7 +5859,7 @@ function showThemeNow(next) {
   snapPage(next);
   skinWarning = next.shadeWarning || "";
   updateHUD();
-  renderer.render(scene, camera);
+  drawCity();
   viewDirty = false;
 }
 
