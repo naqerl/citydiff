@@ -549,7 +549,7 @@
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
     }
-    #tour-side[hidden], #tour-drop[hidden], #skin-menu[hidden] { display: none; }
+    #tour-side[hidden], #tour-drop[hidden], #skin-menu[hidden], #tour-controls[hidden] { display: none; }
     body.skin-open #side,
     body.skin-open #tour-side,
     body.skin-open #tour-drop,
@@ -831,10 +831,12 @@
        transform, never by resizing. Dragging it anywhere moves it; only at
        full does its content scroll, and pulling down from the top of that
        content takes the sheet down again. main.js (the sheet section) runs
-       the gesture. With a tour the tabs under it pick which sidebar it shows. */
+       the gesture. With a tour the tabs under it pick which sidebar it shows,
+       and on the tour tab the player sits between the two. */
     @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
-      body { --tabs-h: 0px; --peek: 76px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
+      body { --tabs-h: 0px; --player-h: 0px; --peek: 76px; --sheet-top: calc(40px + env(safe-area-inset-top)); }
       body.has-tour { --tabs-h: calc(48px + env(safe-area-inset-bottom)); }
+      body.has-player { --player-h: 54px; }
       #sheet-tabs {
         position: absolute;
         left: 0;
@@ -862,14 +864,34 @@
       #sheet-tabs button:last-child { border-right: 0; }
       #sheet-tabs button.on { color: var(--fg); background: var(--on); box-shadow: inset 0 2px 0 var(--accent); }
 
+      /* On the tour tab the player rests on the tabs, so play and step stay in
+         reach however far the sheet is folded. main.js moves it out of the
+         tour sheet for this, and the sheet rests on top of it. The city tab
+         has no player. */
+      #work > #tour-controls {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: var(--tabs-h);
+        z-index: 7;
+        height: var(--player-h);
+        box-sizing: border-box;
+        padding: 0 14px;
+        background: var(--panel);
+        border-top: 1px solid var(--edge);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      body:not(.has-player) #work > #tour-controls, body.skin-open #work > #tour-controls { display: none; }
+
       #side, #tour-side,
       #side.is-collapsed, #tour-side.is-collapsed {
         top: auto;
         left: 0;
         right: 0;
-        bottom: var(--tabs-h);
+        bottom: calc(var(--tabs-h) + var(--player-h));
         width: auto;
-        height: calc(100% - var(--tabs-h) - var(--sheet-top));
+        height: calc(100% - var(--tabs-h) - var(--player-h) - var(--sheet-top));
         box-sizing: border-box;
         padding-bottom: env(safe-area-inset-bottom);
         overflow-x: hidden;

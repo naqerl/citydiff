@@ -21,7 +21,8 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     range: el("tour-range"),
     play: el("tour-play"),
     counter: el("tour-counter"),
-    progress: root.querySelector("#tour-progress i"),
+    // Held upright on a touch screen the player sits outside the sidebar.
+    progress: document.querySelector("#tour-progress i"),
   };
 
   let tour = null;
@@ -128,8 +129,9 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   }
 
   function problems(list, source) {
-    show$(true);
+    // Hidden before the layout runs, so a phone takes the player off its tabs.
     el("tour-controls").hidden = true;
+    show$(true);
     ui.stepTitle.textContent = "This tour does not fit the scene";
     ui.body.innerHTML =
       `<p>${escapeHTML(source)}</p><ul>` +

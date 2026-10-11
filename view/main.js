@@ -561,12 +561,17 @@ const sheetMode = window.matchMedia("(hover: none) and (pointer: coarse) and (or
 // drag on the content moves the sheet instead of scrolling; at full the
 // content scrolls, and pulling down from the top of it takes the sheet down.
 // The peek is the sidebar's closed state (side=closed in the address).
-// With a tour, the tabs under the sheet pick which sidebar it shows.
+// With a tour, the tabs under the sheet pick which sidebar it shows. On the
+// tour tab the player leaves the tour sheet to rest on the tabs, so it stays
+// on screen however far the sheet is folded; the city tab has none.
 const sheetTabs = {
   side: document.querySelector("#tab-side"),
   tour: document.querySelector("#tab-tour"),
 };
+const sheetTabBar = document.querySelector("#sheet-tabs");
 const tourSideEl = document.querySelector("#tour-side");
+const tourPlayer = document.querySelector("#tour-controls");
+const tourKeys = document.querySelector("#tour-keys");
 const sheetPanes = [hud.side, tourSideEl];
 let sheetPane = "side";
 let sheetLevel = "half";
@@ -588,13 +593,25 @@ function setPaneOpen(open) {
   } else setSide(open);
 }
 
+// Held upright the player rests on the tabs; anywhere else it is the foot of
+// the tour sidebar. It only moves when the layout changes.
+function placePlayer() {
+  const before = sheetMode.matches ? sheetTabBar : tourKeys;
+  if (tourPlayer.nextElementSibling !== before) before.before(tourPlayer);
+}
+
+// What the sheet rests on: the tabs, and the player on them.
+function sheetBase() {
+  const player = tourPlayer.parentElement === tourSideEl ? 0 : tourPlayer.offsetHeight;
+  return (sheetTabBar.offsetHeight || 0) + (player || 0);
+}
+
 // The three resting heights, in pixels of sheet on screen.
 function sheetDetents() {
   const pane = sheetPane === "tour" ? tourSideEl : hud.side;
   const full = pane.offsetHeight || window.innerHeight * 0.8;
   const peek = parseFloat(getComputedStyle(document.body).getPropertyValue("--peek")) || 76;
-  const tabs = document.querySelector("#sheet-tabs").offsetHeight || 0;
-  const half = Math.max(peek + 80, Math.min(full, Math.round((window.innerHeight - tabs) * 0.5)));
+  const half = Math.max(peek + 80, Math.min(full, Math.round((window.innerHeight - sheetBase()) * 0.5)));
   return { peek, half, full };
 }
 
@@ -633,8 +650,10 @@ function syncSheet() {
   if (open && !tourWasOpen) sheetPane = "tour";
   tourWasOpen = open;
   if (!hasTour && sheetPane === "tour") sheetPane = "side";
+  placePlayer();
   document.body.classList.toggle("sheet-tour", sheetPane === "tour");
   document.body.classList.toggle("has-tour", hasTour);
+  document.body.classList.toggle("has-player", hasTour && sheetPane === "tour" && !tourPlayer.hidden);
   sheetTabs.tour.hidden = !hasTour;
   const sideShown = sheetPane === "side" && !hud.side.classList.contains("is-collapsed");
   const tourShown = sheetPane === "tour" && open;
@@ -667,10 +686,18 @@ function showTourPane() {
   tourUI.setOpen(true);
 }
 
+// Switching tabs pauses the tour: on the city tab there is no player to
+// pause it from, and coming back finds it where it was left.
+function switchTab(to) {
+  if (sheetPane !== to && tourUI) tourUI.userTookOver();
+}
+
 sheetTabs.side.addEventListener("click", () => {
+  switchTab("side");
   setSide(sheetPane !== "side" || hud.side.classList.contains("is-collapsed"));
 });
 sheetTabs.tour.addEventListener("click", () => {
+  switchTab("tour");
   if (sheetPane === "tour" && tourOpen()) tourUI.setOpen(false);
   else showTourPane();
 });
@@ -919,13 +946,12 @@ function coverOf(selector) {
   return el.getBoundingClientRect().width;
 }
 
-// How much of the view the bottom sheet and its tabs cover, held upright,
-// at the detent it is resting on. Past half the city is behind the sheet
-// anyway, so it stays where half put it.
+// How much of the view the bottom sheet, the player and the tabs cover, held
+// upright, at the detent the sheet is resting on. Past half the city is
+// behind the sheet anyway, so it stays where half put it.
 function coverBelow() {
   if (!sheetMode.matches || skinPicking) return 0;
-  const tabs = document.querySelector("#sheet-tabs").offsetHeight || 0;
-  return tabs + Math.min(sheetShown(), sheetDetents().half);
+  return sheetBase() + Math.min(sheetShown(), sheetDetents().half);
 }
 
 // The city's lift above the sheet eases to its new height when only the
