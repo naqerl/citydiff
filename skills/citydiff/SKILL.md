@@ -310,14 +310,20 @@ Shape it as a story:
 1. **Open wide** in `changes` mode: one step on the whole range — what it does as a whole,
    and which packages are new or touched.
 2. **Go package by package**, in dependency order, one step per package that carries the
-   change, saying what each gained or lost and why it had to.
+   change, saying what each gained or lost and why it had to. The note's first sentence
+   chooses `focus` or `select`, as below.
 3. **Land on the functions**: `focus` the declarations that were added or rewritten.
 4. **Follow the call paths that matter**: `path` from the entry point to the effect,
    `highlight` for a set of nodes that changed together.
 5. **End on the point**: the last step says what is different now for the user of the code —
    not a recap of the file list.
 
-Choose each field to serve the sentence the note is making:
+Choose each field to serve the sentence the note is making.
+
+The note is the description. If its first sentence names a function or other entity — a
+method, type, or variable — `focus` that exact name. Do not `select` the package that
+contains it. When the sentence names more than one, `focus` the first. `select` only when
+that first sentence is about the package itself.
 
 - `mode` — `changes` for every step that talks about the change; `full` only for an opening
   or a deliberate "here is the plain city".
