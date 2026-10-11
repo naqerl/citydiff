@@ -2919,12 +2919,13 @@ function hasDirection(found) {
   return isCallable(found) || isType(found);
 }
 
-// What the subject draws. A type keeps its methods either way: only the
-// functions calling those methods are added when the direction is reversed.
-function subjectLinks(found) {
+// What the subject draws, in the direction asked for. A type keeps its
+// methods either way: only the functions calling those methods are added when
+// the direction is reversed.
+function subjectLinks(found, inbound) {
   if (!found) return [];
-  if (isType(found)) return callInbound ? typeCallersOutside(found) : [];
-  if (callInbound && isCallable(found)) return callerLinks(found);
+  if (isType(found)) return inbound ? typeCallersOutside(found) : [];
+  if (inbound && isCallable(found)) return callerLinks(found);
   return entityLinks(found);
 }
 
@@ -2940,7 +2941,7 @@ function typeCallersOutside(found) {
 function litForEntity(found) {
   if (!found) return null;
   const entities = new Set([found.entity.id]);
-  for (const link of subjectLinks(found)) entities.add(link.target.entity.id);
+  for (const link of subjectLinks(found, callInbound)) entities.add(link.target.entity.id);
   return { entities, packages: null };
 }
 
@@ -3034,7 +3035,7 @@ function drawEntityLinks(group, found) {
   // arc is drawn from the caller to this tower, so the particle walk, which
   // always runs from the first end to the second, comes back in.
   const inbound = callInbound && hasDirection(found);
-  const links = subjectLinks(found).filter((link) => !link.attached).map((link) => (inbound
+  const links = subjectLinks(found, inbound).filter((link) => !link.attached).map((link) => (inbound
     ? { from: link.target, target: found, far: link.target, change: link.change, step: link.step }
     : { from: found, target: link.target, far: link.target, change: link.change, step: link.step }));
   drawCallLinks(group, links);
@@ -3654,7 +3655,7 @@ function noRootDetail() {
   const meta = document.createElement("p");
   meta.textContent = modules.length + (modules.length === 1 ? " module" : " modules");
   wrap.append(meta);
-  wrap.append(changeTally(allDeclaredEntities()));
+  wrap.append(tallyLine("declarations", allDeclaredEntities()));
   return wrap;
 }
 
@@ -3723,15 +3724,12 @@ function packageDetail(pkg) {
   title.append(titleClip);
   attachMarquee(title, titleClip);
   wrap.append(title);
+  // The head names the package and nothing else: the tally line right below
+  // says how it changed, so a mark beside the path would say it twice.
   const meta = document.createElement("p");
   meta.append(pkg.id);
-  const mark = changeMark(pkg.change);
-  if (mark) {
-    meta.append(" · ");
-    meta.append(mark);
-  }
   wrap.append(meta);
-  wrap.append(changeTally(declaredEntities(pkg)));
+  wrap.append(tallyLine("declarations", declaredEntities(pkg)));
   // The change is real but sits below the declarations: importing, re-exporting,
   // a comment, a reformat. The city draws it muted; the panel says why.
   if (isLowLevel(pkg)) {
@@ -3741,25 +3739,11 @@ function packageDetail(pkg) {
     line.title = "The file changed but no declaration did: imports, re-exports, comments, formatting.";
     wrap.append(line);
   }
+  // Declarations and dependencies are read the same way — word, total, then
+  // the stats that are not zero — and the same way as the Calls / Callers
+  // tabs. Overview has no diff to count, so it keeps the plain total.
   const deps = pkg.deps || [];
-  if (deps.length && mode === "overlay") {
-    const added = deps.filter((dep) => dep.change === "added").length;
-    const removed = deps.filter((dep) => dep.change === "removed").length;
-    const line = document.createElement("p");
-    line.append("dependencies ");
-    const plus = document.createElement("span");
-    plus.className = "added";
-    plus.textContent = "+" + added;
-    const minus = document.createElement("span");
-    minus.className = "removed";
-    minus.textContent = " −" + removed;
-    line.append(plus, minus);
-    wrap.append(line);
-  } else if (deps.length) {
-    const line = document.createElement("p");
-    line.textContent = deps.length + " dependencies";
-    wrap.append(line);
-  }
+  if (deps.length) wrap.append(tallyLine("dependencies", deps));
   appendRefs(wrap);
   return wrap;
 }
@@ -3768,17 +3752,32 @@ function declaredEntities(pkg) {
   return (pkg.entities || []).filter((entity) => entity.kind === "type" || entity.kind === "variable" || entity.kind === "function" || entity.kind === "method");
 }
 
-function changeTally(entities) {
+// How many of a list were added, deleted and changed. The changes that carry
+// no diff (moved, same) are not stats and count as neither.
+function statsOf(items) {
+  const tally = { added: 0, removed: 0, modified: 0 };
+  for (const item of items) {
+    if (tally[item.change] != null) tally[item.change] += 1;
+  }
+  return tally;
+}
+
+// The stats of one list, in the one order and with the one wording the panel
+// uses. A count of zero is never appended, so no label ever reads +0, −0 or ~0.
+function appendStats(parent, stats) {
+  if (stats.added) parent.append(tallySpan("added", "+" + stats.added, stats.added + " added"));
+  if (stats.removed) parent.append(tallySpan("removed", "\u2212" + stats.removed, stats.removed + " deleted"));
+  if (stats.modified) parent.append(tallySpan("modified", "~" + stats.modified, stats.modified + " changed"));
+}
+
+// One tally line, shared by what a package declares and what it imports, and
+// shaped the way the Calls / Callers tabs are: the word, the total, then only
+// the nonzero stats. Overview mode counts no diff, so it keeps the total alone.
+function tallyLine(noun, items) {
   const line = document.createElement("p");
   line.className = "tally";
-  line.append(entities.length + " declarations");
-  if (mode !== "overlay") return line;
-  const added = entities.filter((entity) => entity.change === "added").length;
-  const removed = entities.filter((entity) => entity.change === "removed").length;
-  const modified = entities.filter((entity) => entity.change === "modified").length;
-  if (added) line.append(tallySpan("added", "+" + added, added + " added"));
-  if (removed) line.append(tallySpan("removed", "\u2212" + removed, removed + " deleted"));
-  if (modified) line.append(tallySpan("modified", "~" + modified, modified + " changed"));
+  line.append(noun + " " + items.length);
+  if (mode === "overlay") appendStats(line, statsOf(items));
   return line;
 }
 
@@ -3882,7 +3881,12 @@ function externalRow(dep) {
   return button;
 }
 
-function refsSection() {
+// The rows the reference list shows in one direction, exactly as refsSection
+// lays them out: the same node reached by several calls is one row, and the
+// packages outside the snapshot follow in the Calls direction. The buttons
+// and the list both take their numbers from here, so a tab and the rows it
+// opens can never disagree.
+function refsRows(inbound) {
   const subject = subjectNode();
   if (!subject) return null;
   let entries = [];
@@ -3890,17 +3894,21 @@ function refsSection() {
   if (subject.kind === "entity") {
     const found = byEntity.get(subject.id);
     if (!found || !found.box || !hasDirection(found)) return null;
-    entries = subjectLinks(found).map((link) => ({ node: link.target, change: link.change }));
+    entries = subjectLinks(found, inbound).map((link) => ({ node: link.target, change: link.change }));
     // A node's calls reach outside the snapshot too. A call keeps only its
     // expression, so which outside package it lands in cannot be read off it;
     // the package's external deps are listed instead, the way they are drawn.
-    if (!callInbound) outside = externalLinks(found).map((dep) => ({ dep, change: "same" }));
+    if (!inbound) outside = externalLinks(found).map((dep) => ({ dep, change: "same" }));
   } else {
-    const links = callInbound ? packageCallerLinks(subject.id) : packageCallLinks(subject.id);
-    entries = links.map((link) => ({ node: callInbound ? link.from : link.target, change: link.change }));
+    const links = inbound ? packageCallerLinks(subject.id) : packageCallLinks(subject.id);
+    entries = links.map((link) => ({ node: inbound ? link.from : link.target, change: link.change }));
   }
-  const merged = [...mergeByNode(entries), ...outside];
-  if (!merged.length) return null;
+  return [...mergeByNode(entries), ...outside];
+}
+
+function refsSection() {
+  const merged = refsRows(callInbound);
+  if (!merged || !merged.length) return null;
   return {
     key: "refs",
     label: callInbound ? "Callers" : "Calls",
@@ -4249,7 +4257,15 @@ function refsControl() {
     const on = callInbound === inbound;
     if (on) button.className = "on";
     button.setAttribute("aria-checked", on ? "true" : "false");
-    button.textContent = label;
+    // The button carries the size of the list it opens. The rows come from the
+    // same computation the list uses, so the label and the rows agree; in
+    // Changes mode it carries their marks too, and never a zero one.
+    const rows = refsRows(inbound);
+    button.append(label);
+    if (rows) {
+      button.append(" " + rows.length);
+      if (mode === "overlay") appendStats(button, statsOf(rows));
+    }
     button.addEventListener("click", () => setCallDirection(inbound, null));
     wrap.append(button);
   }
