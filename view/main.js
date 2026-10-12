@@ -1236,27 +1236,48 @@ function updateHalo() {
   halo.visible = true;
 }
 
-// The spot the hologram floats over: the roof the selected package is drawn
-// with, the height its own call arcs bow to, and the highest roof in the city
-// as it is drawn right now — the hologram stands above the whole skyline, not
-// just the roof it names, so nothing it is showing off ends up buried in a
-// tower beside it. Only a package in the tree gets one: an entity or a package
-// outside it is named by the sidebar and the arcs, and a hologram there would
-// be noise.
-let holoSpot = null;
+// The holograms. Every module the city is highlighting gets one — the selected
+// package, the whole lit set it brought up (the packages on both ends of every
+// arc the view is drawing), and for a focused entity the packages its own calls
+// reach. Naming all of them at once is what makes a tight city readable.
+//
+// They all stand on the same floor: the highest point the selection's arcs
+// reach and the tallest roof the city is drawn with. A name never sits in the
+// way of the curves it is naming, and nothing it is showing off ends up buried
+// in a tower beside it.
 function updateHolo() {
-  const id = selected && selected.kind === "package" ? selected.id : null;
-  const box = id ? boxById.get(id) : null;
-  if (!box) {
-    holoSpot = null;
-    holo.hide();
-    return;
-  }
-  const pkg = byPackage.get(id);
+  const list = [];
+  const seen = new Set();
   let top = linkTop;
-  for (const other of laid.packages) top = Math.max(top, shownOwnTop(other.id));
-  holoSpot = { x: box.x + box.w / 2, y: shownOwnTop(id), z: box.z + box.d / 2, apex: top };
-  holo.show(id, pkg ? pkg.name || pkg.id : id);
+  for (const box of laid.packages) top = Math.max(top, shownOwnTop(box.id));
+  const add = (id, primary) => {
+    if (!id || seen.has(id)) return;
+    const box = boxById.get(id);
+    // A package outside the tree has no tower to stand over: the sidebar and
+    // the arcs name it.
+    if (!box) return;
+    seen.add(id);
+    const pkg = byPackage.get(id);
+    list.push({
+      id,
+      primary: !!primary,
+      apex: top,
+      name: pkg ? pkg.name || pkg.id : id,
+      x: box.x + box.w / 2,
+      y: shownOwnTop(id),
+      z: box.z + box.d / 2,
+    });
+  };
+  if (selected && selected.kind === "package") add(selected.id, true);
+  if (lit && lit.packages) {
+    for (const id of lit.packages) add(id, false);
+  } else if (lit && lit.entities) {
+    for (const id of lit.entities) {
+      const found = byEntity.get(id);
+      if (found && found.pkg) add(found.pkg.id, false);
+    }
+  }
+  holo.sync(list);
 }
 
 // The node under the mouse is outlined in the skin's hover colour, with a
@@ -5961,7 +5982,7 @@ function drawCity() {
     placeHover();
   }
   if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
-  holo.place(camera, holoSpot, renderer.domElement.clientHeight);
+  holo.place(camera, renderer.domElement.clientHeight);
   renderer.render(scene, camera);
 }
 
