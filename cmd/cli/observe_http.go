@@ -135,6 +135,8 @@ func (h *hub) observation(w http.ResponseWriter, r *http.Request) {
 		h.postTour(w, r, obs)
 	case r.Method == http.MethodPost && rest == "api/tour":
 		h.checkPosted(w, r, obs)
+	case strings.HasPrefix(rest, "api/tours/"):
+		h.tourByName(w, r, obs, strings.TrimPrefix(rest, "api/tours/"))
 	case r.Method == http.MethodGet && rest == "api/refs":
 		h.refs(w, obs)
 	case r.Method == http.MethodGet && rest == "api/diff":
@@ -199,6 +201,30 @@ func (h *hub) listTours(w http.ResponseWriter, obs observe.Obs) {
 		list = []observe.TourMeta{}
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// tourByName deletes one stored tour. Replacing a tour is a DELETE followed by
+// a POST, because POST refuses a name that is already stored.
+func (h *hub) tourByName(w http.ResponseWriter, r *http.Request, obs observe.Obs, name string) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.authorize(w, r) {
+		return
+	}
+	if !observe.ValidName(name) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"problems": []tour.Problem{{Field: "script", Message: "tour name must be letters, digits, _ and -"}},
+		})
+		return
+	}
+	if err := h.store.DeleteTour(obs.ID, name); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
 }
 
 // refreshClone brings the observation's clone up to date before a tour is
