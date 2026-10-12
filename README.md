@@ -38,3 +38,7 @@ Press **y** for a bird's-eye map of every package and the arcs between them, the
 ![the theme menu switching themes over the city](https://s3.naqerl.com/public/demo/04-themes.gif?v=2)
 
 Type `/skin` to open the theme menu over the city; arrows and letters preview each theme in place, and **Enter** applies it.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
