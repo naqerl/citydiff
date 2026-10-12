@@ -64,8 +64,15 @@ export default function review(city) {
 
 </details>
 
+## Examples
+
+- **hello**, above: one sidebar section.
+- **review**, above: a key, a ring item and a diff button that step through the changes.
+- **[voice-search](https://github.com/sheeiavellie/voice-search)**: say a name, and the city goes there. It adds a ring item, a key and a search source. It listens with the browser's microphone, transcribes in the page with Whistle, a speech-to-text model that runs as WebAssembly, and then selects the match or types what was heard into the search box. It uses nothing outside this API but the browser's own.
+
 ## Index
 
+- [Examples](#examples)
 - [Plugin file](#plugin-file)
 - [Conventions](#conventions)
 - [city.version](#cityversion)
