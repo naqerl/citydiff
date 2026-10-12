@@ -21,6 +21,7 @@ import { buildSigns, hasPlate, signText } from "./signs.js";
 import { showVersion } from "./version.js";
 import { escapeHTML, renderMarkdown } from "./markdown.js";
 import { apiNodes, createPlugins, freezeDeep } from "./plugins.js";
+import { mountObserve, observationInfo, projectSubtitle, projectTitle, tourRequest } from "./observe.js";
 
 let theme = null;
 let themeReady = false;
@@ -424,12 +425,11 @@ const scratch = {
 
 const hud = {
   title: document.querySelector("#title"),
+  sub: document.querySelector("#title-sub"),
   note: document.querySelector("#note"),
   detailHead: document.querySelector("#detail-head"),
   detailBody: document.querySelector("#detail-body"),
   tag: document.querySelector("#tag"),
-  overview: document.querySelector("#mode-overview"),
-  changes: document.querySelector("#mode-changes"),
   search: document.querySelector("#search"),
   results: document.querySelector("#results"),
   legend: document.querySelector("#legend"),
@@ -1457,7 +1457,10 @@ function joinText(chunks, size) {
   return new TextDecoder().decode(bytes);
 }
 
+let observeCommands = [];
+
 async function main() {
+  observeCommands = await mountObserve();
   showLoad("Reading the theme…", loadAt("theme", 0));
   await nextPaint();
   const loaded = await readTheme();
@@ -1473,7 +1476,7 @@ async function main() {
   await nextPaint();
   let response;
   try {
-    response = await fetch("./scene.json");
+    response = await fetch("./scene.json" + location.search);
     if (!response.ok) throw new Error(response.statusText);
     sceneDoc = await readScene(response);
   } catch (err) {
@@ -1524,9 +1527,13 @@ async function main() {
     },
     open: tourSideWanted,
     hold: named,
+    onRange: (tourRange) => {
+      shownTourRange = tourRange || "";
+      updateHUD();
+    },
   });
   const wanted = new URLSearchParams(location.search).get("tour");
-  tourUI.loadURL(wanted || "./tour.json");
+  tourUI.loadURL(tourRequest(wanted) || "./tour.json");
 }
 
 // Every program a selection can need, compiled and drawn once behind the
@@ -4465,11 +4472,17 @@ function entityInfo(id) {
   return pkg ? head + "  ·  " + pkg : head;
 }
 
+// The range the open tour named. Empty when no tour is on screen, so the
+// subtitle falls back to the scene's range, then to the branch.
+let shownTourRange = "";
+
 function updateHUD() {
-  const root = sceneDoc && (sceneDoc.module || sceneDoc.root || "project");
-  hud.title.textContent = root;
-  hud.overview.classList.toggle("on", mode === "overview");
-  hud.changes.classList.toggle("on", mode === "overlay");
+  const info = observationInfo();
+  const fallback = sceneDoc && (sceneDoc.module || sceneDoc.root);
+  hud.title.textContent = projectTitle(info && info.remote, fallback);
+  const sub = projectSubtitle(shownTourRange, sceneDoc && sceneDoc.range, info && info.head);
+  hud.sub.hidden = !sub;
+  hud.sub.textContent = sub;
   updateNote();
   renderDetail();
 }
@@ -5859,9 +5872,6 @@ function animate(now) {
   }
 }
 
-hud.overview.addEventListener("click", () => { mode = "overview"; applyMode(); });
-hud.changes.addEventListener("click", () => { mode = "overlay"; applyMode(); });
-
 // The sidebar's calls / callers control lives in the detail panel, next to the
 // subject it acts on (see refsControl). The direction is a mode, like
 // Overview / Changes: it stays while the user moves between nodes.
@@ -6202,7 +6212,8 @@ function launchRocket() {
 
 // The commands the search box offers: the viewer's own, then the plugins'.
 function allCommands() {
-  return plugins ? COMMANDS.concat(plugins.commands()) : COMMANDS;
+  const own = plugins ? COMMANDS.concat(plugins.commands()) : COMMANDS;
+  return own.concat(observeCommands);
 }
 
 // commandLine splits what is typed into a command's name and its argument,
@@ -6385,6 +6396,9 @@ window.addEventListener("keydown", (event) => {
   // The diff overlay is a reading surface: it scrolls, it takes Escape, and
   // nothing else the viewer listens for should fire while it is up.
   if (diffActive()) return;
+  // The observation picker owns the keyboard while it is open. Its find box
+  // is an input, and a "b" or a "/" must not fly the city underneath it.
+  if (!document.querySelector("#observe-menu").hidden) return;
   requestFrame();
   if (editAction(event) && event.target !== hud.search) {
     if (editSubject()) event.preventDefault();
@@ -6870,7 +6884,7 @@ hud.detailBody.addEventListener("scroll", () => syncJumpSidebar(), true);
 async function loadPlugins() {
   let names = [];
   try {
-    const res = await fetch("./plugins.json");
+    const res = await fetch("/plugins.json");
     if (res.ok) names = (await res.json()).plugins || [];
   } catch { /* no catalog, no plugins */ }
   if (!names.length) return;
@@ -6879,7 +6893,7 @@ async function loadPlugins() {
     return target ? target.entity.id : null;
   });
   plugins = createPlugins(pluginHost());
-  await plugins.load(names, (name) => import("./plugins/" + encodeURIComponent(name) + "/plugin.js"));
+  await plugins.load(names, (name) => import("/plugins/" + encodeURIComponent(name) + "/plugin.js"));
   notifyPlugins();
 }
 
@@ -6941,7 +6955,7 @@ function pluginHost() {
       },
     },
     takenKeys: TAKEN_KEYS,
-    takenCommands: new Set([...COMMANDS.map((cmd) => cmd.name), LAUNCH_COMMAND]),
+    takenCommands: new Set([...COMMANDS.map((cmd) => cmd.name), LAUNCH_COMMAND, "/overview", "/range", "/tour"]),
     changed: pluginsChanged,
     report: reportPlugin,
   };

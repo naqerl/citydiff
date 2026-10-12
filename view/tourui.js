@@ -1,15 +1,16 @@
-// The tour sidebar on the right: title and range, the description, and the
-// player controls at the bottom. It mirrors the left sidebar: t hides
-// and shows it like b does the left one. Everything here runs on a step
-// change or a click, never per frame. The step itself is applied by the
-// scene through apply().
+// The tour sidebar on the right: the title, the description, and the
+// player controls at the bottom. The range is the left sidebar's line
+// under the project name. It mirrors the left sidebar: t hides and shows
+// it like b does the left one. Everything here runs on a step change or a
+// click, never per frame. The step itself is applied by the scene through apply().
 
-import { createPlayer, reloadFor, rangeLabel } from "./tour.js";
+import { createPlayer, reloadFor } from "./tour.js";
 import { tourAction } from "./keys.js";
 import { renderMarkdown, escapeHTML } from "./markdown.js";
 import { diffActive } from "./diff.js";
+import { shortRange } from "./observe.js";
 
-export function mountTour({ apply, clear, layout, open = true, hold = false }) {
+export function mountTour({ apply, clear, layout, open = true, hold = false, onRange = () => {} }) {
   const root = document.getElementById("tour-side");
   const drop = document.getElementById("tour-drop");
   const el = (id) => document.getElementById(id);
@@ -18,7 +19,6 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     stepTitle: el("tour-step-title"),
     body: el("tour-body"),
     title: el("tour-title"),
-    range: el("tour-range"),
     play: el("tour-play"),
     counter: el("tour-counter"),
     // Held upright on a touch screen the player sits outside the sidebar.
@@ -62,8 +62,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     tour = resolved;
     ui.title.textContent = resolved.title || "Tour";
     ui.title.title = resolved.title || "";
-    const label = rangeLabel(resolved.range, resolved.scene && resolved.scene.range);
-    ui.range.innerHTML = label ? `range <code>${escapeHTML(label)}</code>` : "no range: the plain tree";
+    onRange(resolved.range || "");
     show$(true);
     player = createPlayer(resolved.steps, { show, change });
     if (holdFirst) change(player.state);
@@ -75,6 +74,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     if (player) player.stop();
     player = null;
     tour = null;
+    onRange("");
     show$(false);
     clear();
   }
@@ -107,7 +107,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
       list.map((p) => `<li><code>${escapeHTML(p.step ? "step " + p.step + " " + p.field : p.field)}</code> ${escapeHTML(p.message)}</li>`).join("") +
       "</ul>";
     ui.title.textContent = "Tour";
-    ui.range.textContent = "";
+    onRange("");
   }
 
   // The server resolves every name against the scene it serves, so a
@@ -115,7 +115,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
   async function loadText(text, source) {
     let res;
     try {
-      res = await fetch("./api/tour", { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
+      res = await fetch("./api/tour" + location.search, { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
     } catch (err) {
       problems([{ field: "script", message: err.message }], source);
       return false;
@@ -128,7 +128,7 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     // A tour for another range moved the server's scene: reload to draw it.
     const next = reloadFor(doc, location.href);
     if (next) {
-      problems([], "Loading the tour's range " + (doc.scene.range || "") + "…");
+      problems([], "Loading the tour's range " + shortRange(doc.scene.range || "") + "…");
       ui.stepTitle.textContent = "Switching the scene";
       location.replace(next);
       return true;

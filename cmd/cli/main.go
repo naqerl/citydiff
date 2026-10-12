@@ -62,6 +62,8 @@ func main() {
 			err = runNodes(os.Args[2:], os.Stdout)
 		case "tour":
 			err = runTour(os.Args[2:], os.Stdout, os.Stderr)
+		case "hub":
+			err = runObserve(os.Args[2:], os.Stdout, os.Stderr)
 		default:
 			legacy()
 			return
@@ -322,7 +324,8 @@ func usageText() string {
 	return "Usage: citydiff -path file-or-directory [-range A..B] [-addr addr] [-tour file]\n" +
 		"       citydiff [-json | -scene | -text] -path file-or-directory [-range A..B]\n" +
 		"       citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]\n" +
-		"       citydiff tour validate|serve|schema ...\n\n" +
+		"       citydiff tour validate|serve|schema ...\n" +
+		"       citydiff hub serve|open ...\n\n" +
 		"With no output flag, citydiff serves the 3D viewer and does not return.\n\n"
 }
 

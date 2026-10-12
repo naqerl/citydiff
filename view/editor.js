@@ -205,7 +205,8 @@ export async function openEditor(target, onClose) {
   s.fit = () => fitter.fit();
   window.addEventListener("resize", s.fit);
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${location.host}/api/edit?${editQuery(target, term.cols, term.rows)}`);
+  const dir = location.pathname.endsWith("/") ? location.pathname : location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
+  const ws = new WebSocket(`${proto}//${location.host}${dir}api/edit?${editQuery(target, term.cols, term.rows)}`);
   ws.binaryType = "arraybuffer";
   s.ws = ws;
   const enc = new TextEncoder();

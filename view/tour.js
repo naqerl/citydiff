@@ -103,8 +103,8 @@ export function reloadFor(reply, href) {
   return url.toString();
 }
 
-// rangeLabel is the range line under the tour title: the range the script
-// names and, when the scene's spelling differs, the one the scene was built from.
+// rangeLabel is the one range line, under the project name: the range the
+// script names and, when the scene's spelling differs, the one the scene was built from.
 export function rangeLabel(tourRange, sceneRange) {
   const t = (tourRange || "").trim();
   const s = (sceneRange || "").trim();

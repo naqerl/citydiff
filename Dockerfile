@@ -20,4 +20,8 @@ COPY --from=build /out/citydiff /usr/local/bin/citydiff
 EXPOSE 8787
 WORKDIR /work
 ENTRYPOINT ["citydiff"]
+# The default command serves one local tree. A shared observation hub is the
+# same binary with another command, and it clones public https remotes itself,
+# so this image does not need git:
+#   CITYDIFF_HUB_KEY=… citydiff hub serve -addr 0.0.0.0:8787
 CMD ["-path", "/work", "-addr", "0.0.0.0:8787"]

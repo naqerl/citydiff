@@ -109,22 +109,9 @@ func (v *viewer) handler() http.Handler {
 		if gz && v.packed == nil {
 			v.packed = gzipped(payload)
 		}
-		body := payload
-		if gz {
-			body = v.packed
-		}
+		packed := v.packed
 		v.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		// The size lets the viewer measure the download instead of guessing:
-		// the page reads the body in chunks and moves its loading bar by bytes.
-		// It counts the bytes after decoding, so it is told that size.
-		w.Header().Set("X-Scene-Bytes", strconv.Itoa(len(payload)))
-		w.Header().Set("Vary", "Accept-Encoding")
-		if gz {
-			w.Header().Set("Content-Encoding", "gzip")
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		_, _ = w.Write(body)
+		writeScene(w, r, payload, packed)
 	})
 	mux.HandleFunc("GET /tour.json", func(w http.ResponseWriter, r *http.Request) {
 		v.mu.Lock()
@@ -171,6 +158,25 @@ func (v *viewer) handler() http.Handler {
 	mux.HandleFunc("GET /api/version", v.serveVersion)
 	mux.Handle("/", noStore(http.FileServer(http.FS(view.FS))))
 	return mux
+}
+
+// writeScene sends one built scene. packed is payload gzipped, and is what
+// is written when the client accepts gzip. The decoded size is X-Scene-Bytes
+// so the page can move its loading bar by bytes after the body is decoded.
+func writeScene(w http.ResponseWriter, r *http.Request, payload, packed []byte) {
+	gz := packed != nil && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	body := payload
+	if gz {
+		body = packed
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Scene-Bytes", strconv.Itoa(len(payload)))
+	w.Header().Set("Vary", "Accept-Encoding")
+	if gz {
+		w.Header().Set("Content-Encoding", "gzip")
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	_, _ = w.Write(body)
 }
 
 // gzipped compresses at the fastest level: a scene is compressed once and

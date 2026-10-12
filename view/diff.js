@@ -4,6 +4,7 @@
 // so it follows the skin. There is no terminal and no pager in the way.
 
 import { highlighter } from "./highlight.js";
+import { pagePath, shortRange } from "./observe.js";
 
 let panel = null;
 
@@ -89,7 +90,13 @@ export function closeDiff() {
 // readDiff asks the server for a target's hunks: the reply D draws, with the
 // problem that says why there are none when there are none.
 export async function readDiff(target) {
-  const res = await fetch("/api/diff?" + diffQuery(target));
+  const q = new URLSearchParams(diffQuery(target));
+  const page = new URLSearchParams(location.search);
+  for (const key of ["range", "tour"]) {
+    const value = page.get(key);
+    if (value) q.set(key, value);
+  }
+  const res = await fetch(pagePath("api/diff?") + q.toString());
   return res.json();
 }
 
@@ -165,7 +172,7 @@ function renderDiff(body, reply, target, actions) {
     // Nothing of the node's own changed. Say that, and say how much of the
     // file's change is being left out — do not show it under the node's name.
     const omitted = all.reduce((n, file) => n + (file.omitted || 0), 0);
-    const range = reply.range || "this range";
+    const range = shortRange(reply.range) || "this range";
     if (!all.length) {
       fail(body, "this node has no change in " + range);
     } else {
@@ -182,7 +189,7 @@ function renderDiff(body, reply, target, actions) {
   const omitted = files.reduce((n, file) => n + (file.omitted || 0), 0) + (reply.more || 0);
   for (const file of files) body.append(fileBlock(file, actions));
   body.scrollTop = 0;
-  return [shown + (shown === 1 ? " hunk" : " hunks"), reply.range, omitted ? omitted + " not shown" : ""].filter(Boolean).join(" · ");
+  return [shown + (shown === 1 ? " hunk" : " hunks"), shortRange(reply.range), omitted ? omitted + " not shown" : ""].filter(Boolean).join(" · ");
 }
 
 function fail(body, message) {
