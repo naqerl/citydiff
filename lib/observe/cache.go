@@ -159,6 +159,15 @@ func (b *bucket[T]) touch(key string) {
 	}
 }
 
+// Invalidate drops every cached value for bucket, so the next Get rebuilds
+// them. The bucket is the clone, so every observation sharing the clone is
+// invalidated when the clone's refs move.
+func (c *Cache[T]) Invalidate(bucket string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.buckets, bucket)
+}
+
 // Has reports whether key is cached. It is for tests.
 func (c *Cache[T]) Has(bucket, key string, overview bool) bool {
 	c.mu.Lock()

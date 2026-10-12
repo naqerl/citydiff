@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -200,6 +201,22 @@ func (h *hub) listTours(w http.ResponseWriter, obs observe.Obs) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// refreshClone brings the observation's clone up to date before a tour is
+// resolved against it, then drops the scenes cached for that clone. A failed
+// fetch does not fail the upload: the tour is judged against what the clone
+// still holds, and the caller reports the error. The remote is checked as
+// public again before the fetch.
+func (h *hub) refreshClone(ctx context.Context, obs observe.Obs) (bool, error) {
+	if h.public != nil {
+		if err := h.public(ctx, obs.Remote); err != nil {
+			return false, err
+		}
+	}
+	err := h.refresh(ctx, obs.Remote, obs.Repo)
+	h.scenes.invalidate(obs.Repo)
+	return err == nil, err
+}
+
 func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) {
 	if !h.authorize(w, r) {
 		return
@@ -218,6 +235,7 @@ func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) 
 		problem(w, "range", errors.New("a tour needs a range"))
 		return
 	}
+	refreshed, refreshErr := h.refreshClone(r.Context(), obs)
 	held, err := h.scenes.get(r.Context(), obs.Repo, script.Range)
 	if err != nil {
 		problem(w, "range", err)
@@ -248,12 +266,17 @@ func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) 
 		problem(w, "script", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"name":  name,
-		"title": script.Title,
-		"range": script.Range,
-		"url":   pageURL(r, obs.ID, url.Values{"tour": {name}}.Encode()),
-	})
+	reply := map[string]any{
+		"name":      name,
+		"title":     script.Title,
+		"range":     script.Range,
+		"url":       pageURL(r, obs.ID, url.Values{"tour": {name}}.Encode()),
+		"refreshed": refreshed,
+	}
+	if refreshErr != nil {
+		reply["refresh_error"] = refreshErr.Error()
+	}
+	writeJSON(w, http.StatusCreated, reply)
 }
 
 // checkPosted resolves a script the page already has, against the scene that
@@ -275,6 +298,7 @@ func (h *hub) checkPosted(w http.ResponseWriter, r *http.Request, obs observe.Ob
 		problem(w, "range", err)
 		return
 	}
+	h.refreshClone(r.Context(), obs)
 	held, err := h.scenes.get(r.Context(), obs.Repo, commitRange)
 	if err != nil {
 		problem(w, "range", err)
