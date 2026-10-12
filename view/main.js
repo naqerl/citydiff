@@ -571,7 +571,6 @@ const sheetTabs = {
 const sheetTabBar = document.querySelector("#sheet-tabs");
 const tourSideEl = document.querySelector("#tour-side");
 const tourPlayer = document.querySelector("#tour-controls");
-const tourKeys = document.querySelector("#tour-keys");
 const sheetPanes = [hud.side, tourSideEl];
 const sheetHandle = document.querySelector("#sheet-handle");
 let sheetPane = "side";
@@ -597,8 +596,11 @@ function setPaneOpen(open) {
 // Held upright the player rests on the tabs; anywhere else it is the foot of
 // the tour sidebar. It only moves when the layout changes.
 function placePlayer() {
-  const before = sheetMode.matches ? sheetTabBar : tourKeys;
-  if (tourPlayer.nextElementSibling !== before) before.before(tourPlayer);
+  if (sheetMode.matches) {
+    if (tourPlayer.nextElementSibling !== sheetTabBar) sheetTabBar.before(tourPlayer);
+  } else if (tourPlayer.parentElement !== tourSideEl || tourPlayer !== tourSideEl.lastElementChild) {
+    tourSideEl.append(tourPlayer);
+  }
 }
 
 // What the sheet rests on: the tabs, and the player on them.
