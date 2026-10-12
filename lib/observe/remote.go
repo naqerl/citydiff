@@ -194,8 +194,7 @@ func Clone(ctx context.Context, canonical, dest string, limit int64) error {
 			return nil
 		}
 	}
-	key := RepoKey(canonical)
-	lock := cloneLock(key)
+	lock := cloneLock(dest)
 	lock.Lock()
 	defer lock.Unlock()
 	if repo, err := gogit.PlainOpen(dest); err == nil {
@@ -251,7 +250,7 @@ func Refresh(ctx context.Context, canonical, dest string, limit int64) error {
 	if _, err := repo.Head(); err != nil {
 		return err
 	}
-	lock := cloneLock(RepoKey(canonical))
+	lock := cloneLock(dest)
 	lock.Lock()
 	defer lock.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
@@ -335,19 +334,29 @@ func dirBytes(root string) (int64, error) {
 
 var (
 	cloneMu    sync.Mutex
-	cloneLocks = map[string]*sync.Mutex{}
+	cloneLocks = map[string]*sync.RWMutex{}
 	clientOnce sync.Once
 )
 
-func cloneLock(key string) *sync.Mutex {
+// cloneLock is the lock for one clone, keyed by the clone's directory. Clone
+// and Refresh take it for writing; a scene build that walks the worktree takes
+// it for reading, so a fetch cannot resettle the tree under a build and two
+// builds can still run together.
+func cloneLock(repo string) *sync.RWMutex {
 	cloneMu.Lock()
 	defer cloneMu.Unlock()
-	m, ok := cloneLocks[key]
+	m, ok := cloneLocks[repo]
 	if !ok {
-		m = &sync.Mutex{}
-		cloneLocks[key] = m
+		m = &sync.RWMutex{}
+		cloneLocks[repo] = m
 	}
 	return m
+}
+
+// RepoLock is the clone's lock, keyed by the clone's directory. Clone and
+// Refresh write it; a reader that walks the clone's worktree reads it.
+func RepoLock(repo string) *sync.RWMutex {
+	return cloneLock(repo)
 }
 
 func installClient() {

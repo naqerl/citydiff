@@ -268,6 +268,13 @@ func (c *sceneCache) get(ctx context.Context, repo, commitRange string) (*heldSc
 		return nil, err
 	}
 	return c.inner.Get(ctx, repo, key, overview, func(context.Context) (*heldScene, error) {
+		// buildSnapshot reads the clone's worktree, and Refresh resets that
+		// worktree in place. Reading the clone's lock keeps a build from seeing
+		// half of the old tree and half of the new one, while still letting two
+		// builds run together.
+		lock := observe.RepoLock(repo)
+		lock.RLock()
+		defer lock.RUnlock()
 		snap, err := buildSnapshot(repo, commitRange)
 		if err != nil {
 			return nil, err
