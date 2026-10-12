@@ -227,11 +227,12 @@ func (h *hub) tourByName(w http.ResponseWriter, r *http.Request, obs observe.Obs
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
 }
 
-// refreshClone brings the observation's clone up to date before a tour is
-// resolved against it, then drops the scenes cached for that clone. A failed
-// fetch does not fail the upload: the tour is judged against what the clone
-// still holds, and the caller reports the error. The remote is checked as
-// public again before the fetch.
+// refreshClone brings the observation's clone up to date before an uploaded
+// tour is resolved against it, then drops the scenes cached for that clone. It
+// is the upload path only: the unauthenticated pre-check (checkPosted) is not
+// an upload and must not be a fetch trigger. A failed fetch does not fail the
+// upload: the tour is judged against what the clone still holds, and the caller
+// reports the error. The remote is checked as public again before the fetch.
 func (h *hub) refreshClone(ctx context.Context, obs observe.Obs) (bool, error) {
 	if h.public != nil {
 		if err := h.public(ctx, obs.Remote); err != nil {
@@ -324,7 +325,6 @@ func (h *hub) checkPosted(w http.ResponseWriter, r *http.Request, obs observe.Ob
 		problem(w, "range", err)
 		return
 	}
-	h.refreshClone(r.Context(), obs)
 	held, err := h.scenes.get(r.Context(), obs.Repo, commitRange)
 	if err != nil {
 		problem(w, "range", err)
