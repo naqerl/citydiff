@@ -4,6 +4,10 @@
 
 **Higher order** diff tool that helps humans to control architecture and agents to generate interactive tours over their changes.
 
+### Try it live
+
+No install: **[citydiff.naqerl.com](https://citydiff.naqerl.com/o/e8552127-fa97-4fa5-ae0d-c8bb4e8fac76/)** runs this viewer over citydiff's own source, from a hub.
+
 ## What
 
 The city is the code. Packages are buildings; a package's sub-packages stand on its roof.
