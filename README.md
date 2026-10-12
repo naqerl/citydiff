@@ -1,6 +1,6 @@
 # CityDiff
 
-[<img src="https://img.youtube.com/vi/qv0ZWVdgE5A/maxresdefault.jpg" width="70%">](https://youtu.be/qv0ZWVdgE5A)
+![a citydiff tour playing over a commit range](https://s3.naqerl.com/public/demo/01-tour.gif?v=2)
 
 **Higher order** diff tool that helps humans to control architecture and agents to generate interactive tours over their changes.
 
@@ -21,10 +21,20 @@ Install citydiff, read added skills and create a demo tour on whatever project I
 
 ## Showcases
 
-### Generate interactive tour around changes
-
 ### Read actual diff & launch nvim
 
-### Control the architecture of your code base 
+![the real git diff and nvim over the city](https://s3.naqerl.com/public/demo/02-diff-and-nvim.gif?v=2)
+
+Search a declaration, press **D** for its real unified diff, then **E** to open that line in nvim over the city.
+
+### Control the architecture of your code base
+
+![the city as a map of districts and dependencies](https://s3.naqerl.com/public/demo/03-architecture.gif?v=2)
+
+Press **y** for a bird's-eye map of every package and the arcs between them, then drill from a package down to one method and its calls.
 
 ### Multiple themes
+
+![the theme menu switching themes over the city](https://s3.naqerl.com/public/demo/04-themes.gif?v=2)
+
+Type `/skin` to open the theme menu over the city; arrows and letters preview each theme in place, and **Enter** applies it.
