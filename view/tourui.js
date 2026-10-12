@@ -198,6 +198,18 @@ export function mountTour({ apply, clear, layout, open = true, hold = false }) {
     loadText,
     close,
     setOpen,
+    // A jump entry remembers the step it was made in, so `o`/`i` can bring the
+    // step back with the node: the step's own apply() is what puts the title,
+    // the counter, the mode, the highlights, the path and the camera back.
+    get stepIndex() {
+      return player ? player.state.index : -1;
+    },
+    // showStep puts the player on an index. jump() re-shows only when the index
+    // moves, so jumping between two entries of one step leaves that step on
+    // screen with the entry's own node and camera restored.
+    showStep(index) {
+      if (player && index >= 0) player.jump(index);
+    },
     // A drag or click in the city takes over from autoplay.
     userTookOver() {
       if (player && player.state.playing) player.pause();

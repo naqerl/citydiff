@@ -4452,16 +4452,11 @@ function updateHUD() {
   renderDetail();
 }
 
-// The line under the title: a snapshot's hint, the jump counter, a skin's
-// warning.
+// The line under the title: a snapshot's hint, a skin's warning.
 function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
     if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
-  }
-  if (jumps.length > 1 && !jumpDetached) {
-    const at = "jump " + (jumpIndex + 1) + "/" + jumps.length;
-    note = note ? note + "  ·  " + at : at;
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   hud.note.textContent = note;
@@ -5507,10 +5502,16 @@ function noteJump() {
   if (jumping) return;
   const now = subjectNow();
   if (!now.selected && !now.focus) return;
+  // The step a jump was made in, so `o`/`i` can bring the tour back with the
+  // node. A jump noted with no tour, or with a tour that names no step yet,
+  // stays a node only, and keeps today's behaviour.
+  now.step = tourUI ? tourUI.stepIndex : -1;
   const current = jumps[jumpIndex];
   const wasDetached = jumpDetached;
   jumpDetached = false;
   if (current && sameSubject(current, now)) {
+    // The node is the same; the step it stands in may not be.
+    current.step = now.step;
     if (wasDetached) {
       updateHUD();
       // The bare city reset the folds, so the entry follows what is on screen.
@@ -5587,6 +5588,13 @@ function jumpStep(step) {
   jumping = true;
   try {
     restoreSubject(jumps[jumpIndex]);
+    // A step records the jumps made inside it, so `o`/`i` puts the tour back on
+    // that step. Its apply() runs inside the jumping window, so it appends no
+    // entry and truncates nothing, and it runs after the restored node: the
+    // step's own selection, highlights, path and camera are what stay on
+    // screen, so what the tour says and what the view shows agree.
+    const entry = jumps[jumpIndex];
+    if (tourUI && entry.step >= 0) tourUI.showStep(entry.step);
   } finally {
     jumping = false;
   }
