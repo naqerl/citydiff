@@ -1185,14 +1185,18 @@
       #sheet-handle.is-holding { color: var(--accent); }
       #sheet-handle.is-holding i { width: 28px; transition: width 450ms linear; }
       /* The handle's lower two thirds lie over the top of the sheet: the head
-         starts under them. */
-      #side-head, #tour-head { padding-top: 34px; }
+         starts under them. The city head is plain text on the panel, so its
+         padding does that. The tour head is a card with an edge, so the card
+         itself starts below the handle instead of padding its content down:
+         it then hugs the title and the range, with no empty band above them,
+         and there is a gap between the handle and the card's top edge. */
+      #side-head { padding-top: 34px; }
+      #tour-head { margin-top: 34px; }
 
-      /* The fold arrows point the way the sheet will go. */
-      #side-toggle svg { transform: rotate(-90deg); }
-      #side.is-collapsed #side-toggle svg { transform: rotate(90deg); }
-      #tour-toggle svg { transform: rotate(90deg); }
-      #tour-side.is-collapsed #tour-toggle svg { transform: rotate(-90deg); }
+      /* The square handle is the fold control on a phone, so the arrow in a
+         head would be a second one — and on the tour it takes room the title
+         row and the range can use. */
+      #side-toggle, #tour-toggle { display: none; }
     }
   </style>
   <script type="importmap">
