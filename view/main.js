@@ -6955,7 +6955,7 @@ function pluginHost() {
       },
     },
     takenKeys: TAKEN_KEYS,
-    takenCommands: new Set([...COMMANDS.map((cmd) => cmd.name), LAUNCH_COMMAND, "/overview", "/range", "/tour"]),
+    takenCommands: new Set([...COMMANDS.map((cmd) => cmd.name), LAUNCH_COMMAND, "/overview", "/range", "/tour", "/switch"]),
     changed: pluginsChanged,
     report: reportPlugin,
   };

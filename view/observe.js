@@ -1,7 +1,8 @@
 // The observation hub's commands. A local viewer has no ./api/observe, so
 // mountObserve adds nothing there. On a hub, /overview, /range and /tour
 // write the address and reload: the range and the tour are the page's, and
-// a link to that address opens the same city.
+// a link to that address opens the same city. /switch lists repos this
+// browser has opened, kept in localStorage.
 
 import { rangeLabel } from "./tour.js";
 
@@ -45,6 +46,53 @@ export function shortRev(rev) {
 // and a note such as "(scene …)" stay.
 export function shortRange(range) {
   return String(range || "").replace(/[0-9a-f]{12,}/gi, (hash) => hash.slice(0, 10));
+}
+
+// recentKey is the localStorage entry of repos opened on this hub. It is
+// this browser's list, not the server's.
+export const recentKey = "citydiff.hub.recent";
+
+const recentLimit = 20;
+
+// readRecent parses what localStorage holds. A broken value, and any entry
+// without a remote and an address, is dropped. The order is kept, newest first.
+export function readRecent(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(raw || ""));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of parsed) {
+    const remote = String(item && item.remote || "").trim();
+    const url = String(item && item.url || "").trim();
+    if (!remote || !url || seen.has(remote)) continue;
+    seen.add(remote);
+    out.push({
+      remote,
+      name: String(item.name || repoName(remote) || remote).trim(),
+      url,
+      at: Number(item.at) || 0,
+    });
+    if (out.length >= recentLimit) break;
+  }
+  return out;
+}
+
+// rememberRepo puts this visit first. The same remote updates in place, so
+// the list is repos, newest first, and never longer than recentLimit.
+export function rememberRepo(list, visit) {
+  const remote = String(visit && visit.remote || "").trim();
+  const url = String(visit && visit.url || "").trim();
+  const kept = readRecent(JSON.stringify(list));
+  if (!remote || !url) return kept;
+  return readRecent(JSON.stringify([
+    { remote, name: repoName(remote) || remote, url, at: Number(visit.at) || Date.now() },
+    ...kept,
+  ]));
 }
 
 // entryMatches is true when every word of the query appears in the entry:
@@ -126,6 +174,7 @@ export async function mountObserve() {
   } catch { /* a local viewer has no such route */ }
   if (!info) return [];
   observation = info;
+  saveRecent({ remote: info.remote, url: pagePath(""), at: Date.now() });
   const menu = document.querySelector("#observe-menu");
   if (!menu) return [];
   const title = document.querySelector("#observe-title");
@@ -190,9 +239,11 @@ export async function mountObserve() {
     cursor = 0;
     title.textContent = heading;
     note.textContent = text;
-    const finding = next.some((item) => item.kind === "tour")
-      ? "Find a tour"
-      : "Find a branch, tag, or commit";
+    const finding = next.some((item) => item.kind === "repo")
+      ? "Find a repo"
+      : next.some((item) => item.kind === "tour")
+        ? "Find a tour"
+        : "Find a branch, tag, or commit";
     if (find) {
       find.value = "";
       find.placeholder = finding;
@@ -264,6 +315,20 @@ export async function mountObserve() {
     });
   }
 
+  function openSwitch() {
+    const list = loadRecent();
+    if (!list.length) {
+      show("Switch", "No repo has been opened in this browser yet.", [], () => {});
+      return;
+    }
+    show("Switch", "Repos opened in this browser, newest first.", list.map((item) => ({
+      kind: "repo",
+      label: item.name || item.remote,
+      value: item.remote,
+      url: item.url,
+    })), (item) => location.assign(item.url));
+  }
+
   async function openTour() {
     let tours = [];
     try {
@@ -301,5 +366,20 @@ export async function mountObserve() {
         else openTour();
       },
     },
+    { name: "/switch", does: "open a repo opened here", run: () => openSwitch() },
   ];
+}
+
+function loadRecent() {
+  try {
+    return readRecent(localStorage.getItem(recentKey));
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(visit) {
+  try {
+    localStorage.setItem(recentKey, JSON.stringify(rememberRepo(loadRecent(), visit)));
+  } catch { /* a browser that refuses storage keeps no list */ }
 }

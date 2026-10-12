@@ -171,7 +171,9 @@ __BIN_NAME__ hub open https://github.com/org/repo -tour tour.json # the tour's r
 the same variable `serve` reads, sent as `Authorization: Bearer`. When it
 is unset, `serve` prints `export CITYDIFF_HUB_KEY=…` and exits. The page's `/overview`,
 `/range` and `/tour` commands rewrite that URL, so the address bar stays
-the thing to share. A machine with no hub still uses the local viewer above.
+the thing to share. `/switch` lists repos this browser has opened, newest
+first, and jumps to one; that list is localStorage, not the server.
+A machine with no hub still uses the local viewer above.
 
 The hub itself is long-running, once per host:
 

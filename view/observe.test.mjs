@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tourRequest, rangeSpec, shareURL, repoName, projectTitle, projectSubtitle, shortRange, shortRev, entryMatches } from "./observe.js";
+import { tourRequest, rangeSpec, shareURL, repoName, projectTitle, projectSubtitle, shortRange, shortRev, entryMatches, readRecent, rememberRepo } from "./observe.js";
 
 test("a stored tour is fetched from this observation", () => {
   assert.equal(tourRequest(""), "");
@@ -76,6 +76,34 @@ test("a find keeps an entry when every word appears", () => {
   assert.equal(entryMatches(tour, "plugins directory"), true);
   assert.equal(entryMatches(tag, "v0.0.19"), true);
   assert.equal(entryMatches(tag, "branch"), false);
+});
+
+test("a visit is remembered newest first, one row per remote", () => {
+  const city = { remote: "https://github.com/naqerl/citydiff", url: "/o/city/", at: 2 };
+  const golang = { remote: "https://github.com/golang/go", url: "/o/go/", at: 1 };
+  assert.deepEqual(readRecent(""), []);
+  assert.deepEqual(readRecent("{"), []);
+  assert.deepEqual(readRecent("{}"), []);
+  const once = rememberRepo([], city);
+  assert.deepEqual(once, [{ remote: city.remote, name: "naqerl/citydiff", url: "/o/city/", at: 2 }]);
+  const again = rememberRepo(once, { remote: city.remote, url: "/o/city-2/", at: 3 });
+  assert.equal(again.length, 1);
+  assert.equal(again[0].url, "/o/city-2/");
+  const both = rememberRepo([golang], city);
+  assert.deepEqual(both.map((item) => item.name), ["naqerl/citydiff", "golang/go"]);
+  const noisy = readRecent(JSON.stringify([
+    { remote: city.remote, url: "/o/city/" },
+    { remote: city.remote, url: "/o/older/" },
+    { url: "/o/missing/" },
+    null,
+  ]));
+  assert.deepEqual(noisy.map((item) => item.url), ["/o/city/"]);
+  const many = [];
+  for (let i = 0; i < 25; i++) many.push({ remote: "https://github.com/org/r" + i, url: "/o/" + i + "/", at: i });
+  assert.equal(rememberRepo([], many[0]).length, 1);
+  assert.equal(readRecent(JSON.stringify(many)).length, 20);
+  assert.equal(entryMatches({ kind: "repo", label: "naqerl/citydiff", value: city.remote }, "golang"), false);
+  assert.equal(entryMatches({ kind: "repo", label: "golang/go", value: golang.remote }, "golang go"), true);
 });
 
 test("the shared address keeps the view and one of range or tour", () => {
