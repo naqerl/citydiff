@@ -38,13 +38,19 @@ func skinsDir() string {
 // resolveSkinsDir expands spec, or defaultSkinsDir when spec is empty, and
 // returns an absolute path. A directory that does not exist is not created.
 func resolveSkinsDir(spec string) (string, error) {
+	return resolveConfigDir(spec, defaultSkinsDir)
+}
+
+// resolveConfigDir expands spec, or def when spec is empty, and returns an
+// absolute path, or "" when the directory does not exist. It is not created.
+func resolveConfigDir(spec, def string) (string, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
-		spec = defaultSkinsDir
+		spec = def
 	}
 	expanded, err := expandHome(spec)
 	if err != nil {
-		if spec == defaultSkinsDir {
+		if spec == def {
 			return "", nil
 		}
 		return "", err
@@ -76,7 +82,9 @@ func expandHome(p string) (string, error) {
 	return filepath.Join(home, p[2:]), nil
 }
 
-func skinNameOK(name string) bool {
+// configNameOK is true for a name a skin or a plugin may have: letters,
+// digits, _ and -. It is a URL segment, so nothing else is let through.
+func configNameOK(name string) bool {
 	if name == "" {
 		return false
 	}
@@ -113,7 +121,7 @@ func hasSkinFile(dir string) bool {
 // name holding a skin file, else a skin.json, else a skin.js. A built-in
 // name is never found here; the embedded skins keep those names.
 func skinInDir(root, name string) (string, bool) {
-	if !skinNameOK(name) || builtinSkin(name) {
+	if !configNameOK(name) || builtinSkin(name) {
 		return "", false
 	}
 	dir := filepath.Join(root, name)
@@ -182,7 +190,7 @@ func mountSkins(mux *http.ServeMux, dir string) {
 
 func cutSkin(rel string) (name, rest string, ok bool) {
 	name, rest, _ = strings.Cut(rel, "/")
-	if !skinNameOK(name) {
+	if !configNameOK(name) {
 		return "", "", false
 	}
 	return name, rest, true
@@ -221,7 +229,7 @@ func builtinSkinNames() []string {
 		case "light":
 			hasLight = true
 		default:
-			if skinNameOK(name) {
+			if configNameOK(name) {
 				rest = append(rest, name)
 			}
 		}
@@ -252,7 +260,7 @@ func extraSkinNames(root string) []string {
 			continue
 		}
 		name := entry.Name()
-		if !skinNameOK(name) || builtinSkin(name) || !hasSkinFile(filepath.Join(root, name)) {
+		if !configNameOK(name) || builtinSkin(name) || !hasSkinFile(filepath.Join(root, name)) {
 			continue
 		}
 		seen[name] = true
@@ -268,7 +276,7 @@ func extraSkinNames(root string) []string {
 			continue
 		}
 		base := strings.TrimSuffix(name, filepath.Ext(name))
-		if !skinNameOK(base) || builtinSkin(base) || seen[base] {
+		if !configNameOK(base) || builtinSkin(base) || seen[base] {
 			continue
 		}
 		if ext == ".js" {
