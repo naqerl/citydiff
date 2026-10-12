@@ -149,6 +149,42 @@ func TestViewWithATourStartsOnTheToursRange(t *testing.T) {
 	}
 }
 
+// The page reads the range off the scene: a plugin asks for city.scene.range,
+// and nothing else the page loads says which range it is looking at.
+func TestSceneSaysItsRange(t *testing.T) {
+	dir, h := rangeRepo(t)
+	for _, commitRange := range []string{h[0] + ".." + h[1], ""} {
+		snap, err := buildSnapshot(dir, commitRange)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := newViewer(snap, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(v.handler())
+		res, err := http.Get(srv.URL + "/scene.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Range *string `json:"range"`
+		}
+		err = json.NewDecoder(res.Body).Decode(&doc)
+		res.Body.Close()
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case commitRange == "" && doc.Range != nil:
+			t.Fatalf("a single snapshot says range %q", *doc.Range)
+		case commitRange != "" && (doc.Range == nil || *doc.Range != commitRange):
+			t.Fatalf("range %v, want %q", doc.Range, commitRange)
+		}
+	}
+}
+
 func toJSON(v any) string {
 	raw, _ := json.Marshal(v)
 	return string(raw)

@@ -26,12 +26,15 @@ const (
 // A range whose two sides name different modules — a rename — has no single
 // root package, and then Module and Root stay empty while ModuleBefore and
 // ModuleAfter carry the two names, so the viewer can say why there is no root.
-// Diff is false when the scene is a single snapshot.
+// Diff is false when the scene is a single snapshot. Range is the commit
+// range the two sides came from, as it was passed to -range; Build does not
+// know it, so the caller that read the range fills it in.
 type Scene struct {
 	Module       string    `json:"module,omitempty"`
 	Root         string    `json:"root,omitempty"`
 	ModuleBefore string    `json:"moduleBefore,omitempty"`
 	ModuleAfter  string    `json:"moduleAfter,omitempty"`
+	Range        string    `json:"range,omitempty"`
 	Diff         bool      `json:"diff"`
 	Packages     []Package `json:"packages"`
 }

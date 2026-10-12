@@ -75,6 +75,7 @@ func buildSnapshot(path, commitRange string) (*snapshot, error) {
 		}
 	}
 	snap.scene = scene.Build(left, right)
+	snap.scene.Range = commitRange
 	return snap, nil
 }
 
