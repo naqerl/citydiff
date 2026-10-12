@@ -5,9 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
-
+	"net"
 	"net/http"
+	"os"
 
 	"citydiff/lib"
 	"citydiff/lib/diff"
@@ -176,8 +176,16 @@ func serve(addr string, snap *snapshot, tourRaw []byte) error {
 	if err != nil {
 		return err
 	}
+	// Listen before opening the browser, so the page it asks for is already
+	// being accepted, and a port that is taken opens nothing.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(os.Stderr, "citydiff: http://%s\n", addr)
-	return http.ListenAndServe(addr, v.handler())
+	go v.watchUpdate(latestAPI(releaseRepo))
+	openBrowser(browserURL(ln.Addr()))
+	return http.Serve(ln, v.handler())
 }
 
 // The embedded viewer files carry no modification time, so a browser has

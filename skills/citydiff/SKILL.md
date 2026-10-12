@@ -60,6 +60,11 @@ Re-running the installer upgrades in place: it resolves the newest release, veri
 published sha256, replaces the binary, and rewrites this skill file. It also removes the
 old `citydiff-tour` skill from any directory a previous install wrote it to.
 
+A release binary's viewer checks once at startup, without waiting on it, for a newer
+release. When there is one it says so in its log (`citydiff: v0.0.28 is out (this is
+v0.0.27) …`) and in the legend (`?`), whose header names the version — or, for a build
+from source, the commit. Tell the person; re-running the installer is the upgrade.
+
 ## Flags
 
 ```
@@ -122,6 +127,10 @@ long-running process, not a command whose output you wait for:
   use `nohup … > log 2>&1 &` and keep the pid.
 - **Poll** the address (`curl -fsS -o /dev/null http://127.0.0.1:8787/`) instead of blocking on
   the process.
+- Once it listens it **opens the page in the default browser** by itself (`open` on macOS,
+  `xdg-open` where there is a display), so the person sees it without being handed a URL.
+  Set `CITYDIFF_NO_BROWSER=1` in its environment to keep the browser shut — when you restart
+  it over and over, or when the person reads it on another machine.
 - **Never** pass `-view` to mean this — the flag no longer exists.
 - `kill` is how you stop it. If something is already listening on the port, **someone else
   owns that viewer** — check before starting another and pick a fresh `-addr`; do not kill a
@@ -311,7 +320,7 @@ to walk through, present or review a change.
 
    ```sh
    nohup citydiff tour serve -path REPO -addr 127.0.0.1:8787 tour.json > /tmp/citydiff-tour.log 2>&1 &
-   # then open http://127.0.0.1:8787/
+   # it opens http://127.0.0.1:8787/ in the default browser itself
    ```
 
    Equivalent: `citydiff -path REPO -tour tour.json` (the default serve mode). Either way the

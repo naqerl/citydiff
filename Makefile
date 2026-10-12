@@ -22,17 +22,22 @@ ifeq ($(origin RANGE), undefined)
 RANGE = $(call two_latest,$(repo_dir))
 endif
 
+# go run stamps no commit unless asked, and the viewer's legend names the commit
+# a development build was made from. Ask only in a checkout: outside one the
+# stamp is an error.
+buildvcs = $(shell git rev-parse --git-dir >/dev/null 2>&1 && printf '%s' -buildvcs=true)
+
 run: vet
-	go run ./cmd/cli -path "$(FILE)" $(ARGS)
+	go run $(buildvcs) ./cmd/cli -path "$(FILE)" $(ARGS)
 
 diff: vet
 	@test -n "$(RANGE)" || { printf 'diff: %s needs two commits, or pass RANGE=A..B\n' "$(repo_dir)" >&2; exit 1; }
 	@printf 'citydiff: %s %s\n' "$(FILE)" "$(RANGE)" >&2
-	go run ./cmd/cli -path "$(FILE)" -range "$(RANGE)" $(ARGS)
+	go run $(buildvcs) ./cmd/cli -path "$(FILE)" -range "$(RANGE)" $(ARGS)
 
 view: vet
 	@printf 'citydiff: %s %s\n' "$(FILE)" "$(if $(RANGE),$(RANGE),working tree)" >&2
-	go run ./cmd/cli -path "$(FILE)" $(if $(RANGE),-range "$(RANGE)") $(ARGS)
+	go run $(buildvcs) ./cmd/cli -path "$(FILE)" $(if $(RANGE),-range "$(RANGE)") $(ARGS)
 
 IMAGE ?= citydiff:$(shell git rev-parse --short HEAD 2>/dev/null || echo latest)
 PORT ?= 8787
@@ -48,7 +53,7 @@ container_path = $(shell root='$(abspath $(DOCKER_PATH))'; f='$(abspath $(FILE))
 
 run-docker:
 	@test -d "$(DOCKER_PATH)" || { printf 'run-docker: %s is not a directory\n' "$(DOCKER_PATH)" >&2; exit 1; }
-	docker build -t "$(IMAGE)" .
+	docker build --build-arg COMMIT="$$(git rev-parse --short HEAD 2>/dev/null)" -t "$(IMAGE)" .
 	@printf 'citydiff %s: http://127.0.0.1:%s (%s)\n' "$(IMAGE)" "$(PORT)" "$(if $(DOCKER_RANGE),$(DOCKER_RANGE),working tree)"
 	docker run --rm --name "citydiff-$(PORT)" \
 		-p "$(PORT):8787" \
