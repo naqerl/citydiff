@@ -1,6 +1,6 @@
 # CityDiff
 
-![thumb](https://s3.naqerl.com/public/demo/citydiff.png)
+![thumb](https://s3.naqerl.com/public/demo/citydiff-tour-demo.mp4)
 
 **Higher order** diff tool that helps humans to control architecture and agents to generate interactive tours over their changes.
 
