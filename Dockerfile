@@ -15,6 +15,14 @@ RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit
 
 FROM debian:bookworm-slim
 
+# The hub clones public https remotes itself, so the binary needs a trust
+# store and the slim base ships none. Without it every clone fails with
+# "x509: certificate signed by unknown authority" -- the local viewer never
+# makes a request, which is why this went unnoticed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out/citydiff /usr/local/bin/citydiff
 
 EXPOSE 8787
