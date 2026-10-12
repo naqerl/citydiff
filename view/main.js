@@ -1097,9 +1097,16 @@ controls.minDistance = 2;
 // the next frame; without this a touch drag on the bare city (no halo, no
 // particles keeping the loop awake) drew only now and then.
 controls.addEventListener("change", () => requestFrame());
-// A drag, a pinch or a wheel on the canvas is the user taking the camera
-// back: a running tour stops advancing so their view is not flown away.
-controls.addEventListener("start", () => { if (tourUI) tourUI.userTookOver(); });
+// A drag, a pinch or a wheel on the canvas is the user taking the camera back:
+// the move the viewer itself started — a step's fly, a selection's fly — is
+// dropped, and a running tour stops advancing. The drop has to happen here, on
+// the controls' own start, because that is the one signal every way of moving
+// the camera passes through: pointerdown also clears the tween, but a wheel
+// zoom reaches no pointer handler at all.
+controls.addEventListener("start", () => {
+  tween = null;
+  if (tourUI) tourUI.userTookOver();
+});
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(-2, -2);
@@ -1612,6 +1619,9 @@ function applyTourStep(step) {
   // above. Replacing it with tourPose centres the fan, and the close zoom
   // then moves in on that centre, so the node itself can leave the viewbox.
   const keepSearch = (preset === "fit" || preset === "close" || preset === "") && t.focus && !marks.length && byEntity.get(t.focus.id);
+  // Whether the pose below framed the step's own points, or only the
+  // neighbourhood the select or focus left the camera on.
+  let framed = false;
   if (preset === "overview") {
     cityPose = frameCity();
     flyTo(cityPose.pos, cityPose.target);
@@ -1623,10 +1633,18 @@ function applyTourStep(step) {
     const span = pose ? Math.max(pose.pos.distanceTo(look) * 1.6, 70) : citySpan() * 1.25;
     flyTo(new THREE.Vector3(look.x, look.y + span, look.z + span * 0.02), look);
   } else if ((preset === "fit" || preset === "close") && !keepSearch) {
-    const pose = tourPose(points.length ? points : tweenPoints());
+    framed = points.length > 0;
+    const pose = tourPose(framed ? points : tweenPoints());
     flyTo(pose.pos, pose.target);
   }
-  const zoom = ((preset === "close" && !keepSearch) ? 0.55 : 1) * (step.zoom > 0 ? step.zoom : 1);
+  // The close preset moves in on the pose it was handed. A pose that framed the
+  // step's own points is already the closest camera that holds them and the
+  // arcs between them inside the free area, so moving past it crops exactly
+  // what the step lit: close closes only on a pose that framed nothing of its
+  // own, the neighbourhood a select or a focus left the camera on. The step's
+  // own zoom stays the author's knob either way.
+  const close = preset === "close" && !keepSearch && !framed;
+  const zoom = (close ? 0.55 : 1) * (step.zoom > 0 ? step.zoom : 1);
   if (tween && zoom !== 1) {
     tween.toPos.sub(tween.toTarget).multiplyScalar(zoom).add(tween.toTarget);
   }
