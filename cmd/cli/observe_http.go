@@ -138,6 +138,10 @@ func (h *hub) observation(w http.ResponseWriter, r *http.Request) {
 		h.refs(w, obs)
 	case r.Method == http.MethodGet && rest == "api/diff":
 		h.diff(w, r, obs)
+	case (r.Method == http.MethodGet || r.Method == http.MethodHead) && (rest == "" || rest == "index.html"):
+		h.page(w, r, obs)
+	case (r.Method == http.MethodGet || r.Method == http.MethodHead) && rest == "card.png":
+		h.card(w, r, obs)
 	case r.Method == http.MethodGet:
 		h.files(w, r, id)
 	default:

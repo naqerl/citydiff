@@ -197,6 +197,7 @@ type hub struct {
 	key    string
 	public func(ctx context.Context, canonical string) error
 	ensure func(ctx context.Context, canonical string) (string, error)
+	cards  cardCache
 }
 
 func newHub(store *observe.Store, key string) *hub {
