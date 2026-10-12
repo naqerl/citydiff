@@ -72,6 +72,15 @@ test("the defaults leave the address bare", () => {
   assert.deepEqual(readState(""), state);
 });
 
+test("a range and a tour stay put when the view is written", () => {
+  const state = { select: "citydiff:lib:Parser", mode: "changes", refs: "calls", side: true, tourSide: true };
+  const query = writeState("?range=a..b&tour=flashcards", state);
+  assert.match(query, /(?:^|[?&])range=a\.\.b(?:&|$)/);
+  assert.match(query, /(?:^|[?&])tour=flashcards(?:&|$)/);
+  assert.match(query, /select=citydiff:lib:Parser/);
+  assert.match(query, /mode=changes/);
+});
+
 test("the state is written readably and reads back", () => {
   const state = { select: "citydiff:lib:parser:rust:New", mode: "changes", refs: "callers", side: false, tourSide: false };
   const query = writeState("", state);

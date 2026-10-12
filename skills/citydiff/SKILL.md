@@ -88,6 +88,8 @@ foreground call (see below).
 ```
 __BIN_NAME__ nodes [-path DIR] [-range A..B] [-changed] [-kind K] [-json]   # nodes a tour can name
 __BIN_NAME__ tour validate|serve|schema ...                                 # see Tours
+__BIN_NAME__ hub serve [-addr host:port]                                    # the shared hub
+__BIN_NAME__ hub open [-range A..B] [-tour file] REMOTE                     # print a shareable URL
 ```
 
 Note: for a commit range the path must be a **git repository**, not a plain directory;
@@ -150,6 +152,33 @@ echo $! > /tmp/citydiff-range.pid
 # poll until it is up, then stop it by killing the process
 curl -fsS -o /dev/null http://127.0.0.1:8787/ && echo up
 kill "$(cat /tmp/citydiff-view.pid)"
+```
+
+### Sharing a URL
+
+When `CITYDIFF_OBSERVE_URL` is set, do not start a local viewer to show a
+person a public repository. Submit it to the hub and hand them the URL
+`open` prints. The hub clones the remote (public https only), serves the
+overview, and the address carries what to show:
+
+```sh
+__BIN_NAME__ hub open https://github.com/org/repo                 # overview
+__BIN_NAME__ hub open https://github.com/org/repo -range A..B     # that diff
+__BIN_NAME__ hub open https://github.com/org/repo -tour tour.json # the tour's range
+```
+
+`open` prints one URL on stdout. Every write needs `$CITYDIFF_HUB_KEY`,
+the same variable `serve` reads, sent as `Authorization: Bearer`. When it
+is unset, `serve` prints `export CITYDIFF_HUB_KEY=…` and exits. The page's `/overview`,
+`/range` and `/tour` commands rewrite that URL, so the address bar stays
+the thing to share. `/switch` lists repos this browser has opened, newest
+first, and jumps to one; that list is localStorage, not the server.
+A machine with no hub still uses the local viewer above.
+
+The hub itself is long-running, once per host:
+
+```sh
+CITYDIFF_OBSERVE_DIR=/var/lib/citydiff __BIN_NAME__ hub serve -addr 0.0.0.0:8787
 ```
 
 A one-shot plain-text look at a diff (no browser, safe to wait for):

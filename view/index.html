@@ -134,25 +134,18 @@
     }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; overscroll-behavior: none; }
     body { font: 13px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
-    #detail, #results, .legend-card, #diff-body {
+    /* One scrollbar for every list. A native bar keeps the browser's arrows
+       and its own colour, and it shows on any scroller this sheet did not
+       name. The thumb is the skin's line, on a clear track, on both axes. */
+    * {
       scrollbar-width: thin;
       scrollbar-color: var(--line-strong) transparent;
     }
-    #detail::-webkit-scrollbar,
-    #results::-webkit-scrollbar,
-    .legend-card::-webkit-scrollbar,
-    #diff-body::-webkit-scrollbar { width: 6px; height: 0; }
-    /* The diff scrolls sideways too — a line can be longer than the panel —
-       so its bar keeps the height the sidebar's does not need. */
-    #diff-body::-webkit-scrollbar { height: 6px; }
-    #detail::-webkit-scrollbar-thumb,
-    #results::-webkit-scrollbar-thumb,
-    .legend-card::-webkit-scrollbar-thumb,
-    #diff-body::-webkit-scrollbar-thumb { background: var(--line-strong); }
-    #detail::-webkit-scrollbar-track,
-    #results::-webkit-scrollbar-track,
-    .legend-card::-webkit-scrollbar-track,
-    #diff-body::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-button { width: 0; height: 0; display: none; }
+    ::-webkit-scrollbar-thumb { background: var(--line-strong); }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner { background: transparent; }
     button, input { font: inherit; color: inherit; }
     button { cursor: pointer; touch-action: manipulation; }
     #app { height: 100%; background: var(--bg); }
@@ -202,7 +195,10 @@
     #side.is-collapsed #side-logo { display: grid; }
     #side-head { padding: 14px 14px 8px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line); min-width: 0; }
     #title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    #title { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; letter-spacing: 0.08em; text-transform: lowercase; white-space: nowrap; }
+    #title-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    #title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14px; letter-spacing: 0.04em; white-space: nowrap; }
+    #title-sub { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #title-sub[hidden] { display: none; }
     #side-tools { display: flex; align-items: center; gap: 4px; flex: none; }
     #side-toggle, #side-help, #side-theme {
       width: 22px;
@@ -589,6 +585,64 @@
     }
     #confirm button:hover, #confirm button:focus-visible { background: var(--on); outline: none; }
     #confirm button.primary { border-color: var(--fg); }
+    #observe-menu {
+      position: fixed;
+      inset: 0;
+      background: var(--scrim);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 7;
+    }
+    #observe-menu[hidden] { display: none; }
+    #observe-menu .card {
+      width: min(440px, calc(100vw - 48px));
+      max-height: min(70vh, 520px);
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      border: 1px solid var(--line-strong);
+      padding: 16px 18px 18px;
+    }
+    #observe-menu h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    #observe-menu p { margin: 0 0 8px; color: var(--muted); }
+    #observe-find {
+      width: 100%;
+      box-sizing: border-box;
+      margin: 0 0 12px;
+      background: var(--search);
+      color: var(--fg);
+      border: 1px solid var(--line-strong);
+      padding: 7px 10px;
+    }
+    #observe-find:focus { outline: none; border-color: var(--fg); }
+    #observe-find[hidden] { display: none; }
+    #observe-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+    #observe-list p.empty { margin: 0; padding: 8px 10px; color: var(--muted); }
+    #observe-list button {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
+      text-align: left;
+      background: transparent;
+      color: var(--fg);
+      border: 0;
+      border-left: 2px solid transparent;
+      padding: 8px 10px;
+    }
+    #observe-list button .kind { color: var(--muted); width: 72px; flex: none; }
+    #observe-list button .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #observe-list button.on { background: var(--on); border-left-color: var(--accent); }
+    #observe-menu .actions { display: flex; margin-top: 12px; }
+    #observe-menu .actions button {
+      flex: 1;
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--line-strong);
+      padding: 8px 10px;
+    }
+    #observe-menu .actions button:hover, #observe-menu .actions button:focus-visible { background: var(--on); outline: none; }
     /* The action ring (ring.js). It lives for one press, and the press is
        the pointer's, not the ring's: ring.js lights the item the pointer
        points at, so nothing here takes a pointer event. On a desktop it opens
@@ -884,9 +938,9 @@
     }
     #tour-side.is-collapsed #tour-logo { display: grid; }
     /* The tour's head carries the same solid plate the detail head's children
-       do: the title and the range are the text, the plate is the text's own,
-       no wider, and the frosted panel stands around it, so both read over the
-       city instead of washing out in its blur. */
+       do: the title is the text, the plate is the text's own, no wider, and
+       the frosted panel stands around it, so it reads over the city instead
+       of washing out in its blur. The range lives under the project name. */
     #tour-head {
       margin: 10px 10px 0;
       padding: 10px 12px 8px;
@@ -914,9 +968,7 @@
       border: 1px solid var(--line);
     }
     #tour-toggle:hover { background: var(--line); color: var(--fg); border-color: var(--line-strong); }
-    #tour-range { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #tour-range code { color: var(--muted); }
-    #tour-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 18px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+    #tour-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 18px; }
     #tour-step-title { margin: 2px 0 8px; font-size: 14px; font-weight: 600; }
     #tour-body {
       color: var(--dim);
@@ -979,7 +1031,7 @@
       body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
       input { -webkit-user-select: text; user-select: text; }
       /* 16px keeps iOS from zooming the page when a box takes focus. */
-      #search, #skin-search { font-size: 16px; }
+      #search, #skin-search, #observe-find { font-size: 16px; }
       #search { padding: 9px 10px; }
 
       #side-theme { display: grid; }
@@ -1208,14 +1260,14 @@
          starts under them. The city head is plain text on the panel, so its
          padding does that. The tour head is a card with an edge, so the card
          itself starts below the handle instead of padding its content down:
-         it then hugs the title and the range, with no empty band above them,
+         it then hugs the title, with no empty band above it,
          and there is a gap between the handle and the card's top edge. */
       #side-head { padding-top: 34px; }
       #tour-head { margin-top: 34px; }
 
       /* The square handle is the fold control on a phone, so the arrow in a
          head would be a second one — and on the tour it takes room the title
-         row and the range can use. */
+         row can use. */
       #side-toggle, #tour-toggle { display: none; }
     }
   </style>
@@ -1242,7 +1294,10 @@
         </button>
         <div id="side-head">
           <div id="title-row">
-            <div id="title">citydiff</div>
+            <div id="title-block">
+              <div id="title">citydiff</div>
+              <div id="title-sub" hidden></div>
+            </div>
             <div id="side-tools">
               <button id="side-theme" type="button" aria-label="Theme">
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -1263,10 +1318,6 @@
                 </svg>
               </button>
             </div>
-          </div>
-          <div class="modes">
-            <button id="mode-overview" class="on" type="button">Overview</button>
-            <button id="mode-changes" type="button">Changes</button>
           </div>
           <div id="search-wrap">
             <input id="search" type="search" placeholder="Find, or / for commands" autocomplete="off" spellcheck="false" />
@@ -1291,7 +1342,6 @@
               </button>
             </div>
           </div>
-          <div id="tour-range"></div>
         </div>
         <div id="tour-scroll">
           <h2 id="tour-step-title"></h2>
@@ -1413,6 +1463,17 @@
       </button>
       <h3 class="keys-title">Keys</h3>
       <ul class="keys" id="keys"></ul>
+    </div>
+  </div>
+  <div id="observe-menu" hidden role="dialog" aria-modal="true" aria-labelledby="observe-title">
+    <div class="card">
+      <h2 id="observe-title">Range</h2>
+      <p id="observe-note"></p>
+      <input id="observe-find" type="search" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
+      <div id="observe-list"></div>
+      <div class="actions">
+        <button id="observe-cancel" type="button">Cancel</button>
+      </div>
     </div>
   </div>
   <script type="module" src="./main.js"></script>

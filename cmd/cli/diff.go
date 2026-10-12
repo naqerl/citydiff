@@ -35,7 +35,6 @@ type diffReply struct {
 // serveDiff answers with the hunks of the selected node's change. An entity
 // sends its file and the lines it covers; a package sends its directory.
 func (v *viewer) serveDiff(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	v.mu.Lock()
 	snap := v.snap
 	v.mu.Unlock()
@@ -43,12 +42,20 @@ func (v *viewer) serveDiff(w http.ResponseWriter, r *http.Request) {
 		problem(w, "diff", errors.New("no scene is loaded"))
 		return
 	}
-	patch, err := git.Patch(snap.path, snap.commitRange, 3)
+	writePatch(w, r, snap.path, snap.commitRange)
+}
+
+// writePatch is the diff of repo at commitRange. The file, directory and
+// lines come from the query. A range named in the query is not read here:
+// the caller has already chosen which snapshot this request is looking at.
+func writePatch(w http.ResponseWriter, r *http.Request, repo, commitRange string) {
+	q := r.URL.Query()
+	patch, err := git.Patch(repo, commitRange, 3)
 	if err != nil {
 		problem(w, "diff", err)
 		return
 	}
-	reply := diffReply{Range: snap.commitRange, Files: []diffFile{}}
+	reply := diffReply{Range: commitRange, Files: []diffFile{}}
 	if dir := q.Get("dir"); dir != "" {
 		reply.Files, reply.More = packageDiff(patch, dir)
 	} else if file := q.Get("file"); file != "" {
