@@ -26,7 +26,7 @@ function need(ok, message) {
 const isText = (value) => typeof value === "string";
 const isFn = (value) => typeof value === "function";
 
-function freezeDeep(value) {
+export function freezeDeep(value) {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
     for (const key of Object.keys(value)) freezeDeep(value[key]);

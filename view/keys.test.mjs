@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { KEYBINDS, tourAction } from "./keys.js";
+import { KEYBINDS, TAKEN_KEYS, tourAction } from "./keys.js";
 
 const key = (k, extra = {}) => ({ key: k, target: { tagName: "CANVAS" }, ...extra });
 
@@ -35,6 +35,20 @@ test("every key is listed once, and the skill lists them all", () => {
     for (const k of b.keys) {
       if (k === "wasd" || k === "arrows" || k === "drag" || k === "scroll" || k === "click") continue;
       assert.ok(skill.includes("`" + k + "`"), "the skill lacks " + k);
+    }
+  }
+});
+
+// A plugin's key must not shadow one of the viewer's, so every key the legend
+// lists is taken, spelt the way a key event spells it. The pointer gestures
+// are not keys.
+test("every key the legend lists is taken from plugins", () => {
+  const spelt = { wasd: ["w", "a", "s", "d"], arrows: ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"], enter: ["Enter"], esc: ["Escape"], space: [" "] };
+  const gestures = new Set(["drag", "scroll", "click", "right hold"]);
+  for (const bind of KEYBINDS) {
+    for (const k of bind.keys) {
+      if (gestures.has(k)) continue;
+      for (const event of spelt[k] || [k]) assert.ok(TAKEN_KEYS.has(event), `${k} (${bind.does}) is free for a plugin`);
     }
   }
 });

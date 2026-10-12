@@ -86,9 +86,18 @@ export function closeDiff() {
   p.onClose?.();
 }
 
+// readDiff asks the server for a target's hunks: the reply D draws, with the
+// problem that says why there are none when there are none.
+export async function readDiff(target) {
+  const res = await fetch("/api/diff?" + diffQuery(target));
+  return res.json();
+}
+
 // openDiff asks for the node's hunks and draws them. It resolves when the
 // overlay is up or the request failed, which is what the caller waits for.
-export async function openDiff(target, onClose) {
+// actions are the buttons each hunk's header carries, { label, run(path,
+// hunk) }: what plugins add to the panel.
+export async function openDiff(target, onClose, actions = []) {
   if (panel || !target) return;
   const root = document.createElement("div");
   root.id = "diff";
@@ -128,14 +137,13 @@ export async function openDiff(target, onClose) {
   const note = root.querySelector(".diff-note");
   let reply;
   try {
-    const res = await fetch("/api/diff?" + diffQuery(target));
-    reply = await res.json();
+    reply = await readDiff(target);
   } catch (err) {
     fail(body, "cannot read the diff: " + (err && err.message ? err.message : err));
     return;
   }
   if (panel !== p) return;
-  const text = renderDiff(body, reply, target);
+  const text = renderDiff(body, reply, target, actions);
   if (!text) return;
   note.textContent = text;
   note.hidden = false;
@@ -145,7 +153,7 @@ export async function openDiff(target, onClose) {
 // message saying why there is nothing to draw. It returns the note for the
 // header — the hunk count, the range and what was left out — or "" when body
 // holds a message instead.
-function renderDiff(body, reply, target) {
+function renderDiff(body, reply, target, actions) {
   body.innerHTML = "";
   if (reply.problems && reply.problems.length) {
     fail(body, reply.problems[0].message);
@@ -172,7 +180,7 @@ function renderDiff(body, reply, target) {
   }
   const shown = files.reduce((n, file) => n + (file.hunks || []).length, 0);
   const omitted = files.reduce((n, file) => n + (file.omitted || 0), 0) + (reply.more || 0);
-  for (const file of files) body.append(fileBlock(file));
+  for (const file of files) body.append(fileBlock(file, actions));
   body.scrollTop = 0;
   return [shown + (shown === 1 ? " hunk" : " hunks"), reply.range, omitted ? omitted + " not shown" : ""].filter(Boolean).join(" · ");
 }
@@ -185,7 +193,8 @@ function fail(body, message) {
 }
 
 // fileBlock is one file: its name, then each hunk with its header and lines.
-function fileBlock(file) {
+// Each header carries the actions' buttons after the hunk's place.
+function fileBlock(file, actions) {
   const wrap = document.createElement("section");
   wrap.className = "diff-file";
   const head = document.createElement("h3");
@@ -205,7 +214,18 @@ function fileBlock(file) {
     block.className = "diff-hunk";
     const header = document.createElement("div");
     header.className = "diff-hunk-head";
-    header.textContent = "@@ -" + hunk.oldStart + "," + hunk.oldLines + " +" + hunk.newStart + "," + hunk.newLines + " @@";
+    const at = document.createElement("span");
+    at.className = "diff-hunk-at";
+    at.textContent = "@@ -" + hunk.oldStart + "," + hunk.oldLines + " +" + hunk.newStart + "," + hunk.newLines + " @@";
+    header.append(at);
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "diff-hunk-action";
+      button.textContent = action.label;
+      button.addEventListener("click", () => action.run(file.path, hunk));
+      header.append(button);
+    }
     block.append(header);
     for (const line of hunk.lines || []) {
       const row = document.createElement("div");
