@@ -28,3 +28,7 @@ Install citydiff, read added skills and create a demo tour on whatever project I
 ### Control the architecture of your code base 
 
 ### Multiple themes
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
