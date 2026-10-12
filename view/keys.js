@@ -29,6 +29,19 @@ export const KEYBINDS = [
   { keys: ["?"], does: "legend" },
 ];
 
+// TAKEN_KEYS are the keys the viewer answers to itself, spelt the way a key
+// event spells them (KeyboardEvent.key): what KEYBINDS lists, and the other
+// spellings its handlers take for the same thing: a capital WASD or Q still
+// flies, = zooms like +. A plugin cannot bind one of them.
+export const TAKEN_KEYS = new Set([
+  "/", "?", " ", ",", ".",
+  "w", "a", "s", "d", "q", "e", "W", "A", "S", "Q",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "-", "_", "+", "=",
+  "b", "t", "T", "0", "y", "Y", "m", "1", "2", "c", "o", "i", "E", "D",
+  "Enter", "Escape", "Tab",
+]);
+
 // The action ring holds the keys nothing on screen stands in for: no button,
 // no gesture. The right button held on the city opens it, and on a touch
 // screen the sheet's handle held does, so a mouse or a finger reaches every one.

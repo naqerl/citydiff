@@ -68,6 +68,8 @@ const ICONS = {
   back: "M13.5 8h-11M6.5 4l-4 4 4 4",
   edit: "M2.5 4l4 4-4 4M8 12.5h5.5",
   cancel: "M4 4l8 8M12 4l-8 8",
+  // A plugin's item: a plug, whatever the plugin does.
+  plugin: "M6 2.5v3M10 2.5v3M4.5 5.5h7v2a3.5 3.5 0 0 1-7 0zM8 10.5v3",
 };
 
 // The items of each layout: the mouse's is RING, a finger's starts with Cancel.
@@ -162,7 +164,9 @@ const ARM_PX = 8;
 // does it. onOpen and onClose(reason) let the viewer hold the city still
 // under a touch ring; the reason is "run" when an item ran and "cancel"
 // otherwise.
-export function mountRing({ state, run, onOpen, onClose }) {
+// extra() is the items plugins added, { id, label }, after the viewer's own:
+// asked on every open, and a dial is built again when they changed.
+export function mountRing({ state, run, onOpen, onClose, extra = () => [] }) {
   let root = null;
   let why = null;
   // One dial per kind of pointer, each with its items and, for a finger, its
@@ -190,8 +194,7 @@ export function mountRing({ state, run, onOpen, onClose }) {
     root.addEventListener("contextmenu", (event) => event.preventDefault());
   }
 
-  function buildDial(kind) {
-    const layout = LAYOUTS[kind];
+  function buildDial(layout, touch) {
     const box = document.createElement("div");
     box.className = "ring-dial";
     box.setAttribute("role", "menu");
@@ -212,14 +215,14 @@ export function mountRing({ state, run, onOpen, onClose }) {
       const cx = round(Math.cos(mid) * CONTENT);
       const cy = round(Math.sin(mid) * CONTENT);
       const ink = el("g", { class: "ring-ink" }, g);
-      el("path", { class: "ring-icon", d: ICONS[item.id] || "", transform: "translate(" + (cx - 8) + " " + (cy - 21) + ")" }, ink);
+      el("path", { class: "ring-icon", d: ICONS[item.id] || ICONS.plugin, transform: "translate(" + (cx - 8) + " " + (cy - 21) + ")" }, ink);
       el("text", { class: "ring-label", x: cx, y: cy + 9 }, ink).textContent = item.label;
       if (item.key) el("text", { class: "ring-key", x: cx, y: cy + 21 }, ink).textContent = item.key;
       return { id: item.id, g, live: true, why: "" };
     });
     // A finger's cursor, a small square like the rest of the page's corners,
     // drawn over the items. A mouse has its own pointer.
-    const dot = kind === "touch" ? el("rect", { class: "ring-cursor", width: CURSOR_SIZE, height: CURSOR_SIZE }, art) : null;
+    const dot = touch ? el("rect", { class: "ring-cursor", width: CURSOR_SIZE, height: CURSOR_SIZE }, art) : null;
     root.insertBefore(box, why);
     return { dial: box, items: list, cursor: dot };
   }
@@ -262,7 +265,13 @@ export function mountRing({ state, run, onOpen, onClose }) {
   function show({ at: anchor, from, touch = false }) {
     if (!root) build();
     const kind = touch ? "touch" : "mouse";
-    if (!dials[kind]) dials[kind] = buildDial(kind);
+    const layout = LAYOUTS[kind].concat(extra());
+    const sig = layout.map((item) => item.id + "\u0000" + item.label).join("\u0000");
+    if (dials[kind] && dials[kind].sig !== sig) {
+      dials[kind].dial.remove();
+      dials[kind] = null;
+    }
+    if (!dials[kind]) dials[kind] = { ...buildDial(layout, touch), sig };
     if (dial !== dials[kind].dial) {
       light(-1);
       if (dial) dial.hidden = true;

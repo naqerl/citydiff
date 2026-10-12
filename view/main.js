@@ -7,18 +7,20 @@ import { flyStep } from "./fly.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf, clearDir, steepDir } from "./viewport.js";
 import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
-import { KEYBINDS, birdAction, editAction, diffAction } from "./keys.js";
+import { KEYBINDS, TAKEN_KEYS, birdAction, editAction, diffAction } from "./keys.js";
 import { nameIndex, writeNode, readNode, readState, writeState } from "./state.js";
 import { editTarget, openEditor, closeEditor, editorActive } from "./editor.js";
-import { diffTarget, openDiff, closeDiff, diffActive } from "./diff.js";
+import { diffTarget, openDiff, closeDiff, diffActive, readDiff } from "./diff.js";
 import { mountRing, freeCenter } from "./ring.js";
 import { applyPage, cycleSkin, loadSkin } from "./skin.js";
-import { isLaunch, LAUNCH_SKIN } from "./launch.js";
+import { isLaunch, LAUNCH_COMMAND, LAUNCH_SKIN } from "./launch.js";
 import { createRocket } from "./rocket.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
 import { buildSigns, hasPlate, signText } from "./signs.js";
 import { showVersion } from "./version.js";
+import { escapeHTML, renderMarkdown } from "./markdown.js";
+import { apiNodes, createPlugins, freezeDeep } from "./plugins.js";
 
 let theme = null;
 let themeReady = false;
@@ -475,6 +477,17 @@ const byDecl = new Map();
 // entity id → Map of caller id → { target, change, step }
 const callersOf = new Map();
 const catalog = [];
+// The catalog by id: a plugin's search hit names its node by id.
+const catalogById = new Map();
+// Plugins (plugins.js): the registry once any are loaded, the nodes they
+// read, the last thing one of them got wrong, a count that moves whenever
+// their sidebar sections do, and the node whose diff panel is open.
+let plugins = null;
+let pluginNodes = null;
+let pluginWarning = "";
+let pluginSections = 0;
+let pluginsQueued = false;
+let diffNode = null;
 let searchHits = [];
 let commandHits = [];
 let searchCursor = 0;
@@ -547,6 +560,7 @@ function setSide(open) {
   syncSheet();
   requestAnimationFrame(resizeView);
   syncURL();
+  notifyPlugins();
 }
 
 // A touch screen (a phone or a tablet) gets its own layout; desktop never
@@ -1498,6 +1512,7 @@ async function main() {
   hideLoad();
   loading = false;
   requestFrame();
+  void loadPlugins();
   tourUI = mountTour({
     apply: applyTourStep,
     clear: clearTour,
@@ -1805,6 +1820,8 @@ function indexScene() {
       if (found) found.box = block;
     }
   }
+  catalogById.clear();
+  for (const item of catalog) if (!catalogById.has(item.id)) catalogById.set(item.id, item);
   // Packages go in first, so a package keeps its bare path if a declaration
   // ever spells the same one.
   nodeNames = nameIndex([
@@ -3316,6 +3333,7 @@ function applyMode() {
   paintPlinths();
   updateHUD();
   syncURL();
+  notifyPlugins();
   if (bird.on) {
     birdKey = "";
     buildBird();
@@ -4463,6 +4481,7 @@ function updateNote() {
     if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
+  if (pluginWarning) note = note ? pluginWarning + "  ·  " + note : pluginWarning;
   hud.note.textContent = note;
 }
 
@@ -4475,7 +4494,7 @@ let detailKey = "";
 let foldsVersion = 0;
 
 function renderDetail() {
-  const key = [subjectKey(), mode, callInbound, foldsVersion].join("\0");
+  const key = [subjectKey(), mode, callInbound, foldsVersion, pluginSections].join("\0");
   if (key === detailKey) return;
   detailKey = key;
   stopMarches();
@@ -4493,14 +4512,14 @@ function renderDetail() {
   // expanders under the node, not only a tally in the header.
   if (focus) {
     hud.detailHead.append(focusDetail(focus.entity));
-    hud.detailBody.append(roster(null));
+    hud.detailBody.append(withPluginSections(roster(null), focus.entity.id));
     return;
   }
   if (selected && selected.kind === "entity") {
     const found = byEntity.get(selected.id);
     if (found) {
       hud.detailHead.append(entityDetail(found.entity));
-      hud.detailBody.append(roster(null));
+      hud.detailBody.append(withPluginSections(roster(null), found.entity.id));
     }
     return;
   }
@@ -4508,7 +4527,7 @@ function renderDetail() {
   const pkg = id ? byPackage.get(id) : null;
   if (pkg) {
     hud.detailHead.append(packageDetail(pkg));
-    hud.detailBody.append(roster(pkg));
+    hud.detailBody.append(withPluginSections(roster(pkg), pkg.id));
     return;
   }
   hud.detailHead.append(noRootDetail());
@@ -4911,6 +4930,8 @@ function subjectKey() {
   return "root";
 }
 
+const SECTION_CARET = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+
 function sectionBlock(section, open) {
   const wrap = document.createElement("section");
   wrap.className = open ? "section open" : "section";
@@ -4922,7 +4943,7 @@ function sectionBlock(section, open) {
   head.setAttribute("aria-expanded", wrap.classList.contains("open") ? "true" : "false");
   const caret = document.createElement("span");
   caret.className = "section-caret";
-  caret.innerHTML = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+  caret.innerHTML = SECTION_CARET;
   const label = document.createElement("span");
   label.className = "section-label";
   label.textContent = section.label;
@@ -5396,13 +5417,13 @@ function resetCamera() {
   flyTo(cityPose.pos, cityPose.target);
 }
 
-function goBack() {
+function goBack(fly = true) {
   // With a tour up, Escape is the tour's: it puts the current step's selection
   // and camera back instead of flying to the whole city. A step that names
   // nothing falls through to the ordinary reset.
   if (tourUI && tourUI.restore()) return;
   const leftNode = !!(selected || focus);
-  goBackInner();
+  goBackInner(fly);
   if (leftNode && !selected && !focus && jumpIndex >= 0) {
     jumpDetached = true;
     updateHUD();
@@ -5413,8 +5434,9 @@ function goBack() {
 
 // Escape always lets go of the node: the call diff, the selection and the
 // package it sits in, and a tour step's highlight and path, and flies back to
-// the whole city.
-function goBackInner() {
+// the whole city. fly false lets go without the flight: the bird view keeps
+// its camera when a plugin deselects under it.
+function goBackInner(fly = true) {
   const hadSelection = focus || selected || entered || entitySubject || arcSubject || tourLit || tourLinks;
   clearTourMarks();
   if (focus) dropFocus();
@@ -5424,7 +5446,7 @@ function goBackInner() {
   selected = null;
   ring.visible = false;
   applyMode();
-  if (!hadSelection) return;
+  if (!hadSelection || !fly) return;
   cityPose = frameCity();
   applyFitLimits(cityPose);
   flyTo(cityPose.pos, cityPose.target);
@@ -6145,7 +6167,7 @@ function onSearch() {
     return;
   }
   commandHits = [];
-  searchHits = rankMatches(catalog, hud.search.value, 12);
+  searchHits = withPluginHits(rankMatches(catalog, hud.search.value, 12), hud.search.value);
   renderSearch();
 }
 
@@ -6178,10 +6200,36 @@ function launchRocket() {
   }).catch(giveBack);
 }
 
+// The commands the search box offers: the viewer's own, then the plugins'.
+function allCommands() {
+  return plugins ? COMMANDS.concat(plugins.commands()) : COMMANDS;
+}
+
+// commandLine splits what is typed into a command's name and its argument,
+// the rest of the line after the first space. Once there is a space, only the
+// command of that very name is left to run.
+function commandLine(value) {
+  const typed = String(value || "").trim();
+  const space = typed.search(/\s/);
+  return {
+    name: (space < 0 ? typed : typed.slice(0, space)).toLowerCase(),
+    arg: space < 0 ? "" : typed.slice(space).trim(),
+    spaced: space >= 0,
+  };
+}
+
 function matchCommands(value) {
-  const q = value.trim().toLowerCase();
-  if (q === "/") return COMMANDS;
-  return COMMANDS.filter((cmd) => cmd.name.startsWith(q));
+  const { name, spaced } = commandLine(value);
+  const listed = allCommands().filter((cmd) => !cmd.hidden);
+  if (spaced) return listed.filter((cmd) => cmd.name === name);
+  if (name === "/") return listed;
+  return listed.filter((cmd) => cmd.name.startsWith(name));
+}
+
+// A hidden command is in no list: it runs when its name is typed in full.
+function hiddenCommand(value) {
+  const { name } = commandLine(value);
+  return allCommands().find((cmd) => cmd.hidden && cmd.name === name) || null;
 }
 
 function renderCommands() {
@@ -6216,10 +6264,11 @@ function renderCommands() {
 
 function runCommand(cmd) {
   if (!cmd) return;
+  const { arg } = commandLine(hud.search.value);
   hud.search.value = "";
   closeSearch();
   hud.search.blur();
-  cmd.run();
+  cmd.run(arg);
 }
 
 function goToResult(item) {
@@ -6407,6 +6456,7 @@ window.addEventListener("keydown", (event) => {
       event.preventDefault();
       if (isLaunch(hud.search.value)) runCommand({ run: launchRocket });
       else if (commandHits.length) runCommand(commandHits[searchCursor]);
+      else if (hiddenCommand(hud.search.value)) runCommand(hiddenCommand(hud.search.value));
       else if (searchHits[searchCursor]) goToResult(searchHits[searchCursor]);
       return;
     }
@@ -6432,6 +6482,14 @@ window.addEventListener("keydown", (event) => {
   // In the bird view the city underneath is hidden: only the keys that do
   // not select or move through it stay live.
   if (bird.on && !["m", "1", "2"].includes(event.key)) return;
+  // A plugin's key. TAKEN_KEYS keeps a plugin off every key handled here, so
+  // this never stands in front of one of the viewer's own.
+  const pluginKey = plugins && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey ? plugins.key(event.key) : null;
+  if (pluginKey) {
+    event.preventDefault();
+    pluginKey.run();
+    return;
+  }
   if (event.key === "0" && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
     event.preventDefault();
     if (tourUI) tourUI.userTookOver();
@@ -6499,7 +6557,12 @@ function keySubject() {
 // E: the subject in nvim, in a terminal over the city. False when there is
 // nothing to open.
 function editSubject() {
-  const target = editTarget(keySubject(), byEntity, byPackage);
+  return showEditor(editTarget(keySubject(), byEntity, byPackage));
+}
+
+// showEditor opens a target in nvim over the city: what E opens, or the file
+// and place a plugin names. False when there is nothing to open.
+function showEditor(target) {
   if (!target) return false;
   held.clear();
   openEditor(target, () => {
@@ -6514,11 +6577,25 @@ function editSubject() {
 
 // D: the git diff of the subject, over the city. False when there is none.
 function diffSubject() {
-  const target = diffTarget(keySubject(), byEntity, byPackage);
-  if (!target) return false;
+  const subject = keySubject();
+  return !!showDiff(subject, diffTarget(subject, byEntity, byPackage));
+}
+
+// showDiff opens the diff panel on target, for the node subject names, with
+// the buttons plugins put on each hunk. It is the promise of the panel being
+// up, or null when there is no target.
+function showDiff(subject, target) {
+  if (!target) return null;
   held.clear();
-  openDiff(target, () => { renderer.domElement.focus?.(); requestFrame(); }).catch(() => {});
-  return true;
+  diffNode = subject.id;
+  const up = openDiff(target, () => {
+    diffNode = null;
+    notifyPlugins();
+    renderer.domElement.focus?.();
+    requestFrame();
+  }, pluginDiffActions(subject.id)).catch(() => {});
+  notifyPlugins();
+  return up;
 }
 
 // Which items can act now, and for one that cannot, why not: the ring shows
@@ -6526,6 +6603,11 @@ function diffSubject() {
 // is hidden, and only what its keys do there is live, the same as on the
 // keyboard.
 function ringState(id) {
+  if (id.startsWith("plugin-")) {
+    const item = pluginRingItem(id);
+    const can = item ? item.can() : false;
+    return can === true ? { enabled: true } : { enabled: false, why: typeof can === "string" ? can : "" };
+  }
   const subject = keySubject();
   const birdWhy = "leave the bird view first";
   const can = (enabled, why) => (enabled ? { enabled: true } : { enabled: false, why });
@@ -6564,6 +6646,9 @@ function runRing(id) {
     editSubject();
   } else if (id === "diff") {
     diffSubject();
+  } else if (id.startsWith("plugin-")) {
+    const item = pluginRingItem(id);
+    if (item) item.run();
   }
   requestFrame();
 }
@@ -6580,6 +6665,7 @@ let ringLetGo = 0;
 const actionRing = mountRing({
   state: ringState,
   run: runRing,
+  extra: () => (plugins ? plugins.ring().map((item) => ({ id: item.id, key: "", label: item.label })) : []),
   onOpen: () => {
     held.clear();
     cancelPendingTap();
@@ -6735,10 +6821,14 @@ window.addEventListener("click", (event) => {
   event.stopPropagation();
 }, true);
 // The legend's key list is written from KEYBINDS, the same list the tour
-// keys and the README are checked against.
-document.querySelector("#keys").innerHTML = KEYBINDS.map(
-  (b) => "<li>" + b.keys.map((k) => "<kbd>" + k.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</kbd>").join(" ") + " " + b.does + "</li>",
-).join("");
+// keys and the README are checked against, and then the keys plugins added.
+function renderLegendKeys() {
+  const row = (keys, does) => "<li>" + keys.map((k) => "<kbd>" + escapeHTML(k) + "</kbd>").join(" ") + " " + escapeHTML(does) + "</li>";
+  const own = KEYBINDS.map((b) => row(b.keys, b.does));
+  const added = plugins ? plugins.keys().map((k) => row([k.key], k.does)) : [];
+  document.querySelector("#keys").innerHTML = own.concat(added).join("");
+}
+renderLegendKeys();
 
 function setLegend(open) {
   hud.legend.hidden = !open;
@@ -6769,6 +6859,292 @@ window.addEventListener("resize", resizeView);
 // Scroll events do not bubble, so this listens in the capture phase to catch
 // the sidebar body and every section body: a scroll is part of the entry.
 hud.detailBody.addEventListener("scroll", () => syncJumpSidebar(), true);
+
+// Plugins (plugins.js, PLUGINS.md): modules from the plugins directory that
+// add behaviour on top of the viewer's own features. The page is their host:
+// it says what is on screen, does what a user could do, and draws what they
+// added where its own features draw. Every act goes the way the user's does,
+// so a plugin's selection lands in the jump list and the address bar the
+// same as a click.
+
+async function loadPlugins() {
+  let names = [];
+  try {
+    const res = await fetch("./plugins.json");
+    if (res.ok) names = (await res.json()).plugins || [];
+  } catch { /* no catalog, no plugins */ }
+  if (!names.length) return;
+  pluginNodes = apiNodes(sceneDoc, (step) => {
+    const target = findDecl(step);
+    return target ? target.entity.id : null;
+  });
+  plugins = createPlugins(pluginHost());
+  await plugins.load(names, (name) => import("./plugins/" + encodeURIComponent(name) + "/plugin.js"));
+  notifyPlugins();
+}
+
+function pluginHost() {
+  return {
+    scene: { packages: pluginNodes.packages, module: sceneDoc.module || "", range: sceneDoc.range || "" },
+    node: pluginNode,
+    callers: (id) => Object.freeze(callerLinks(byEntity.get(id)).map((link) => pluginNode(link.target.entity.id)).filter(Boolean)),
+    state: pluginState,
+    selection: {
+      select: pluginSelect,
+      // Escape, without its flight in the bird view.
+      clear() {
+        if (laid) goBack(!bird.on);
+      },
+      back: () => pluginJump(-1),
+      forward: () => pluginJump(1),
+      setRefs(dir) {
+        const inbound = dir === "callers";
+        if (laid && inbound !== callInbound) setCallDirection(inbound, null);
+      },
+    },
+    focus: {
+      open: pluginFocus,
+      // The function stays selected; only its call focus goes.
+      close() {
+        if (!focus) return;
+        dropFocus();
+        applyMode();
+        noteJump();
+      },
+    },
+    view: {
+      setMode(next) {
+        const want = next === "changes" ? "overlay" : "overview";
+        if (!laid || want === mode) return;
+        mode = want;
+        applyMode();
+      },
+      setBird(on) {
+        if (on && !bird.on) enterBird();
+        else if (!on && bird.on) leaveBird();
+      },
+      resetCamera() {
+        if (!laid || bird.on) return;
+        pluginTakeOver();
+        resetCamera();
+      },
+    },
+    sidebar: { show: (open) => setSide(open) },
+    search: { open: pluginSearch },
+    diff: { files: pluginDiffFiles, open: pluginOpenDiff, close: closeDiff },
+    editor: {
+      open(target) {
+        if (!laid || editorActive()) return false;
+        if (typeof target !== "string") return showEditor(target);
+        const subject = pluginSubject(target);
+        return subject ? showEditor(editTarget(subject, byEntity, byPackage)) : false;
+      },
+    },
+    takenKeys: TAKEN_KEYS,
+    takenCommands: new Set([...COMMANDS.map((cmd) => cmd.name), LAUNCH_COMMAND]),
+    changed: pluginsChanged,
+    report: reportPlugin,
+  };
+}
+
+function pluginNode(id) {
+  return (id != null && pluginNodes && pluginNodes.byId.get(id)) || null;
+}
+
+// What the viewer shows, by id: what a plugin reads and what its listeners
+// are told about when it changes.
+function pluginState() {
+  return {
+    selection: { node: selected ? selected.id : null, refs: callInbound ? "callers" : "calls" },
+    focus: { node: focus ? focus.entity.id : null },
+    view: { mode: mode === "overlay" ? "changes" : "overview", bird: !!bird.on },
+    sidebar: { shown: !hud.side.classList.contains("is-collapsed") },
+    diff: { node: diffActive() ? diffNode : null },
+  };
+}
+
+// notifyPlugins tells the listeners, once the action that changed the view
+// has finished: a listener that acts in turn never runs inside one of ours.
+function notifyPlugins() {
+  if (!plugins || pluginsQueued) return;
+  pluginsQueued = true;
+  queueMicrotask(() => {
+    pluginsQueued = false;
+    plugins.publish();
+  });
+}
+
+// pluginsChanged redraws what shows what plugins added. The ring and the diff
+// panel ask for theirs each time they open.
+function pluginsChanged(what) {
+  if (what === "keys") renderLegendKeys();
+  if (what === "sections") {
+    pluginSections++;
+    if (laid) renderDetail();
+  }
+  if ((what === "commands" || what === "search") && typingSearch()) onSearch();
+}
+
+function reportPlugin(name, err) {
+  console.error("citydiff: plugin " + name + ":", err);
+  pluginWarning = "Plugin " + name + ": " + (err && err.message ? err.message : String(err));
+  updateNote();
+}
+
+// A plugin that moves the camera takes it over the way a key does: the idle
+// orbit waits, and a tour stops steering.
+function pluginTakeOver() {
+  noteActivity();
+  endIntro();
+  if (tourUI) tourUI.userTookOver();
+}
+
+function pluginSubject(id) {
+  const pkg = byPackage.get(id);
+  if (pkg) return { kind: pkg.external ? "external" : "package", id };
+  return byEntity.has(id) ? { kind: "entity", id } : null;
+}
+
+// The same as choosing a search result: a package, an outside package, or a
+// declaration drawn in the city.
+function pluginSelect(id) {
+  if (!laid) return false;
+  const pkg = byPackage.get(id);
+  const found = pkg ? null : byEntity.get(id);
+  if (!pkg && !(found && found.box)) return false;
+  if (bird.on) leaveBird();
+  pluginTakeOver();
+  dropFocus();
+  if (pkg && pkg.external) selectExternal(id);
+  else if (pkg) selectPackage(id, true);
+  else {
+    selected = null;
+    selectEntity(id);
+  }
+  if (pkg) applyMode();
+  return true;
+}
+
+function pluginJump(step) {
+  if (!laid || bird.on || jumpTarget(step) < 0) return false;
+  pluginTakeOver();
+  jumpStep(step);
+  return true;
+}
+
+// The same as Enter on a function or method.
+function pluginFocus(id) {
+  const found = byEntity.get(id);
+  if (!laid || !found || !found.box || (found.entity.kind !== "function" && found.entity.kind !== "method")) return false;
+  if (bird.on) leaveBird();
+  pluginTakeOver();
+  dropFocus();
+  enterFocus(found);
+  return true;
+}
+
+// The same as / and typing the query.
+function pluginSearch(query) {
+  if (!laid || loading || diffActive() || editorActive() || skinPicking) return false;
+  setSide(true);
+  hud.search.value = query;
+  hud.search.focus();
+  onSearch();
+  return true;
+}
+
+async function pluginDiffFiles(id) {
+  const subject = pluginSubject(id);
+  if (!subject) throw new Error("no node " + id);
+  const target = diffTarget(subject, byEntity, byPackage);
+  if (!target) return Object.freeze([]);
+  const reply = await readDiff(target);
+  if (reply.problems && reply.problems.length) throw new Error(reply.problems[0].message);
+  return freezeDeep((reply.files || [])
+    .filter((file) => (file.hunks || []).length || file.binary)
+    .map((file) => ({
+      path: file.path,
+      lang: file.lang || "",
+      binary: !!file.binary,
+      hunks: file.hunks || [],
+      omitted: file.omitted || 0,
+    })));
+}
+
+async function pluginOpenDiff(id) {
+  if (!laid || editorActive()) return false;
+  const subject = id == null ? keySubject() : pluginSubject(id);
+  const target = subject ? diffTarget(subject, byEntity, byPackage) : null;
+  if (!target) return false;
+  if (diffActive()) closeDiff();
+  await showDiff(subject, target);
+  return diffActive();
+}
+
+function pluginDiffActions(nodeId) {
+  if (!plugins) return [];
+  return plugins.diffActions().map((action) => ({
+    label: action.label,
+    run: (file, hunk) => plugins.runDiffAction(action, nodeId, file, hunk),
+  }));
+}
+
+function pluginRingItem(id) {
+  return (plugins && plugins.ring().find((item) => item.id === id)) || null;
+}
+
+// The plugins' search hits, after the viewer's own matches: each a node the
+// catalog already has, drawn the same way, with the plugin's note, if it gave
+// one, where the package path usually is.
+function withPluginHits(own, value) {
+  const query = String(value || "").trim();
+  if (!plugins || !query) return own;
+  const seen = new Set(own.map((item) => item.id));
+  const extra = [];
+  for (const hit of plugins.hits(query)) {
+    const item = catalogById.get(hit.id);
+    if (!item || seen.has(hit.id)) continue;
+    seen.add(hit.id);
+    extra.push(hit.note ? { ...item, where: hit.note } : item);
+  }
+  return extra.length ? own.concat(extra) : own;
+}
+
+// The plugins' sections for the node the sidebar shows, under its own.
+function withPluginSections(list, id) {
+  if (!plugins) return list;
+  for (const section of plugins.sections(pluginNode(id))) list.append(pluginSectionBlock(section));
+  return list;
+}
+
+// A plugin's section is its title over its Markdown, drawn the way tour notes
+// are: it holds what the plugin says, not rows, and opens to start with.
+function pluginSectionBlock({ title, markdown }) {
+  const wrap = document.createElement("section");
+  wrap.className = "section open plugin-section";
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "section-head";
+  head.setAttribute("aria-expanded", "true");
+  const caret = document.createElement("span");
+  caret.className = "section-caret";
+  caret.innerHTML = SECTION_CARET;
+  const label = document.createElement("span");
+  label.className = "section-label";
+  label.textContent = title;
+  head.append(caret, label);
+  const body = document.createElement("div");
+  body.className = "section-body plugin-body";
+  body.innerHTML = renderMarkdown(markdown);
+  head.addEventListener("click", () => {
+    const open = !wrap.classList.contains("open");
+    wrap.classList.toggle("open", open);
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    body.inert = !open;
+  });
+  wrap.append(head, body);
+  return wrap;
+}
 
 // Themes: what the /skin command opens. Arrows preview in place. Letters find
 // a theme by the start of its name. Enter, and Change on the question, apply
@@ -7578,6 +7954,7 @@ function enterBird() {
   controls.maxDistance = Math.max(controls.maxDistance, pose.dist * 1.6);
   controls.enableRotate = false;
   flyTo(new THREE.Vector3(...pose.pos), new THREE.Vector3(...pose.target));
+  notifyPlugins();
   viewDirty = true;
   requestFrame();
 }
@@ -7595,6 +7972,7 @@ function leaveBird() {
   flyTo(new THREE.Vector3(...saved.pos), new THREE.Vector3(...saved.target));
   tween.done = () => { controls.maxDistance = saved.extra.maxDistance; };
   if (saved.extra.mode !== mode) applyMode();
+  notifyPlugins();
   viewDirty = true;
   requestFrame();
 }

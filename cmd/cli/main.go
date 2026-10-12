@@ -137,7 +137,9 @@ func legacy() {
 		fail(err)
 	}
 	if *asScene {
-		if err := printScene(scene.Build(left, right)); err != nil {
+		sc := scene.Build(left, right)
+		sc.Range = *commitRange
+		if err := printScene(sc); err != nil {
 			fail(err)
 		}
 		return

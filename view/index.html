@@ -351,6 +351,19 @@
     #detail .section-body button.row:nth-child(odd) { background-color: var(--bg); }
     #detail .section-body button.row:nth-child(even) { background-color: var(--elev); }
     @media (prefers-reduced-motion: reduce) { .section, .section-caret { transition: none; } }
+    /* A plugin's section (PLUGINS.md) holds what the plugin wrote, not rows: it
+       is as tall as its text, which reads the way a tour note does. */
+    .section.plugin-section, .plugin-section .section-body { flex: none; overflow: visible; }
+    .section.plugin-section:not(.open) .section-body { display: none; }
+    .plugin-body { padding: 8px 14px 10px 32px; color: var(--dim); background: var(--elev); }
+    .plugin-body p { margin: 0 0 6px; }
+    .plugin-body > :last-child { margin-bottom: 0; }
+    .plugin-body ul, .plugin-body ol { margin: 0 0 6px; padding-left: 18px; }
+    .plugin-body h3, .plugin-body h4, .plugin-body h5 { margin: 8px 0 4px; font-size: 12px; }
+    .plugin-body code { background: var(--bg); border: 1px solid var(--line); padding: 0 3px; color: var(--code); }
+    .plugin-body pre { background: var(--bg); border: 1px solid var(--line); padding: 8px; overflow-x: auto; }
+    .plugin-body pre code { border: 0; padding: 0; background: transparent; color: var(--pre); }
+    .plugin-body a { color: var(--link); }
     #detail button.row {
       display: flex;
       width: 100%;
@@ -519,6 +532,11 @@
     .diff-view .diff-file-head { position: sticky; top: 0; margin: 0; padding: 7px 14px; background: var(--elev); border-bottom: 1px solid var(--line); color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
     .diff-view .diff-hunk { border-bottom: 1px solid var(--line); }
     .diff-view .diff-hunk-head { padding: 4px 14px; color: var(--faint); background: var(--code-bg); }
+    /* A plugin's buttons sit on the hunk's own header line, after its place. */
+    .diff-view .diff-hunk-head { display: flex; align-items: center; gap: 8px; }
+    .diff-view .diff-hunk-at { flex: 1; min-width: 0; }
+    .diff-view .diff-hunk-action { flex: none; background: var(--bg); color: var(--muted); border: 1px solid var(--line); padding: 0 6px; font: inherit; cursor: pointer; }
+    .diff-view .diff-hunk-action:hover { color: var(--fg); border-color: var(--line-strong); }
     .diff-view .diff-line { display: grid; grid-template-columns: 3.6em 3.6em 1.4em 1fr; min-width: max-content; white-space: pre; }
     .diff-view .diff-line.add { background: var(--added-bg); }
     .diff-view .diff-line.del { background: var(--removed-bg); }

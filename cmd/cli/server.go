@@ -165,6 +165,7 @@ func (v *viewer) handler() http.Handler {
 		writeJSON(w, http.StatusOK, tourReply{Resolved: resolved, Scene: sceneInfo{Range: v.snap.commitRange, Switched: switched}})
 	})
 	mountSkins(mux, skinsDir())
+	mountPlugins(mux, pluginsDir())
 	mux.HandleFunc("GET /api/edit", v.serveEditor)
 	mux.HandleFunc("GET /api/diff", v.serveDiff)
 	mux.HandleFunc("GET /api/version", v.serveVersion)
