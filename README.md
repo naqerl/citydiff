@@ -1,6 +1,6 @@
 # CityDiff
 
-[<img src="https://img.youtube.com/vi/qv0ZWVdgE5A/maxresdefault.jpg" width="70%">](https://youtu.be/qv0ZWVdgE5A)
+![a citydiff tour playing over a commit range](https://s3.naqerl.com/public/demo/01-tour.gif)
 
 **Higher order** diff tool that helps humans to control architecture and agents to generate interactive tours over their changes.
 
@@ -20,12 +20,6 @@ Install citydiff, read added skills and create a demo tour on whatever project I
 ```
 
 ## Showcases
-
-### Generate interactive tour around changes
-
-![a tour playing over a commit range](https://s3.naqerl.com/public/demo/01-tour.gif)
-
-A JSON script walks one commit range: the camera flies to each package and declaration, the diff lights up, and the note says why it changed.
 
 ### Read actual diff & launch nvim
 
