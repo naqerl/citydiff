@@ -251,9 +251,16 @@ jobs:
 
       - name: Create the manifest list
         working-directory: /tmp/digests
+        env:
+          # A multi-line step output substituted with ${{ }} is pasted into
+          # the script verbatim, which breaks it. Through the environment it
+          # stays one value and the loop splits it on the newlines.
+          TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           args=()
-          for tag in ${{ steps.tags.outputs.tags }}; do args+=(-t "$tag"); done
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && args+=(-t "$tag")
+          done <<< "$TAGS"
           digests=()
           for f in *; do digests+=("${IMAGE}@sha256:${f}"); done
           docker buildx imagetools create "${args[@]}" "${digests[@]}"
