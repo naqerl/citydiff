@@ -1226,22 +1226,65 @@ function updateHalo() {
 
 // The node under the mouse is outlined in the skin's hover colour, with a
 // light wash over its faces, so what a click would pick is plain before the
-// click. It is one unit box and its twelve edges, scaled onto the node: a new
-// hover moves them and builds nothing, and a frame is drawn only when the
-// outline moved, not on every move of the mouse. A finger has no hover.
+// click. A hover is a set — a sidebar expander lights every node it holds —
+// so the outline is one unit box and its twelve edges per node, drawn as one
+// instanced mesh and one line mesh: a new hover moves the outline and builds
+// nothing, and a frame is drawn only when the outline changed, not on every
+// move of the mouse. A finger has no hover.
 const hoverFill = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.18, depthWrite: false, fog: false, toneMapped: false });
 const hoverLine = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95, fog: false, toneMapped: false });
+// The eight corners of a unit box and its twelve edges as corner pairs, so a
+// set of outlines is one buffer of line segments whatever it holds.
+const HOVER_CORNERS = [
+  [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+  [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+];
+const HOVER_EDGES = [
+  [0, 1], [1, 2], [2, 3], [3, 0],
+  [4, 5], [5, 6], [6, 7], [7, 4],
+  [0, 4], [1, 5], [2, 6], [3, 7],
+];
 const hoverMark = new THREE.Group();
-{
-  const unit = new THREE.BoxGeometry(1, 1, 1);
-  hoverMark.add(new THREE.Mesh(unit, hoverFill), new THREE.LineSegments(new THREE.EdgesGeometry(unit), hoverLine));
-  for (const part of hoverMark.children) part.frustumCulled = false;
-}
 hoverMark.visible = false;
 scene.add(hoverMark);
-// What the outline is on: { kind, id } of a declaration, a package or an
-// outside package, or null.
-let hoverOn = null;
+let hoverFills = null;
+let hoverEdges = null;
+let hoverCapacity = 0;
+const hoverMatrix = new THREE.Matrix4();
+const hoverPlain = new THREE.Quaternion();
+const hoverAt = new THREE.Vector3();
+const hoverSize = new THREE.Vector3();
+// What the outline is on, in order: { kind, id } of declarations, packages or
+// outside packages. Usually the one node under the pointer; a sidebar
+// expander head makes it one entry per node the expander holds.
+let hoverTargets = [];
+// What put the outline there: "city" for the pointer over the city,
+// "sidebar" for a row or an expander head. The idle orbit clears only the
+// city's, so a hover the sidebar holds outlives the orbit starting.
+let hoverSource = null;
+
+// Room for n outlines, shared by the fill and the edges. It only grows, so a
+// hover of a larger set rebuilds the two meshes once and not per frame.
+function sizeHoverMark(n) {
+  if (n <= hoverCapacity) return;
+  if (hoverFills) {
+    hoverMark.remove(hoverFills);
+    hoverFills.geometry.dispose();
+    hoverFills.dispose();
+  }
+  if (hoverEdges) {
+    hoverMark.remove(hoverEdges);
+    hoverEdges.geometry.dispose();
+  }
+  hoverCapacity = Math.max(16, 1 << Math.ceil(Math.log2(n)));
+  hoverFills = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), hoverFill, hoverCapacity);
+  hoverFills.frustumCulled = false;
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(hoverCapacity * HOVER_EDGES.length * 6), 3));
+  hoverEdges = new THREE.LineSegments(geom, hoverLine);
+  hoverEdges.frustumCulled = false;
+  hoverMark.add(hoverFills, hoverEdges);
+}
 
 function paintHover() {
   hoverFill.color.copy(paint.hover);
@@ -1270,36 +1313,88 @@ function hoverBox(target) {
   return null;
 }
 
-// Put the outline on the hovered node as it is drawn now. A little larger
-// than the node, so its edges never fight the node's own faces for depth.
+// Put the outline on the hovered nodes as they are drawn now, skipping the
+// ones that are not drawn at all. A little larger than the node, so its
+// edges never fight the node's own faces for depth.
 function placeHover() {
-  const box = hoverOn && hoverBox(hoverOn);
-  if (!box) {
+  const boxes = [];
+  for (const target of hoverTargets) {
+    const box = hoverBox(target);
+    if (box) boxes.push(box);
+  }
+  if (!boxes.length) {
     hoverMark.visible = false;
     return;
   }
-  const pad = Math.min(0.6, Math.max(0.08, 0.03 * Math.max(box.w, box.h, box.d)));
-  hoverMark.scale.set(box.w + pad, box.h + pad, box.d + pad);
-  hoverMark.position.set(box.x + box.w / 2, box.y + box.h / 2, box.z + box.d / 2);
+  sizeHoverMark(boxes.length);
+  const position = hoverEdges.geometry.getAttribute("position");
+  const array = position.array;
+  let at = 0;
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i];
+    const pad = Math.min(0.6, Math.max(0.08, 0.03 * Math.max(box.w, box.h, box.d)));
+    const sx = box.w + pad, sy = box.h + pad, sz = box.d + pad;
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2, cz = box.z + box.d / 2;
+    hoverMatrix.compose(hoverAt.set(cx, cy, cz), hoverPlain, hoverSize.set(sx, sy, sz));
+    hoverFills.setMatrixAt(i, hoverMatrix);
+    const hx = sx / 2, hy = sy / 2, hz = sz / 2;
+    for (const [from, to] of HOVER_EDGES) {
+      for (const corner of [from, to]) {
+        array[at++] = cx + HOVER_CORNERS[corner][0] * hx;
+        array[at++] = cy + HOVER_CORNERS[corner][1] * hy;
+        array[at++] = cz + HOVER_CORNERS[corner][2] * hz;
+      }
+    }
+  }
+  hoverFills.count = boxes.length;
+  hoverFills.instanceMatrix.needsUpdate = true;
+  position.needsUpdate = true;
   hoverMark.visible = true;
 }
 
-// Move the outline to target, or take it off with null. True when that
-// changed what is on screen, which is when the city needs a frame.
-function setHover(target) {
-  const same = hoverOn && target ? hoverOn.kind === target.kind && hoverOn.id === target.id : hoverOn === target;
-  if (same) return false;
+// Two target lists are the same hover when they hold the same kinds and ids
+// in the same order, so a move that stays on one node asks for no frame.
+function sameTargets(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].kind !== b[i].kind || a[i].id !== b[i].id) return false;
+  }
+  return true;
+}
+
+// Move the outline onto targets from source, or take it off when the list is
+// empty. True when that changed what is on screen, which is when the city
+// needs a frame; a caller that only changes the source, not the nodes, gets
+// false, because the picture is the same.
+function setHoverTargets(targets, source) {
+  if (hoverSource === source && sameTargets(hoverTargets, targets)) return false;
   const was = hoverMark.visible;
-  hoverOn = target;
+  hoverTargets = targets;
+  hoverSource = targets.length ? source : null;
   placeHover();
   return was || hoverMark.visible;
+}
+
+// The pointer over the city: one node, or none. Its own source, so the idle
+// orbit may clear it without touching a hover the sidebar holds.
+function setHover(target) {
+  return setHoverTargets(target ? [target] : [], "city");
+}
+
+// A row or an expander head. The row already prints the name, so no floating
+// tag: the outline alone, and any tag a city hover left behind goes.
+function setSidebarHover(targets) {
+  hud.tag.style.display = "none";
+  if (!setHoverTargets(targets, "sidebar")) return;
+  viewDirty = true;
+  requestFrame();
 }
 
 // Take the outline and the floating name off, and draw the city without them.
 function clearHover() {
   hud.tag.style.display = "none";
   renderer.domElement.style.cursor = "";
-  if (setHover(null)) {
+  if (setHoverTargets([], null)) {
     viewDirty = true;
     requestFrame();
   }
@@ -4510,6 +4605,9 @@ function renderDetail() {
   const key = [subjectKey(), mode, callInbound, foldsVersion, pluginSections].join("\0");
   if (key === detailKey) return;
   detailKey = key;
+  // The rows are torn down: a hover held on one of them has no mouseleave to
+  // come, so the outline goes with them.
+  if (hoverSource === "sidebar") setSidebarHover([]);
   stopMarches();
   const subject = subjectKey();
   if (subject !== detailSubject) {
@@ -4829,6 +4927,16 @@ function refsRows(inbound) {
   return [...mergeByNode(entries), ...outside];
 }
 
+// What a row's hover outlines: the same node its click acts on. The row
+// builders and the expander heads both take their targets from here.
+function entityTarget(entity) {
+  return { kind: "entity", id: entity.id };
+}
+
+function packageTarget(pkg) {
+  return { kind: pkg && pkg.external ? "external" : "package", id: pkg.id };
+}
+
 function refsSection() {
   const merged = refsRows(callInbound);
   if (!merged || !merged.length) return null;
@@ -4838,6 +4946,7 @@ function refsSection() {
     hot: deletedFirst(merged.filter((entry) => entry.change !== "same")),
     same: merged.filter((entry) => entry.change === "same"),
     row: (entry) => (entry.dep ? externalRow(entry.dep) : refRow(entry.node, entry.change)),
+    target: (entry) => (entry.dep ? { kind: "external", id: entry.dep.to } : entityTarget(entry.node.entity)),
   };
 }
 
@@ -4852,6 +4961,7 @@ function typeMethods(found) {
     hot: deletedFirst(split.hot),
     same: split.same,
     row: entityRow,
+    target: entityTarget,
   };
 }
 
@@ -4914,6 +5024,7 @@ function rosterSections(pkg) {
     hot: mode === "overlay" ? deletedFirst(packageList) : children,
     same: mode === "overlay" ? direct.same : [],
     row: (item) => packageRow(item, pkg.id),
+    target: packageTarget,
     totals: () => statsBelow(pkg),
   }];
   const groups = [
@@ -4925,7 +5036,7 @@ function rosterSections(pkg) {
   for (const [key, label, kind] of groups) {
     const list = sortedDeclared(pkg, kind);
     const split = splitChanges(list, (item) => item.change);
-    sections.push({ key, label, hot: deletedFirst(split.hot), same: split.same, row: entityRow });
+    sections.push({ key, label, hot: deletedFirst(split.hot), same: split.same, row: entityRow, target: entityTarget });
   }
   return sections;
 }
@@ -4976,9 +5087,33 @@ function sectionBlock(section, open) {
   const body = document.createElement("div");
   body.className = "section-body";
   body.inert = !open;
-  growRows(body, [...section.hot, ...section.same], section.row);
+  attachSectionHover(head, section);
+  growRows(body, [...section.hot, ...section.same], section.row, section.target);
   wrap.append(head, body);
   return wrap;
+}
+
+// Hovering an expander's title lights every node the expander holds, in the
+// same outline a row gets. The nodes come from the section's own lists, not
+// from the DOM: a folded section, or one scrolled nowhere near its end, has
+// built almost none of its rows.
+function attachSectionHover(head, section) {
+  if (!section.target) return;
+  head.addEventListener("mouseenter", () => {
+    setSidebarHover([...section.hot, ...section.same].map(section.target).filter(Boolean));
+  });
+  head.addEventListener("mouseleave", () => setSidebarHover([]));
+}
+
+// A row's hover lights the same node a click would open. mouseenter, not
+// mouseover: the row is a button with children, and a finger has no hover.
+function attachRowHover(button, item, target) {
+  button.addEventListener("mouseenter", () => {
+    const aimed = target(item);
+    setSidebarHover(aimed ? [aimed] : []);
+  });
+  button.addEventListener("mouseleave", () => setSidebarHover([]));
+  return button;
 }
 
 // A long section builds its rows as they are scrolled to, a chunk at a time:
@@ -4989,12 +5124,15 @@ function sectionBlock(section, open) {
 const ROW_CHUNK = 120;
 const growing = new Set();
 
-function growRows(body, items, row) {
+function growRows(body, items, row, target) {
   let shown = 0;
   const more = () => {
     const frag = document.createDocumentFragment();
     const end = Math.min(items.length, shown + ROW_CHUNK);
-    for (; shown < end; shown++) frag.append(row(items[shown]));
+    for (; shown < end; shown++) {
+      const button = row(items[shown]);
+      frag.append(target ? attachRowHover(button, items[shown], target) : button);
+    }
     body.append(frag);
     if (shown >= items.length) growing.delete(body);
   };
@@ -5024,6 +5162,10 @@ function growVisibleRows() {
 // A folded section is out of the tab order: its rows are clipped, and Tab
 // should reach the next section's header, not walk through rows nobody can see.
 function setSectionOpen(wrap, head, key, open) {
+  // The head is about to change under the pointer: fold or open redraws the
+  // section, and a hover held on it or on a row that moved cannot wait for
+  // the mouseleave it will never see.
+  if (hoverSource === "sidebar") setSidebarHover([]);
   wrap.classList.toggle("open", open);
   head.setAttribute("aria-expanded", open ? "true" : "false");
   const body = wrap.querySelector(".section-body");
@@ -5844,10 +5986,16 @@ function animate(now) {
   // follows the pointer is the page's, not the city's.
   let hovered = false;
   if (idleSpin) {
-    if (pointerDirty || hoverOn) hovered = onHover(null);
+    // The idle orbit clears the city's own hover, never one the sidebar
+    // holds: a mouse that moved over the city sets pointerDirty even in the
+    // orbit, and that must not reach into the sidebar's outline.
+    if (hoverSource !== "sidebar" && (pointerDirty || hoverSource === "city")) hovered = onHover(null);
     pointerDirty = false;
   } else if (pointerDirty && !pointerDown && !bird.on) {
-    hovered = onHover(hitTest());
+    // A stale city aim is dropped while a sidebar hover is held; leaving the
+    // sidebar for the canvas clears the source first, and the next move aims
+    // the city fresh.
+    if (hoverSource !== "sidebar") hovered = onHover(hitTest());
     pointerDirty = false;
   }
   // A frame that carries nothing but decoration (the particles, the halo, a
