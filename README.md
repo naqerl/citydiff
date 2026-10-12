@@ -1,8 +1,10 @@
 # CityDiff
 
-![thumb](https://s3.naqerl.com/public/demo/citydiff-tour-demo.mp4)
+[<img src="https://img.youtube.com/vi/qv0ZWVdgE5A/maxresdefault.jpg" width="70%">](https://youtu.be/qv0ZWVdgE5A)
 
 **Higher order** diff tool that helps humans to control architecture and agents to generate interactive tours over their changes.
+
+## What
 
 The city is the code. Packages are buildings; a package's sub-packages stand on its roof.
 A **type** is a wide pale block holding its methods. A **function** or **method** is a tower
