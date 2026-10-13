@@ -79,7 +79,7 @@ export default function review(city) {
 - [city.scene](#cityscene): [packages](#cityscenepackages) · [module](#cityscenemodule) · [range](#cityscenerange) · [node(id)](#cityscenenodeid) · [callers(id)](#cityscenecallersid)
 - [city.selection](#cityselection): [current](#cityselectioncurrent) · [refs](#cityselectionrefs) · [select(id)](#cityselectionselectid) · [clear()](#cityselectionclear) · [back()](#cityselectionback) · [forward()](#cityselectionforward) · [setRefs(dir)](#cityselectionsetrefsdir) · [onChange(fn)](#cityselectiononchangefn)
 - [city.focus](#cityfocus): [current](#cityfocuscurrent) · [open(id)](#cityfocusopenid) · [close()](#cityfocusclose) · [onChange(fn)](#cityfocusonchangefn)
-- [city.view](#cityview): [mode](#cityviewmode) · [bird](#cityviewbird) · [setMode(mode)](#cityviewsetmodemode) · [setBird(on)](#cityviewsetbirdon) · [resetCamera()](#cityviewresetcamera) · [onChange(fn)](#cityviewonchangefn)
+- [city.view](#cityview): [mode](#cityviewmode) · [bird](#cityviewbird) · [gyro](#cityviewgyro) · [setMode(mode)](#cityviewsetmodemode) · [setBird(on)](#cityviewsetbirdon) · [setGyro(on)](#cityviewsetgyroon) · [resetCamera()](#cityviewresetcamera) · [onChange(fn)](#cityviewonchangefn)
 - [city.sidebar](#citysidebar): [shown](#citysidebarshown) · [show(open)](#citysidebarshowopen) · [onChange(fn)](#citysidebaronchangefn) · [add(section)](#citysidebaraddsection)
 - [city.search](#citysearch): [open(query)](#citysearchopenquery) · [add(source)](#citysearchaddsource)
 - [city.commands](#citycommands): [add(command)](#citycommandsaddcommand)
@@ -87,7 +87,8 @@ export default function review(city) {
 - [city.ring](#cityring): [add(item)](#cityringadditem)
 - [city.diff](#citydiff): [current](#citydiffcurrent) · [files(id)](#citydifffilesid) · [open(id)](#citydiffopenid) · [close()](#citydiffclose) · [onChange(fn)](#citydiffonchangefn) · [add(action)](#citydiffaddaction)
 - [city.editor](#cityeditor): [open(target)](#cityeditoropentarget)
-- [Types](#types): [Node](#node) · [Package](#package) · [Entity](#entity) · [Dep](#dep) · [CallStep](#callstep) · [Change](#change) · [Kind](#kind) · [DiffFile](#difffile) · [Hunk](#hunk) · [Line](#line)
+- [city.gyro](#citygyro): [on(fn)](#citygyroonfn)
+- [Types](#types): [Node](#node) · [Package](#package) · [Entity](#entity) · [Dep](#dep) · [CallStep](#callstep) · [Change](#change) · [Kind](#kind) · [DiffFile](#difffile) · [Hunk](#hunk) · [Line](#line) · [GyroReading](#gyroreading)
 - [Not yet](#not-yet)
 
 ## Plugin file
@@ -540,7 +541,7 @@ city.focus.onChange(({ node }) => {
 
 ## city.view
 
-How the city is shown: overview or changes, bird view, and the camera. The user's keys for it are `1` / `2` / `m`, `y` and `0`.
+How the city is shown: overview or changes, bird view, the camera, and whether the phone turns it. The user's keys for it are `1` / `2` / `m`, `y` and `0`, and on a phone `?gyro` in the address.
 
 ### city.view.mode
 
@@ -579,6 +580,27 @@ city.commands.add({
   name: "/map",
   does: "toggle bird view",
   run: () => city.view.setBird(!city.view.bird),
+});
+```
+
+</details>
+
+### city.view.gyro
+
+```ts
+city.view.gyro: boolean
+```
+
+Added in version 2. Whether the gyroscope is on: on a phone or a tablet, turning the device orbits the camera and a shake does what `0` does. It is off unless `?gyro` is in the address or a plugin turned it on, and it is never on with a mouse.
+
+<details>
+<summary>Example</summary>
+
+```js
+city.ring.add({
+  label: "gyro",
+  can: () => (city.view.gyro ? "already on" : true),
+  run: () => city.view.setGyro(true),
 });
 ```
 
@@ -623,6 +645,31 @@ city.selection.onChange(({ node }) => {
 
 </details>
 
+### city.view.setGyro(on)
+
+```ts
+city.view.setGyro(on: boolean): boolean
+```
+
+Added in version 2. Turns the gyroscope on or off, and returns whether it is on. The address follows: `?gyro` is added or dropped, so a reload agrees. It stays off, and this returns `false`, on a screen with a mouse and on a page served over plain http, since a browser hands the device's motion only to a secure page; over http the line under the title says so. On iOS the person is asked to allow motion. Called from a command, a key or a ring item, it is asked at once; called at any other time, the next tap asks.
+
+<details>
+<summary>Example</summary>
+
+```js
+export const api = 2;
+
+export default function plugin(city) {
+  city.commands.add({
+    name: "/tilt",
+    does: "turn the city with the phone",
+    run: () => city.view.setGyro(!city.view.gyro),
+  });
+}
+```
+
+</details>
+
 ### city.view.resetCamera()
 
 ```ts
@@ -647,10 +694,10 @@ city.commands.add({
 ### city.view.onChange(fn)
 
 ```ts
-city.view.onChange(fn: (e: { mode: "overview" | "changes"; bird: boolean }) => void): () => void
+city.view.onChange(fn: (e: { mode: "overview" | "changes"; bird: boolean; gyro: boolean }) => void): () => void
 ```
 
-Calls `fn` after the mode or bird view changes. Returns a function that stops the calls.
+Calls `fn` after the mode, bird view or gyroscope changes. Returns a function that stops the calls. `gyro` is there from version 2.
 
 <details>
 <summary>Example</summary>
@@ -1106,6 +1153,37 @@ city.ring.add({
 
 </details>
 
+## city.gyro
+
+The phone's own readings while the gyroscope is on ([city.view.gyro](#cityviewgyro)).
+
+### city.gyro.on(fn)
+
+```ts
+city.gyro.on(fn: (reading: GyroReading) => void): () => void
+```
+
+Added in version 2. Calls `fn` with every reading of the device's orientation, about 60 a second, while the gyroscope is on. The readings come whatever the camera is doing, in bird view and under the theme menu too. Unlike `onChange`, a reading is handed over as it comes, not after the viewer's own action settles. Returns a function that stops the calls.
+
+The phone reports which way it points and how it accelerates, not where it is: there is no position in a reading. Adding up the acceleration twice to get one drifts by metres within seconds.
+
+<details>
+<summary>Example</summary>
+
+```js
+export const api = 2;
+
+export default function plugin(city) {
+  // How far the phone has turned left since the plugin started, in degrees.
+  let turned = 0;
+  return city.gyro.on(({ yaw }) => {
+    turned += (yaw * 180) / Math.PI;
+  });
+}
+```
+
+</details>
+
 ## Types
 
 ### Node
@@ -1230,6 +1308,31 @@ interface Line {
   text: string;
 }
 ```
+
+### GyroReading
+
+```ts
+interface GyroReading {
+  alpha: number | null;   // degrees about the device's z, out of the screen; null with no gyroscope
+  beta: number;           // degrees about its x, to the right of the screen
+  gamma: number;          // degrees about its y, to the top of the screen
+  attitude: [number, number, number, number];
+                          // the same as a quaternion [x, y, z, w], from the device's
+                          // frame to the earth's: x east, y north, z up
+  yaw: number;            // radians turned about the vertical since the last reading,
+                          // positive to the left, however the phone is held
+  pitch: number;          // radians turned about the screen's left-to-right line,
+                          // positive when the top comes toward the person holding it
+  acceleration: { x: number; y: number; z: number } | null;
+                          // m/s², gravity left out, in the device's frame; null until
+                          // the phone has reported one
+  rotationRate: { alpha: number; beta: number; gamma: number } | null;
+                          // degrees per second about z, x and y: the gyroscope itself
+  time: number;           // milliseconds, on the page's clock (performance.now)
+}
+```
+
+`alpha`, `beta` and `gamma` are the browser's own numbers, Euler angles that jump when the phone is held upright; `attitude`, `yaw` and `pitch` do not. On most phones `alpha` starts wherever the phone pointed when the page opened, not at north. `yaw` and `pitch` are what the viewer turns the camera by, before it doubles them.
 
 ## Not yet
 

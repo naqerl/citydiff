@@ -67,7 +67,7 @@ test("readNode picks the first of a shared path, and nothing for an unknown one"
 });
 
 test("the defaults leave the address bare", () => {
-  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true };
+  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true, gyro: false, ar: false };
   assert.equal(writeState("", state), "");
   assert.deepEqual(readState(""), state);
 });
@@ -82,15 +82,47 @@ test("a range and a tour stay put when the view is written", () => {
 });
 
 test("the state is written readably and reads back", () => {
-  const state = { select: "citydiff:lib:parser:rust:New", mode: "changes", refs: "callers", side: false, tourSide: false };
+  const state = { select: "citydiff:lib:parser:rust:New", mode: "changes", refs: "callers", side: false, tourSide: false, gyro: true, ar: true };
   const query = writeState("", state);
-  assert.equal(query, "?select=citydiff:lib:parser:rust:New&mode=changes&refs=callers&side=closed&tourside=closed");
+  assert.equal(query, "?select=citydiff:lib:parser:rust:New&mode=changes&refs=callers&side=closed&tourside=closed&gyro&ar");
   assert.deepEqual(readState(query), state);
 });
 
 test("other parameters are kept, and stale state is replaced", () => {
   const state = { select: "citydiff:lib:Parser", mode: "overview", refs: "calls", side: true, tourSide: true };
   assert.equal(writeState("?tour=./t.json&mode=changes&select=x:y", state), "?tour=./t.json&select=citydiff:lib:Parser");
+});
+
+test("a flag stays a bare flag when the view is written", () => {
+  const state = { select: "citydiff:lib:Parser", mode: "overview", refs: "calls", side: true, tourSide: true };
+  assert.equal(writeState("?perf", state), "?perf&select=citydiff:lib:Parser");
+  assert.equal(writeState("?perf&select=x:y", { ...state, select: "" }), "?perf");
+  assert.equal(writeState("?perf=0", state), "?perf=0&select=citydiff:lib:Parser");
+});
+
+test("the gyroscope is off unless the address asks for it", () => {
+  assert.equal(readState("").gyro, false);
+  assert.equal(readState("?select=a:b").gyro, false);
+  assert.equal(readState("?gyro").gyro, true);
+  assert.equal(readState("?select=a:b&gyro").gyro, true);
+  assert.equal(readState("?gyro=1").gyro, true);
+  assert.equal(readState("?gyro=on").gyro, true);
+  for (const off of ["0", "false", "off", "no", "OFF"]) assert.equal(readState("?gyro=" + off).gyro, false, off);
+});
+
+test("AR is off unless the address asks for it, and is written as a bare flag", () => {
+  assert.equal(readState("").ar, false);
+  assert.equal(readState("?ar").ar, true);
+  assert.equal(readState("?ar=off").ar, false);
+  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true };
+  assert.equal(writeState("?ar=1", { ...state, ar: true }), "?ar");
+  assert.equal(writeState("?ar&gyro", { ...state, gyro: true, ar: false }), "?gyro");
+});
+
+test("the gyroscope is written as a bare flag, and dropped when it is off", () => {
+  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true };
+  assert.equal(writeState("?gyro=1&tour=t.json", { ...state, gyro: true }), "?tour=t.json&gyro");
+  assert.equal(writeState("?gyro&tour=t.json", { ...state, gyro: false }), "?tour=t.json");
 });
 
 test("a name with characters a query cannot hold is escaped", () => {

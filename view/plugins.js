@@ -11,7 +11,8 @@
 // host hands over or takes back is by id; the nodes a plugin sees are the
 // host's frozen copies, so changing one changes nothing.
 
-export const API_VERSION = 1;
+// Version 2 added city.view.gyro, city.view.setGyro and city.gyro.on.
+export const API_VERSION = 2;
 
 const KINDS = ["package", "external", "type", "function", "method", "variable"];
 const COMMAND_NAME = /^\/[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -39,7 +40,7 @@ export function freezeDeep(value) {
 //   scene                          { packages, module, range }, frozen
 //   node(id), callers(id)          frozen nodes, or null and []
 //   state()                        { selection: { node, refs }, focus: { node },
-//                                    view: { mode, bird }, sidebar: { shown },
+//                                    view: { mode, bird, gyro }, sidebar: { shown },
 //                                    diff: { node } }, nodes by id
 //   selection, focus, view,        the acts, one function per API member,
 //   sidebar, search, diff, editor  taking and returning ids
@@ -49,7 +50,7 @@ export function freezeDeep(value) {
 //   report(name, error)            a plugin failed; the viewer carries on
 export function createPlugins(host) {
   const added = { commands: [], keys: [], ring: [], sections: [], search: [], diff: [] };
-  const listeners = { selection: [], focus: [], view: [], sidebar: [], diff: [] };
+  const listeners = { selection: [], focus: [], view: [], sidebar: [], diff: [], gyro: [] };
   const loaded = [];
   let last = null;
   let seq = 0;
@@ -136,11 +137,13 @@ export function createPlugins(host) {
     const view = Object.freeze({
       get mode() { return host.state().view.mode; },
       get bird() { return host.state().view.bird; },
+      get gyro() { return host.state().view.gyro; },
       setMode: live((mode) => {
         need(mode === "overview" || mode === "changes", 'city.view.setMode takes "overview" or "changes"');
         host.view.setMode(mode);
       }),
       setBird: live((on) => { host.view.setBird(!!on); }),
+      setGyro: live((on) => !!host.view.setGyro(!!on), false),
       resetCamera: live(() => { host.view.resetCamera(); }),
       onChange: listen("view"),
     });
@@ -246,9 +249,18 @@ export function createPlugins(host) {
       }, false),
     });
 
+    // The phone's own readings, as they come: not a change of the view, so
+    // not held for publish.
+    const gyro = Object.freeze({
+      on: live((fn) => {
+        need(isFn(fn), "city.gyro.on takes a function");
+        return track(plugin, listeners.gyro, { plugin, fn: guard(plugin, fn) }, null);
+      }, noop),
+    });
+
     return Object.freeze({
       version: API_VERSION,
-      scene, selection, focus, view, sidebar, search, commands, keys, ring, diff, editor,
+      scene, selection, focus, view, sidebar, search, commands, keys, ring, diff, editor, gyro,
     });
   }
 
@@ -331,7 +343,7 @@ export function createPlugins(host) {
     const event = {
       selection: () => ({ node: host.node(now.selection.node) || null, refs: now.selection.refs }),
       focus: () => ({ node: host.node(now.focus.node) || null }),
-      view: () => ({ mode: now.view.mode, bird: now.view.bird }),
+      view: () => ({ mode: now.view.mode, bird: now.view.bird, gyro: now.view.gyro }),
       sidebar: () => ({ shown: now.sidebar.shown }),
       diff: () => ({ node: host.node(now.diff.node) || null }),
     };
@@ -340,6 +352,14 @@ export function createPlugins(host) {
       const e = Object.freeze(event[ns]());
       for (const entry of [...listeners[ns]]) entry.fn(e);
     }
+  }
+
+  // gyro hands one reading of the phone to the city.gyro.on listeners, as
+  // soon as it comes. A reading nobody listens for is not even copied.
+  function gyro(reading) {
+    if (!listeners.gyro.length) return;
+    const e = freezeDeep(structuredClone(reading));
+    for (const entry of [...listeners.gyro]) entry.fn(e);
   }
 
   // hits are the plugins' search hits for query: existing nodes only, each
@@ -386,6 +406,7 @@ export function createPlugins(host) {
   return {
     load,
     publish,
+    gyro,
     disable: (name) => {
       const plugin = loaded.find((p) => p.name === name);
       if (plugin) disable(plugin);

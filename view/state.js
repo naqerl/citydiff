@@ -1,17 +1,19 @@
 // The view's place in the address bar (#22): what is selected, the mode, the
-// call direction and the two sidebars. A reload comes back to the same view,
-// and a link to it opens on the same node. It is written for a person to read
-// and edit:
+// call direction, the two sidebars, whether the phone turns the city (?gyro,
+// gyro.js) and whether it opens the city on a real table (?ar, ar.js). A
+// reload comes back to the same view, and a link to it opens on the same
+// node. It is written for a person to read and edit:
 //
 //   ?select=citydiff:lib:diff:TestCoolStuff&mode=changes&refs=callers&side=closed
 //
 // A default is left out, so the bare city has a bare address. The camera is
 // not here: restoring the selection flies to it the way a click does.
 
-// The parameters this file owns. Any other parameter (tour, check) is kept.
+// The parameters this file owns. Any other parameter (tour, check) is kept,
+// and one that is a bare flag (?perf) stays bare.
 // enter= and fn= are the older debug forms of select=: read once at load, then
 // dropped, so a later Escape is not undone by the next reload.
-export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside", "enter", "fn"];
+export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside", "gyro", "ar", "enter", "fn"];
 
 // pathOf turns an id into its steps: citydiff/lib/diff is citydiff:lib:diff.
 export function pathOf(id) {
@@ -83,7 +85,14 @@ export function readState(search) {
     refs: params.get("refs") === "callers" ? "callers" : "calls",
     side: params.get("side") !== "closed",
     tourSide: params.get("tourside") !== "closed",
+    gyro: flag(params, "gyro"),
+    ar: flag(params, "ar"),
   };
+}
+
+// flag reads a bare flag: ?gyro, or ?gyro with anything but an off word.
+function flag(params, name) {
+  return params.has(name) && !["0", "false", "off", "no"].includes(params.get(name).trim().toLowerCase());
 }
 
 // writeState puts the view into a query string, keeping the parameters it
@@ -97,8 +106,10 @@ export function writeState(search, state) {
   if (state.refs === "callers") out.push(["refs", "callers"]);
   if (state.side === false) out.push(["side", "closed"]);
   if (state.tourSide === false) out.push(["tourside", "closed"]);
+  if (state.gyro) out.push(["gyro", ""]);
+  if (state.ar) out.push(["ar", ""]);
   if (!out.length) return "";
-  return "?" + out.map(([key, value]) => readable(key) + "=" + readable(value)).join("&");
+  return "?" + out.map(([key, value]) => (value === "" ? readable(key) : readable(key) + "=" + readable(value))).join("&");
 }
 
 // URLSearchParams escapes : / @ and turns a space into +. They are all safe in
