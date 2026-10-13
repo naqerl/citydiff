@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -134,6 +135,8 @@ func (h *hub) observation(w http.ResponseWriter, r *http.Request) {
 		h.postTour(w, r, obs)
 	case r.Method == http.MethodPost && rest == "api/tour":
 		h.checkPosted(w, r, obs)
+	case strings.HasPrefix(rest, "api/tours/"):
+		h.tourByName(w, r, obs, strings.TrimPrefix(rest, "api/tours/"))
 	case r.Method == http.MethodGet && rest == "api/refs":
 		h.refs(w, obs)
 	case r.Method == http.MethodGet && rest == "api/diff":
@@ -200,6 +203,47 @@ func (h *hub) listTours(w http.ResponseWriter, obs observe.Obs) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// tourByName deletes one stored tour. Replacing a tour is a DELETE followed by
+// a POST, because POST refuses a name that is already stored.
+func (h *hub) tourByName(w http.ResponseWriter, r *http.Request, obs observe.Obs, name string) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.authorize(w, r) {
+		return
+	}
+	if !observe.ValidName(name) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"problems": []tour.Problem{{Field: "script", Message: "tour name must be letters, digits, _ and -"}},
+		})
+		return
+	}
+	if err := h.store.DeleteTour(obs.ID, name); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
+}
+
+// refreshClone brings the observation's clone up to date before an uploaded
+// tour is resolved against it, then drops the scenes cached for that clone. It
+// is the upload path only: the unauthenticated pre-check (checkPosted) is not
+// an upload and must not be a fetch trigger. A failed fetch does not fail the
+// upload: the tour is judged against what the clone still holds, and the caller
+// reports the error. The remote is checked as public again before the fetch.
+func (h *hub) refreshClone(ctx context.Context, obs observe.Obs) (bool, error) {
+	if h.public != nil {
+		if err := h.public(ctx, obs.Remote); err != nil {
+			return false, err
+		}
+	}
+	err := h.refresh(ctx, obs.Remote, obs.Repo)
+	h.scenes.invalidate(obs.Repo)
+	return err == nil, err
+}
+
 func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) {
 	if !h.authorize(w, r) {
 		return
@@ -218,6 +262,7 @@ func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) 
 		problem(w, "range", errors.New("a tour needs a range"))
 		return
 	}
+	refreshed, refreshErr := h.refreshClone(r.Context(), obs)
 	held, err := h.scenes.get(r.Context(), obs.Repo, script.Range)
 	if err != nil {
 		problem(w, "range", err)
@@ -248,12 +293,17 @@ func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) 
 		problem(w, "script", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"name":  name,
-		"title": script.Title,
-		"range": script.Range,
-		"url":   pageURL(r, obs.ID, url.Values{"tour": {name}}.Encode()),
-	})
+	reply := map[string]any{
+		"name":      name,
+		"title":     script.Title,
+		"range":     script.Range,
+		"url":       pageURL(r, obs.ID, url.Values{"tour": {name}}.Encode()),
+		"refreshed": refreshed,
+	}
+	if refreshErr != nil {
+		reply["refresh_error"] = refreshErr.Error()
+	}
+	writeJSON(w, http.StatusCreated, reply)
 }
 
 // checkPosted resolves a script the page already has, against the scene that

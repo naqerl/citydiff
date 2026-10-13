@@ -166,6 +166,22 @@ func (s *Store) PutTour(id, name string, raw []byte) error {
 	return os.WriteFile(path, raw, 0o644)
 }
 
+// DeleteTour removes one stored script. The name is validated before it is
+// joined into a path, so a name from a URL cannot leave the tours directory.
+func (s *Store) DeleteTour(id, name string) error {
+	if !ValidName(name) {
+		return errors.New("unknown tour")
+	}
+	if _, err := s.Load(id); err != nil {
+		return err
+	}
+	path := filepath.Join(s.root, "obs", id, "tours", name+".json")
+	if err := os.Remove(path); err != nil {
+		return errors.New("unknown tour")
+	}
+	return nil
+}
+
 // HasTour reports whether name is already stored.
 func (s *Store) HasTour(id, name string) bool {
 	_, err := s.Tour(id, name)

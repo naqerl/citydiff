@@ -2,6 +2,7 @@ package observe
 
 import (
 	"context"
+	"strconv"
 	"sync"
 )
 
@@ -21,6 +22,7 @@ type Cache[T any] struct {
 	mu      sync.Mutex
 	buckets map[string]*bucket[T]
 	flights map[string]*flight[T]
+	gen     map[string]uint64
 }
 
 type bucket[T any] struct {
@@ -51,15 +53,17 @@ func NewCache[T any](ranges, builds int) *Cache[T] {
 		sem:     make(chan struct{}, builds),
 		buckets: map[string]*bucket[T]{},
 		flights: map[string]*flight[T]{},
+		gen:     map[string]uint64{},
 	}
 }
 
 // Get returns the cached value for key, building it when it is missing.
 // overview values are kept on their own and are not pushed out by ranges.
 func (c *Cache[T]) Get(ctx context.Context, bucket, key string, overview bool, build func(context.Context) (T, error)) (T, error) {
-	id := bucket + "\x00" + key
 	for {
 		c.mu.Lock()
+		gen := c.gen[bucket]
+		id := flightID(bucket, gen, key)
 		if b := c.buckets[bucket]; b != nil {
 			if v, ok := b.lookup(key, overview); ok {
 				c.mu.Unlock()
@@ -79,11 +83,18 @@ func (c *Cache[T]) Get(ctx context.Context, bucket, key string, overview bool, b
 		f := &flight[T]{done: make(chan struct{})}
 		c.flights[id] = f
 		c.mu.Unlock()
-		return c.run(ctx, id, bucket, key, overview, build, f)
+		return c.run(ctx, id, bucket, gen, key, overview, build, f)
 	}
 }
 
-func (c *Cache[T]) run(ctx context.Context, id, name, key string, overview bool, build func(context.Context) (T, error), f *flight[T]) (val T, err error) {
+// flightID names an in-flight build. The bucket's generation is part of the
+// name, so a request that arrives after Invalidate starts a fresh build
+// instead of joining one that began before it.
+func flightID(bucket string, gen uint64, key string) string {
+	return bucket + "\x00" + strconv.FormatUint(gen, 10) + "\x00" + key
+}
+
+func (c *Cache[T]) run(ctx context.Context, id, name string, gen uint64, key string, overview bool, build func(context.Context) (T, error), f *flight[T]) (val T, err error) {
 	defer func() {
 		c.mu.Lock()
 		f.val, f.err = val, err
@@ -104,7 +115,9 @@ func (c *Cache[T]) run(ctx context.Context, id, name, key string, overview bool,
 		return zero, err
 	}
 	c.mu.Lock()
-	c.store(name, key, overview, val)
+	if gen == c.gen[name] {
+		c.store(name, key, overview, val)
+	}
 	c.mu.Unlock()
 	return val, nil
 }
@@ -157,6 +170,18 @@ func (b *bucket[T]) touch(key string) {
 			return
 		}
 	}
+}
+
+// Invalidate drops every cached value for bucket, so the next Get rebuilds
+// them. The bucket is the clone, so every observation sharing the clone is
+// invalidated when the clone's refs move. The generation bump also keeps a
+// build that began before this call from storing its value into the bucket,
+// and keeps a later Get from joining that build's flight.
+func (c *Cache[T]) Invalidate(bucket string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gen[bucket]++
+	delete(c.buckets, bucket)
 }
 
 // Has reports whether key is cached. It is for tests.

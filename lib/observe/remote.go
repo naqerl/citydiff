@@ -19,6 +19,8 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -192,8 +194,7 @@ func Clone(ctx context.Context, canonical, dest string, limit int64) error {
 			return nil
 		}
 	}
-	key := RepoKey(canonical)
-	lock := cloneLock(key)
+	lock := cloneLock(dest)
 	lock.Lock()
 	defer lock.Unlock()
 	if repo, err := gogit.PlainOpen(dest); err == nil {
@@ -223,6 +224,84 @@ func Clone(ctx context.Context, canonical, dest string, limit int64) error {
 		return err
 	}
 	return os.Rename(part, dest)
+}
+
+// Refresh fetches a clone that already exists, so an observation of a moving
+// branch sees the commits that arrived since the clone. It advances the local
+// default branch and its working tree to the remote's, because the plain
+// overview is read from the working tree. The clone is checked against limit
+// without deleting it: a refresh that would push the clone past the limit
+// leaves the clone in place and reports the error.
+//
+// The remote must already have passed Public. Refresh takes the same lock as
+// Clone for the clone's key, so two refreshes of one remote cannot overlap.
+func Refresh(ctx context.Context, canonical, dest string, limit int64) error {
+	if _, err := Canonical(canonical); err != nil {
+		return err
+	}
+	if limit <= 0 {
+		limit = MaxCloneBytes
+	}
+	installClient()
+	repo, err := gogit.PlainOpen(dest)
+	if err != nil {
+		return err
+	}
+	if _, err := repo.Head(); err != nil {
+		return err
+	}
+	lock := cloneLock(dest)
+	lock.Lock()
+	defer lock.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
+	defer cancel()
+	err = repo.FetchContext(ctx, &gogit.FetchOptions{
+		RemoteName: "origin",
+		RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+		Prune:      true,
+		Tags:       gogit.AllTags,
+		Force:      true,
+	})
+	if err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
+		if errors.Is(err, transport.ErrAuthenticationRequired) {
+			return errors.New("only a public remote")
+		}
+		return err
+	}
+	if err := followDefaultBranch(repo); err != nil {
+		return err
+	}
+	n, err := dirBytes(dest)
+	if err != nil {
+		return err
+	}
+	if n > limit {
+		return fmt.Errorf("repository is larger than %d bytes", limit)
+	}
+	return nil
+}
+
+// followDefaultBranch moves the checked-out branch to its origin counterpart
+// when a fetch advanced it. Cloning checks out the default branch only, so the
+// worktree behind the overview has to move with the ref.
+func followDefaultBranch(repo *gogit.Repository) error {
+	head, err := repo.Head()
+	if err != nil {
+		return err
+	}
+	if !head.Name().IsBranch() {
+		return nil
+	}
+	remote, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", head.Name().Short()), true)
+	if err != nil || remote.Hash() == head.Hash() {
+		// The remote no longer has the branch, or the branch did not move.
+		return nil
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	return wt.Reset(&gogit.ResetOptions{Commit: remote.Hash(), Mode: gogit.HardReset})
 }
 
 // withinLimit deletes root when its files add up to more than limit.
@@ -255,19 +334,29 @@ func dirBytes(root string) (int64, error) {
 
 var (
 	cloneMu    sync.Mutex
-	cloneLocks = map[string]*sync.Mutex{}
+	cloneLocks = map[string]*sync.RWMutex{}
 	clientOnce sync.Once
 )
 
-func cloneLock(key string) *sync.Mutex {
+// cloneLock is the lock for one clone, keyed by the clone's directory. Clone
+// and Refresh take it for writing; a scene build that walks the worktree takes
+// it for reading, so a fetch cannot resettle the tree under a build and two
+// builds can still run together.
+func cloneLock(repo string) *sync.RWMutex {
 	cloneMu.Lock()
 	defer cloneMu.Unlock()
-	m, ok := cloneLocks[key]
+	m, ok := cloneLocks[repo]
 	if !ok {
-		m = &sync.Mutex{}
-		cloneLocks[key] = m
+		m = &sync.RWMutex{}
+		cloneLocks[repo] = m
 	}
 	return m
+}
+
+// RepoLock is the clone's lock, keyed by the clone's directory. Clone and
+// Refresh write it; a reader that walks the clone's worktree reads it.
+func RepoLock(repo string) *sync.RWMutex {
+	return cloneLock(repo)
 }
 
 func installClient() {

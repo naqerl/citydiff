@@ -189,15 +189,17 @@ func runObserveOpen(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// hub is one observation server. public and ensure are replaceable in tests:
-// the production ones refuse a remote that is not public https, then clone it.
+// hub is one observation server. public, ensure and refresh are replaceable
+// in tests: the production ones refuse a remote that is not public https,
+// then clone or fetch it.
 type hub struct {
-	store  *observe.Store
-	scenes *sceneCache
-	key    string
-	public func(ctx context.Context, canonical string) error
-	ensure func(ctx context.Context, canonical string) (string, error)
-	cards  cardCache
+	store   *observe.Store
+	scenes  *sceneCache
+	key     string
+	public  func(ctx context.Context, canonical string) error
+	ensure  func(ctx context.Context, canonical string) (string, error)
+	refresh func(ctx context.Context, canonical, repo string) error
+	cards   cardCache
 }
 
 func newHub(store *observe.Store, key string) *hub {
@@ -211,6 +213,9 @@ func newHub(store *observe.Store, key string) *hub {
 			return "", err
 		}
 		return dest, nil
+	}
+	h.refresh = func(ctx context.Context, canonical, repo string) error {
+		return observe.Refresh(ctx, canonical, repo, observe.MaxCloneBytes)
 	}
 	return h
 }
@@ -253,12 +258,23 @@ func newSceneCache() *sceneCache {
 	return &sceneCache{inner: observe.NewCache[*heldScene](8, 2)}
 }
 
+func (c *sceneCache) invalidate(repo string) {
+	c.inner.Invalidate(repo)
+}
+
 func (c *sceneCache) get(ctx context.Context, repo, commitRange string) (*heldScene, error) {
 	key, overview, err := sceneKey(repo, commitRange)
 	if err != nil {
 		return nil, err
 	}
 	return c.inner.Get(ctx, repo, key, overview, func(context.Context) (*heldScene, error) {
+		// buildSnapshot reads the clone's worktree, and Refresh resets that
+		// worktree in place. Reading the clone's lock keeps a build from seeing
+		// half of the old tree and half of the new one, while still letting two
+		// builds run together.
+		lock := observe.RepoLock(repo)
+		lock.RLock()
+		defer lock.RUnlock()
 		snap, err := buildSnapshot(repo, commitRange)
 		if err != nil {
 			return nil, err
