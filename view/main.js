@@ -4,6 +4,7 @@ import { deletedFirst } from "./changes.js";
 import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
+import { GYRO_GAIN, attitude, createShake, gyroWanted, orbitStep, turnBetween } from "./gyro.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf, clearDir, steepDir } from "./viewport.js";
 import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
@@ -491,6 +492,12 @@ let pluginWarning = "";
 let pluginSections = 0;
 let pluginsQueued = false;
 let diffNode = null;
+// The gyroscope (?gyro, see mountGyro): yaw and pitch are the turn the device
+// has made that the camera has not caught up with yet, in radians of camera;
+// last is the attitude it was read from. note is what the line under the
+// title says while the gyroscope cannot start, and asking, while it waits
+// for a tap to ask the person, stops the waiting.
+const gyro = { on: false, last: null, yaw: 0, pitch: 0, note: "", asking: null };
 let searchHits = [];
 let commandHits = [];
 let searchCursor = 0;
@@ -1694,6 +1701,7 @@ async function main() {
   loading = false;
   requestFrame();
   void loadPlugins();
+  mountGyro();
   tourUI = mountTour({
     apply: applyTourStep,
     clear: clearTour,
@@ -4675,7 +4683,8 @@ function updateHUD() {
   renderDetail();
 }
 
-// The line under the title: a snapshot's hint, a skin's warning.
+// The line under the title: a snapshot's hint, a skin's warning, why the
+// gyroscope has not started.
 function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
@@ -4683,6 +4692,7 @@ function updateNote() {
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   if (pluginWarning) note = note ? pluginWarning + "  ·  " + note : pluginWarning;
+  if (gyro.note) note = note ? gyro.note + "  ·  " + note : gyro.note;
   hud.note.textContent = note;
 }
 
@@ -5929,6 +5939,136 @@ function flyCamera(dt, now) {
   return true;
 }
 
+// ?gyro (gyro.js): on a phone or a tablet the city turns with the device, and
+// a shake is the 0 key.
+const gyroShake = createShake();
+// The camera follows the phone with this time constant, so the hand's tremor
+// does not shake the city, and stops once it is this close behind it.
+const GYRO_EASE_S = 0.08;
+const GYRO_STILL = 0.0025;
+
+// The gyroscope moves the camera only where the keys could: not under the
+// theme menu, on the bird view's map, under the action ring, nvim or the
+// diff, or during /launch.
+function gyroFree() {
+  return !!laid && !loading && !skinPicking && !skinRevealing && !bird.on && !ringUp &&
+    !rocket.showing() && !editorActive() && !diffActive();
+}
+
+function gyroSay(text) {
+  gyro.note = text;
+  updateNote();
+}
+
+// mountGyro starts the gyroscope when the address asks for it on a touch
+// screen. A browser hands the device's motion only to a secure page. iOS
+// sends none until the person has said yes, which it asks from a tap; a
+// browser that has the same question but sends readings anyway never needs
+// the tap, and the first reading takes the question away.
+function mountGyro() {
+  if (!gyroWanted(location.search) || !touchUI.matches) return;
+  if (!window.isSecureContext) {
+    gyroSay("The gyroscope needs https.");
+    return;
+  }
+  if (typeof window.DeviceOrientationEvent === "undefined") return;
+  gyro.on = true;
+  window.addEventListener("deviceorientation", onGyroOrientation);
+  window.addEventListener("devicemotion", onGyroMotion);
+  // The phone may be turned any way while the page is away: the first reading
+  // back is a new start, not a turn.
+  document.addEventListener("visibilitychange", () => { gyro.last = null; });
+  const asks = [window.DeviceOrientationEvent, window.DeviceMotionEvent].filter((kind) => kind && typeof kind.requestPermission === "function");
+  if (!asks.length) return;
+  const listen = (on) => {
+    for (const type of ["touchend", "click"]) {
+      if (on) window.addEventListener(type, ask);
+      else window.removeEventListener(type, ask);
+    }
+  };
+  function ask() {
+    listen(false);
+    // Both are asked inside the tap: iOS refuses a request made after it.
+    Promise.all(asks.map((kind) => kind.requestPermission())).then((answers) => {
+      gyro.asking = null;
+      gyroSay(answers.every((answer) => answer === "granted") ? "" : "The gyroscope was not allowed.");
+    }, () => {
+      // Not a tap the browser counts: the next one asks.
+      if (gyro.asking) listen(true);
+    });
+  }
+  gyro.asking = () => {
+    gyro.asking = null;
+    listen(false);
+    gyroSay("");
+  };
+  gyroSay("Tap to let the gyroscope turn the city.");
+  listen(true);
+}
+
+function screenAngle() {
+  if (screen.orientation && typeof screen.orientation.angle === "number") return screen.orientation.angle;
+  return Number(window.orientation) || 0;
+}
+
+function onGyroOrientation(event) {
+  if (event.beta == null && event.gamma == null) return;
+  if (gyro.asking) gyro.asking();
+  const now = attitude(event.alpha, event.beta, event.gamma);
+  const prev = gyro.last;
+  gyro.last = now;
+  if (!prev) return;
+  // A turn made while the camera is not the gyroscope's, or while the viewer
+  // flies it somewhere, is dropped rather than played back afterwards.
+  if (tween || !gyroFree()) {
+    gyro.yaw = 0;
+    gyro.pitch = 0;
+    return;
+  }
+  const turn = turnBetween(prev, now, screenAngle());
+  gyro.yaw += turn.yaw * GYRO_GAIN;
+  gyro.pitch += turn.pitch * GYRO_GAIN;
+  if (Math.hypot(gyro.yaw, gyro.pitch) > GYRO_STILL) requestFrame();
+}
+
+function onGyroMotion(event) {
+  const bare = event.acceleration;
+  const full = event.accelerationIncludingGravity;
+  let shook = false;
+  if (bare && bare.x != null) shook = gyroShake.push(bare.x, bare.y || 0, bare.z || 0, event.timeStamp);
+  else if (full && full.x != null) shook = gyroShake.pushWithGravity(full.x, full.y || 0, full.z || 0, event.timeStamp);
+  if (!shook || !gyroFree()) return;
+  if (tourUI) tourUI.userTookOver();
+  resetCamera();
+  noteActivity();
+  requestFrame();
+}
+
+// gyroStep eases the camera along the turn the device made: a part of what is
+// owed each frame, so the camera is a few frames behind the phone.
+function gyroStep(dt) {
+  if (!gyro.on) return false;
+  if (tween || !gyroFree()) {
+    gyro.yaw = 0;
+    gyro.pitch = 0;
+    return false;
+  }
+  if (Math.hypot(gyro.yaw, gyro.pitch) <= GYRO_STILL) return false;
+  const k = 1 - Math.exp(-dt / GYRO_EASE_S);
+  const yaw = gyro.yaw * k;
+  const pitch = gyro.pitch * k;
+  gyro.yaw -= yaw;
+  gyro.pitch -= pitch;
+  const next = orbitStep(camera.position, controls.target, yaw, pitch, {
+    minPolar: controls.minPolarAngle,
+    maxPolar: controls.maxPolarAngle,
+  });
+  camera.position.set(next.x, next.y, next.z);
+  endIntro();
+  noteActivity();
+  return true;
+}
+
 // On a phone or a tablet the city's resolution follows how fast its frames
 // come. When the frames drawn back to back run slower than about 45 a second,
 // the pixel ratio steps down a quarter, to 1 at the least; when they run at
@@ -6046,6 +6186,7 @@ function animate(now) {
   const show = rocket.tick(dt);
   let tweening = false;
   let flying = false;
+  let turning = false;
   if (show) {
     camera.position.copy(show.pos);
     controls.target.copy(show.target);
@@ -6054,6 +6195,7 @@ function animate(now) {
   } else {
     tweening = tickTween(t);
     flying = flyCamera(dt, t);
+    turning = gyroStep(dt);
     controls.update();
   }
   const moved = tweening || flying ||
@@ -6068,7 +6210,7 @@ function animate(now) {
   // are on screen. It is cheap — one uniform write each, all of it on the GPU —
   // so the only cost is the frame itself, and a frame that carries nothing but
   // decoration is paced lower than one the user is driving.
-  const motion = tweening || viewDirty || (flying && !idleSpin);
+  const motion = tweening || turning || viewDirty || (flying && !idleSpin);
   flushAllArcs();
   const flowing = tickFlows(dt);
   const fading = tickThemeFade(t);
@@ -6098,7 +6240,7 @@ function animate(now) {
   // phone the city was drawn twice as often for motion nobody is driving, and
   // the heat that makes is what slows the phone down a minute later. Anything
   // the user drives, and every transition, still draws on every frame.
-  const driven = tweening || viewDirty || hovered || fading || launching || (flying && !idleSpin) || (moved && !idleSpin);
+  const driven = tweening || turning || viewDirty || hovered || fading || launching || (flying && !idleSpin) || (moved && !idleSpin);
   decorBudget = Math.min(DECOR_FRAME_MS, decorBudget + (t - lastDecor));
   lastDecor = t;
   const decorDue = decorBudget >= DECOR_FRAME_MS - 1.5;

@@ -93,6 +93,13 @@ test("other parameters are kept, and stale state is replaced", () => {
   assert.equal(writeState("?tour=./t.json&mode=changes&select=x:y", state), "?tour=./t.json&select=citydiff:lib:Parser");
 });
 
+test("a flag stays a bare flag when the view is written", () => {
+  const state = { select: "citydiff:lib:Parser", mode: "overview", refs: "calls", side: true, tourSide: true };
+  assert.equal(writeState("?gyro", state), "?gyro&select=citydiff:lib:Parser");
+  assert.equal(writeState("?gyro&select=x:y", { ...state, select: "" }), "?gyro");
+  assert.equal(writeState("?gyro=off", state), "?gyro=off&select=citydiff:lib:Parser");
+});
+
 test("a name with characters a query cannot hold is escaped", () => {
   const query = writeState("", { select: "citydiff:a&b c", mode: "overview", refs: "calls", side: true, tourSide: true });
   assert.equal(query, "?select=citydiff:a%26b%20c");

@@ -8,7 +8,8 @@
 // A default is left out, so the bare city has a bare address. The camera is
 // not here: restoring the selection flies to it the way a click does.
 
-// The parameters this file owns. Any other parameter (tour, check) is kept.
+// The parameters this file owns. Any other parameter (tour, check, gyro) is
+// kept, and one that is a bare flag (?gyro) stays bare.
 // enter= and fn= are the older debug forms of select=: read once at load, then
 // dropped, so a later Escape is not undone by the next reload.
 export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside", "enter", "fn"];
@@ -98,7 +99,7 @@ export function writeState(search, state) {
   if (state.side === false) out.push(["side", "closed"]);
   if (state.tourSide === false) out.push(["tourside", "closed"]);
   if (!out.length) return "";
-  return "?" + out.map(([key, value]) => readable(key) + "=" + readable(value)).join("&");
+  return "?" + out.map(([key, value]) => (value === "" ? readable(key) : readable(key) + "=" + readable(value))).join("&");
 }
 
 // URLSearchParams escapes : / @ and turns a space into +. They are all safe in
