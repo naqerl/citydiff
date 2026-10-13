@@ -6015,7 +6015,7 @@ function drawCity() {
     placeHover();
   }
   if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
-  holo.place(camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+  holo.place(camera, renderer.domElement.clientHeight);
   renderer.render(scene, camera);
 }
 
