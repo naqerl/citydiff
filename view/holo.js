@@ -32,6 +32,13 @@ export const HALO_PX = 146;
 // would be a sky of glowing balls: the pool never grows beyond it, and a module
 // that cannot get a sphere is simply not drawn.
 export const MAX_HOLOS = 18;
+// Two spheres are too close on screen when their centres are nearer than this
+// much of a diameter: a little overlap reads as a cluster of light, a sphere
+// inside another reads as neither name. The one that cannot have its own place
+// is the one that is not drawn (the selection always has one).
+const CROWD = 0.84;
+// How fast a sphere gives way to, or takes back, a place on screen, in seconds.
+const CROWD_S = 0.15;
 // The band covers this much of the equator, centred on the eye: enough
 // curvature to read as a ring of text round a sphere, and the ends stay
 // inside the silhouette instead of wrapping behind it.
@@ -176,6 +183,7 @@ export function createHolo() {
   const pool = new Map();
   const ink = new THREE.Color(0x23afd0);
   const bandInk = new THREE.Color(0xffffff);
+  const centre = new THREE.Vector3();
   let clock = 0;
 
   function make(id) {
@@ -216,6 +224,7 @@ export function createHolo() {
       id, ctx, texture, shell, band, pivot, base, waves, group: holder,
       name: null, spot: null, radius: 1, px: HOLO_PX,
       shown: false, show: 0, age: 0, primary: false,
+      rank: 0, crowd: 1, crowdWant: 1,
     };
     paintBand(ctx, "");
     pool.set(id, inst);
@@ -267,6 +276,7 @@ export function createHolo() {
           paintBand(inst.ctx, item.name);
           inst.texture.needsUpdate = true;
         }
+        inst.rank = wanted.size - 1;
         inst.primary = !!item.primary;
         inst.px = item.primary ? HOLO_PX : HALO_PX;
         inst.spot = { x: item.x, y: item.y, z: item.z, apex: item.apex || 0 };
@@ -291,12 +301,22 @@ export function createHolo() {
     // top of the module's own call arcs and the tallest roof the city is drawn
     // with are the floor it stands on, so a name never sits in the way of the
     // thing it is naming, and nothing it is showing off ends up buried in a
-    // tower beside it. `height` is the canvas in CSS pixels, which is what a
-    // size fixed on screen is measured in.
-    place(camera, height) {
+    // tower beside it. `width` and `height` are the canvas in CSS pixels, which
+    // is what a size fixed on screen is measured in.
+    //
+    // Neighbours stand on the same floor and can end up on the same spot: two
+    // modules side by side are a hundred pixels apart when the camera is on
+    // them. The spheres are placed in priority order — the selection first,
+    // then the order they were named — and one that has no room of its own is
+    // the one that gives way, the way the bird view's district labels do. It
+    // fades rather than blinking out, so a camera move that frees a place is
+    // not a flicker.
+    place(camera, width, height) {
       const px = Math.max(1, height);
-      for (const inst of pool.values()) {
-        if (!inst.group.visible || !inst.spot) continue;
+      const wide = Math.max(1, width);
+      const seen = [];
+      const order = [...pool.values()].filter((inst) => inst.group.visible && inst.spot).sort((a, b) => a.rank - b.rank);
+      for (const inst of order) {
         const spot = inst.spot;
         const dist = camera.position.distanceTo(spot);
         const perPixel = (2 * Math.tan((camera.fov * Math.PI) / 360) * dist) / px;
@@ -306,6 +326,17 @@ export function createHolo() {
         inst.group.position.set(spot.x, spot.y + (rest - spot.y) * rise, spot.z);
         inst.group.scale.setScalar(inst.radius);
         inst.pivot.lookAt(camera.position);
+        inst.crowdWant = 1;
+        const at = centre.set(spot.x, spot.y + (rest - spot.y) * rise, spot.z).project(camera);
+        const sx = (at.x * 0.5 + 0.5) * wide;
+        const sy = (-at.y * 0.5 + 0.5) * px;
+        const room = inst.px * 0.5;
+        const crowd = inst.rank > 0 && seen.some((p) => Math.abs(p.x - sx) < p.room + room && Math.abs(p.y - sy) < p.room + room);
+        if (crowd) {
+          inst.crowdWant = 0;
+          continue;
+        }
+        if (inst.shown) seen.push({ x: sx, y: sy, room: room * CROWD });
       }
     },
     // A frame's worth of show, for every sphere that is up or fading.
@@ -321,14 +352,17 @@ export function createHolo() {
           continue;
         }
         const fade = 1 - Math.pow(1 - inst.show, 3);
-        inst.shell.material.uniforms.uFade.value = fade;
+        const crowd = inst.crowd + (inst.crowdWant - inst.crowd) * Math.min(1, step / CROWD_S);
+        inst.crowd = crowd;
+        const lit = fade * crowd;
+        inst.shell.material.uniforms.uFade.value = lit;
         inst.shell.material.uniforms.uTime.value = clock;
         // The sweep runs from below the sphere to above it and round again.
         inst.shell.material.uniforms.uSweep.value = (((clock / SWEEP_S) * 2.6) % 2.6) - 1.3;
         inst.shell.scale.setScalar(1 + 0.035 * Math.sin((clock / 1.8) * Math.PI * 2));
         // The name is the one thing that must not flicker: the band fades in
         // and out with the rest, and nothing else touches its opacity.
-        inst.band.material.opacity = fade;
+        inst.band.material.opacity = lit;
         for (let i = 0; i < inst.waves.length; i++) {
           const wave = inst.waves[i];
           const at = inst.age - i * WAVE_GAP;
@@ -336,7 +370,7 @@ export function createHolo() {
           wave.visible = q >= 0;
           if (!wave.visible) continue;
           wave.scale.setScalar(0.5 + WAVE_MAX * q);
-          wave.material.opacity = Math.pow(1 - q, 1.7) * 0.7 * fade;
+          wave.material.opacity = Math.pow(1 - q, 1.7) * 0.7 * lit;
         }
       }
     },
