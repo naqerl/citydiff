@@ -1247,9 +1247,11 @@ function updateHalo() {
 // in a tower beside it.
 //
 // A module and the modules inside it share a footprint, so their spheres share
-// a place in the sky: only the lowest of a chain is drawn. The deepest module
-// is the one standing over the ground the eye is on, and the ones above it are
-// that same ground seen from further out.
+// a place in the sky: only the lowest of a chain is drawn — the module whose
+// own terrace is the one at the bottom, the one the city prints its name on,
+// rather than the modules stacked on top of it. The deepest file of a package
+// has no name of its own in the city, and the eye reads the plate, not the
+// copy stand above it.
 function insidePackage(outer, id) {
   for (let pkg = byPackage.get(id); pkg && pkg.parent; ) {
     if (pkg.parent === outer) return true;
@@ -1291,11 +1293,12 @@ function updateHolo() {
       if (found && found.pkg) add(found.pkg.id);
     }
   }
-  const list = all.filter((item) => !all.some((other) => other !== item && insidePackage(item.id, other.id)));
+  const list = all.filter((item) => !all.some((other) => other !== item && insidePackage(other.id, item.id)));
   // The module the user picked is the primary: full size, and the one that
-  // breaks the floor. When it was an upper level and is gone, the deepest
-  // module inside it speaks for it.
-  const spoke = list.find((item) => selectedId && (item.id === selectedId || insidePackage(selectedId, item.id)));
+  // breaks the floor. It is the lowest of its own chain too, so it is normally
+  // the one that is drawn; when a link brought in a package that holds it, that
+  // package stands for it.
+  const spoke = list.find((item) => item.id === selectedId) || list.find((item) => selectedId && insidePackage(item.id, selectedId));
   if (spoke) {
     spoke.primary = true;
     list.splice(list.indexOf(spoke), 1);
