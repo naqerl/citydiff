@@ -220,3 +220,35 @@ fn run(x: T, items: Vec<U>) {
 		t.Fatalf("calls =\n%+v\nwant\n%+v", got, want)
 	}
 }
+
+// A type that aliases itself is legal Rust, and real code does it: tokio writes
+// every linked-list handle as `unsafe impl ... { type Handle = Handle; }`.
+// resolveType used to follow that alias into itself until the goroutine stack
+// was gone, which is a `fatal error: stack overflow` — unrecoverable, so the
+// whole process went with it. The cycle now stops on the id it came back to.
+func TestSelfReferentialAssociatedTypeStopsResolving(t *testing.T) {
+	src := `
+mod list { pub trait Link { type Handle; type Target; } }
+struct Handle { entry: u32 }
+struct Entry;
+unsafe impl list::Link for Entry {
+    type Handle = Handle;
+    type Target = Entry;
+}
+fn take(h: Handle) -> u32 { h.entry }
+`
+	// The assertion that matters is that this returns at all.
+	files := mustParseFiles(t, lib.File{Path: "src/lib.rs", Src: []byte(src)})
+	if len(files) != 1 {
+		t.Fatalf("parsed %d files, want 1", len(files))
+	}
+	var types int
+	for _, e := range files[0].Entities {
+		if _, ok := e.(lib.TypeEntry); ok {
+			types++
+		}
+	}
+	if types == 0 {
+		t.Fatal("no type entries parsed")
+	}
+}
