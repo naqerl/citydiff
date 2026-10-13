@@ -1,18 +1,18 @@
 // The view's place in the address bar (#22): what is selected, the mode, the
-// call direction and the two sidebars. A reload comes back to the same view,
-// and a link to it opens on the same node. It is written for a person to read
-// and edit:
+// call direction, the two sidebars, and whether the phone turns the city
+// (?gyro, gyro.js). A reload comes back to the same view, and a link to it
+// opens on the same node. It is written for a person to read and edit:
 //
 //   ?select=citydiff:lib:diff:TestCoolStuff&mode=changes&refs=callers&side=closed
 //
 // A default is left out, so the bare city has a bare address. The camera is
 // not here: restoring the selection flies to it the way a click does.
 
-// The parameters this file owns. Any other parameter (tour, check, gyro) is
-// kept, and one that is a bare flag (?gyro) stays bare.
+// The parameters this file owns. Any other parameter (tour, check) is kept,
+// and one that is a bare flag (?perf) stays bare.
 // enter= and fn= are the older debug forms of select=: read once at load, then
 // dropped, so a later Escape is not undone by the next reload.
-export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside", "enter", "fn"];
+export const STATE_PARAMS = ["select", "mode", "refs", "side", "tourside", "gyro", "enter", "fn"];
 
 // pathOf turns an id into its steps: citydiff/lib/diff is citydiff:lib:diff.
 export function pathOf(id) {
@@ -75,7 +75,8 @@ export function readNode(text, index) {
 }
 
 // readState reads the view out of a query string. Anything unknown reads as
-// the default.
+// the default. gyro is a bare flag: ?gyro, or ?gyro with anything but an off
+// word.
 export function readState(search) {
   const params = new URLSearchParams(search);
   return {
@@ -84,6 +85,7 @@ export function readState(search) {
     refs: params.get("refs") === "callers" ? "callers" : "calls",
     side: params.get("side") !== "closed",
     tourSide: params.get("tourside") !== "closed",
+    gyro: params.has("gyro") && !["0", "false", "off", "no"].includes(params.get("gyro").trim().toLowerCase()),
   };
 }
 
@@ -98,6 +100,7 @@ export function writeState(search, state) {
   if (state.refs === "callers") out.push(["refs", "callers"]);
   if (state.side === false) out.push(["side", "closed"]);
   if (state.tourSide === false) out.push(["tourside", "closed"]);
+  if (state.gyro) out.push(["gyro", ""]);
   if (!out.length) return "";
   return "?" + out.map(([key, value]) => (value === "" ? readable(key) : readable(key) + "=" + readable(value))).join("&");
 }

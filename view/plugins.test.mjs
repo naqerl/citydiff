@@ -42,7 +42,7 @@ function setup(mods = {}) {
   const state = {
     selection: { node: null, refs: "calls" },
     focus: { node: null },
-    view: { mode: "overview", bird: false },
+    view: { mode: "overview", bird: false, gyro: false },
     sidebar: { shown: true },
     diff: { node: null },
   };
@@ -67,6 +67,8 @@ function setup(mods = {}) {
     view: {
       setMode(mode) { state.view.mode = mode; },
       setBird(on) { state.view.bird = on; },
+      // A phone: the gyroscope turns on when asked.
+      setGyro(on) { state.view.gyro = on; return on; },
       resetCamera() { log.push("reset"); },
     },
     sidebar: { show(open) { state.sidebar.shown = open; } },
@@ -208,6 +210,90 @@ test("listeners hear a change once, after publish, with the node itself", async 
   assert.deepEqual(heard[1], ["view", "changes", false]);
   assert.equal(city.selection.current.name, "main");
   assert.equal(city.view.mode, "changes");
+});
+
+test("a plugin turns the gyroscope on and off, and hears it in the view's change", async () => {
+  const heard = [];
+  let city = null;
+  const { plugins, load } = setup({
+    tilt: plugin((c) => {
+      city = c;
+      c.view.onChange((e) => heard.push(e.gyro));
+    }, 2),
+  });
+  await load(["tilt"]);
+  assert.equal(city.view.gyro, false);
+  assert.equal(city.view.setGyro(true), true);
+  assert.equal(city.view.gyro, true);
+  plugins.publish();
+  assert.deepEqual(heard, [true]);
+  assert.equal(city.view.setGyro(0), false);
+  plugins.publish();
+  assert.deepEqual(heard, [true, false]);
+  plugins.disable("tilt");
+  assert.equal(city.view.setGyro(true), false);
+  assert.equal(city.view.gyro, false);
+});
+
+test("setGyro is the host's answer: false where the gyroscope cannot run", async () => {
+  let city = null;
+  const { host, load } = setup({
+    tilt: plugin((c) => { city = c; }, 2),
+  });
+  // A screen with a mouse: the host never turns it on.
+  host.view.setGyro = () => false;
+  await load(["tilt"]);
+  assert.equal(city.view.setGyro(true), false);
+  assert.equal(city.view.gyro, false);
+});
+
+const reading = (yaw) => ({
+  alpha: 30, beta: 60, gamma: 0, attitude: [0.1, 0.2, 0.3, 0.9], yaw, pitch: 0,
+  acceleration: { x: 0, y: 0, z: 0 }, rotationRate: null, time: 1000,
+});
+
+test("city.gyro.on hears every reading at once, as a frozen copy, until it is undone", async () => {
+  const heard = [];
+  let city = null;
+  const { plugins, load } = setup({
+    track: plugin((c) => { city = c; }, 2),
+  });
+  await load(["track"]);
+  const stop = city.gyro.on((e) => heard.push(e));
+  const sent = reading(0.01);
+  plugins.gyro(sent);
+  // No publish: a reading is handed over as it comes.
+  assert.equal(heard.length, 1);
+  assert.equal(heard[0].yaw, 0.01);
+  assert.deepEqual(heard[0].attitude, [0.1, 0.2, 0.3, 0.9]);
+  assert.ok(Object.isFrozen(heard[0]) && Object.isFrozen(heard[0].attitude) && Object.isFrozen(heard[0].acceleration));
+  // The plugin's copy is its own: the viewer's reading stays as it was.
+  assert.notEqual(heard[0].attitude, sent.attitude);
+  assert.equal(Object.isFrozen(sent.attitude), false);
+  stop();
+  plugins.gyro(reading(0.02));
+  assert.equal(heard.length, 1);
+  assert.throws(() => city.gyro.on("yaw"), /city\.gyro\.on takes a function/);
+});
+
+test("a gyro listener that throws is reported, and one of a disabled plugin hears nothing", async () => {
+  const heard = [];
+  let city = null;
+  const { plugins, log, load } = setup({
+    broken: plugin((c) => { c.gyro.on(() => { throw new Error("tilt"); }); }, 2),
+    track: plugin((c) => { city = c; c.gyro.on((e) => heard.push(e.yaw)); }, 2),
+  });
+  await load(["broken", "track"]);
+  plugins.gyro(reading(0.5));
+  assert.ok(log.includes("report broken: tilt"));
+  assert.deepEqual(heard, [0.5]);
+  plugins.disable("track");
+  plugins.gyro(reading(0.6));
+  assert.deepEqual(heard, [0.5]);
+  // A timer the plugin forgot cannot listen again.
+  city.gyro.on((e) => heard.push(e.yaw));
+  plugins.gyro(reading(0.7));
+  assert.deepEqual(heard, [0.5]);
 });
 
 test("disabling a plugin takes back what it added, runs its undo, and leaves its city inert", async () => {

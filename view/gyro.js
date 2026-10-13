@@ -1,5 +1,6 @@
 // ?gyro: on a phone or a tablet the city turns with the device. It is off
-// unless the address asks for it, and a screen with a mouse never has it.
+// unless the address asks for it (state.js reads ?gyro) or a plugin turns it
+// on, and a screen with a mouse never has it.
 // Turning the phone left orbits the camera left around what it looks at, the
 // way a window onto the city would turn; tipping the top away raises the
 // camera to look down on it. A shake is the 0 key: the camera goes back to
@@ -12,19 +13,9 @@
 // screen), in degrees. Euler angles jump near an upright phone; the
 // quaternion they make does not, so the turn is read from quaternions.
 
-export const GYRO_PARAM = "gyro";
-
 // The camera turns twice as far as the phone: a twist of the wrist goes a
 // long way round the city.
 export const GYRO_GAIN = 2;
-
-// gyroWanted is whether the address turns the gyroscope on: ?gyro, or ?gyro
-// with anything but an off word.
-export function gyroWanted(search) {
-  const params = new URLSearchParams(search);
-  if (!params.has(GYRO_PARAM)) return false;
-  return !["0", "false", "off", "no"].includes(params.get(GYRO_PARAM).trim().toLowerCase());
-}
 
 const RAD = Math.PI / 180;
 

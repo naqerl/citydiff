@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gyroWanted, attitude, turnBetween, orbitStep, createShake, SHAKE_REST_MS } from "./gyro.js";
+import { attitude, turnBetween, orbitStep, createShake, SHAKE_REST_MS } from "./gyro.js";
 
 const DEG = Math.PI / 180;
 const near = (actual, expected, eps, what) => assert.ok(Math.abs(actual - expected) < eps, (what || "") + " " + actual + " ≠ " + expected);
@@ -19,16 +19,6 @@ function rotate(q, v) {
 }
 
 const nearVec = (actual, expected, what) => actual.forEach((c, i) => near(c, expected[i], 1e-9, what + "[" + i + "]"));
-
-test("gyro: off unless the address asks for it", () => {
-  assert.equal(gyroWanted(""), false);
-  assert.equal(gyroWanted("?select=a:b"), false);
-  assert.equal(gyroWanted("?gyro"), true);
-  assert.equal(gyroWanted("?select=a:b&gyro"), true);
-  assert.equal(gyroWanted("?gyro=1"), true);
-  assert.equal(gyroWanted("?gyro=on"), true);
-  for (const off of ["0", "false", "off", "no", "OFF"]) assert.equal(gyroWanted("?gyro=" + off), false, off);
-});
 
 test("gyro: the attitude is alpha about z, then beta about x, then gamma about y", () => {
   nearVec(attitude(0, 0, 0), [0, 0, 0, 1], "flat");

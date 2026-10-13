@@ -204,9 +204,9 @@ callers, drawn between the towers that make them. The address bar follows the vi
 a method is `…:Type:Name`), plus `side=closed` / `tourside=closed` — so a link to the viewer
 can open on a given node. On a phone or a tablet, `?gyro` lets the device turn the city:
 turning it left orbits the camera left around what it looks at, tipping its top away raises
-the camera to look down, and a shake is `0`. Without `?gyro` it is off, a screen with a mouse
-never has it, and the browser gives the page the device's motion only over https; iOS asks
-once, on the first tap.
+the camera to look down, and a shake is `0`. Without `?gyro` it is off unless a plugin turns
+it on (and the address follows), a screen with a mouse never has it, and the browser gives the
+page the device's motion only over https; iOS asks once, on the first tap.
 
 The node under the mouse is outlined in the skin's hover colour (`selection.hover`, or a hue
 none of the city's colours use). Holding the right button on the city opens the action ring

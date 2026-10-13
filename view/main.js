@@ -4,7 +4,7 @@ import { deletedFirst } from "./changes.js";
 import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layout.js";
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
-import { GYRO_GAIN, attitude, createShake, gyroWanted, orbitStep, turnBetween } from "./gyro.js";
+import { GYRO_GAIN, attitude, createShake, orbitStep, turnBetween } from "./gyro.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf, clearDir, steepDir } from "./viewport.js";
 import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
@@ -492,12 +492,15 @@ let pluginWarning = "";
 let pluginSections = 0;
 let pluginsQueued = false;
 let diffNode = null;
-// The gyroscope (?gyro, see mountGyro): yaw and pitch are the turn the device
-// has made that the camera has not caught up with yet, in radians of camera;
-// last is the attitude it was read from. note is what the line under the
-// title says while the gyroscope cannot start, and asking, while it waits
-// for a tap to ask the person, stops the waiting.
-const gyro = { on: false, last: null, yaw: 0, pitch: 0, note: "", asking: null };
+// The gyroscope (?gyro, see setGyro). wanted is what the address says, kept
+// where the gyroscope cannot run so a link still carries it to a phone; on is
+// whether it is listening. yaw and pitch are the turn the device has made
+// that the camera has not caught up with yet, in radians of camera; last is
+// the attitude it was read from, and motion the last acceleration and
+// rotation rate, for plugins. note is what the line under the title says
+// while the gyroscope cannot start, and asking, while it waits for a tap to
+// ask the person, stops the waiting.
+const gyro = { wanted: false, on: false, last: null, motion: null, yaw: 0, pitch: 0, note: "", asking: null };
 let searchHits = [];
 let commandHits = [];
 let searchCursor = 0;
@@ -1928,6 +1931,7 @@ function applyQuery() {
     resizeView();
   }
   tourSideWanted = state.tourSide;
+  gyro.wanted = state.gyro;
   urlReady = true;
   const node = readNode(state.select, nodeNames);
   if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
@@ -1967,6 +1971,7 @@ function syncURL() {
     refs: callInbound ? "callers" : "calls",
     side: !hud.side.classList.contains("is-collapsed"),
     tourSide: !tourSide || tourSide.hidden ? tourSideWanted : !tourSide.classList.contains("is-collapsed"),
+    gyro: gyro.wanted,
   });
   if (query === location.search) return;
   // Safari throws once a page rewrites its address too often. A missed write
@@ -5960,24 +5965,42 @@ function gyroSay(text) {
   updateNote();
 }
 
-// mountGyro starts the gyroscope when the address asks for it on a touch
-// screen. A browser hands the device's motion only to a secure page. iOS
-// sends none until the person has said yes, which it asks from a tap; a
-// browser that has the same question but sends readings anyway never needs
-// the tap, and the first reading takes the question away.
 function mountGyro() {
-  if (!gyroWanted(location.search) || !touchUI.matches) return;
-  if (!window.isSecureContext) {
-    gyroSay("The gyroscope needs https.");
-    return;
+  if (gyro.wanted) setGyro(true);
+}
+
+// setGyro turns the gyroscope on or off, for the address and for a plugin,
+// and says whether it is on. A screen with a mouse never has it, and a
+// browser hands the device's motion only to a secure page: over plain http
+// the line under the title says so.
+function setGyro(on) {
+  if (!on) {
+    gyro.wanted = false;
+    if (gyro.on || gyro.note) stopGyro("");
+  } else if (!gyro.on) {
+    if (!touchUI.matches) return false;
+    if (!window.isSecureContext) {
+      gyroSay("The gyroscope needs https.");
+      return false;
+    }
+    if (typeof window.DeviceOrientationEvent === "undefined") return false;
+    gyro.wanted = true;
+    startGyro();
   }
-  if (typeof window.DeviceOrientationEvent === "undefined") return;
+  syncURL();
+  notifyPlugins();
+  return gyro.on;
+}
+
+// iOS sends no motion until the person has said yes, which it asks only from
+// a tap: inside one (a plugin's command) it is asked at once, otherwise the
+// next tap asks. A browser that has the same question but sends readings
+// anyway never needs the tap, and the first reading takes the question away.
+function startGyro() {
   gyro.on = true;
   window.addEventListener("deviceorientation", onGyroOrientation);
   window.addEventListener("devicemotion", onGyroMotion);
-  // The phone may be turned any way while the page is away: the first reading
-  // back is a new start, not a turn.
-  document.addEventListener("visibilitychange", () => { gyro.last = null; });
+  document.addEventListener("visibilitychange", forgetAttitude);
   const asks = [window.DeviceOrientationEvent, window.DeviceMotionEvent].filter((kind) => kind && typeof kind.requestPermission === "function");
   if (!asks.length) return;
   const listen = (on) => {
@@ -5990,8 +6013,14 @@ function mountGyro() {
     listen(false);
     // Both are asked inside the tap: iOS refuses a request made after it.
     Promise.all(asks.map((kind) => kind.requestPermission())).then((answers) => {
+      if (!gyro.asking) return;
       gyro.asking = null;
-      gyroSay(answers.every((answer) => answer === "granted") ? "" : "The gyroscope was not allowed.");
+      if (answers.every((answer) => answer === "granted")) {
+        gyroSay("");
+        return;
+      }
+      stopGyro("The gyroscope was not allowed.");
+      notifyPlugins();
     }, () => {
       // Not a tap the browser counts: the next one asks.
       if (gyro.asking) listen(true);
@@ -6003,7 +6032,27 @@ function mountGyro() {
     gyroSay("");
   };
   gyroSay("Tap to let the gyroscope turn the city.");
-  listen(true);
+  if (!navigator.userActivation || navigator.userActivation.isActive) ask();
+  else listen(true);
+}
+
+function stopGyro(note) {
+  if (gyro.asking) gyro.asking();
+  gyro.on = false;
+  gyro.last = null;
+  gyro.motion = null;
+  gyro.yaw = 0;
+  gyro.pitch = 0;
+  window.removeEventListener("deviceorientation", onGyroOrientation);
+  window.removeEventListener("devicemotion", onGyroMotion);
+  document.removeEventListener("visibilitychange", forgetAttitude);
+  gyroSay(note);
+}
+
+// The phone may be turned any way while the page is away: the first reading
+// back is a new start, not a turn.
+function forgetAttitude() {
+  gyro.last = null;
 }
 
 function screenAngle() {
@@ -6015,9 +6064,22 @@ function onGyroOrientation(event) {
   if (event.beta == null && event.gamma == null) return;
   if (gyro.asking) gyro.asking();
   const now = attitude(event.alpha, event.beta, event.gamma);
-  const prev = gyro.last;
+  const turn = gyro.last ? turnBetween(gyro.last, now, screenAngle()) : { yaw: 0, pitch: 0 };
   gyro.last = now;
-  if (!prev) return;
+  // Plugins hear every reading, whatever the camera is doing (city.gyro.on).
+  if (plugins) {
+    plugins.gyro({
+      alpha: event.alpha,
+      beta: event.beta,
+      gamma: event.gamma,
+      attitude: now,
+      yaw: turn.yaw,
+      pitch: turn.pitch,
+      acceleration: gyro.motion ? gyro.motion.acceleration : null,
+      rotationRate: gyro.motion ? gyro.motion.rotationRate : null,
+      time: event.timeStamp,
+    });
+  }
   // A turn made while the camera is not the gyroscope's, or while the viewer
   // flies it somewhere, is dropped rather than played back afterwards.
   if (tween || !gyroFree()) {
@@ -6025,7 +6087,6 @@ function onGyroOrientation(event) {
     gyro.pitch = 0;
     return;
   }
-  const turn = turnBetween(prev, now, screenAngle());
   gyro.yaw += turn.yaw * GYRO_GAIN;
   gyro.pitch += turn.pitch * GYRO_GAIN;
   if (Math.hypot(gyro.yaw, gyro.pitch) > GYRO_STILL) requestFrame();
@@ -6034,6 +6095,11 @@ function onGyroOrientation(event) {
 function onGyroMotion(event) {
   const bare = event.acceleration;
   const full = event.accelerationIncludingGravity;
+  const rate = event.rotationRate;
+  gyro.motion = {
+    acceleration: bare && bare.x != null ? { x: bare.x, y: bare.y || 0, z: bare.z || 0 } : null,
+    rotationRate: rate && rate.alpha != null ? { alpha: rate.alpha, beta: rate.beta || 0, gamma: rate.gamma || 0 } : null,
+  };
   let shook = false;
   if (bare && bare.x != null) shook = gyroShake.push(bare.x, bare.y || 0, bare.z || 0, event.timeStamp);
   else if (full && full.x != null) shook = gyroShake.pushWithGravity(full.x, full.y || 0, full.z || 0, event.timeStamp);
@@ -7327,6 +7393,7 @@ function pluginHost() {
         pluginTakeOver();
         resetCamera();
       },
+      setGyro,
     },
     sidebar: { show: (open) => setSide(open) },
     search: { open: pluginSearch },
@@ -7356,7 +7423,7 @@ function pluginState() {
   return {
     selection: { node: selected ? selected.id : null, refs: callInbound ? "callers" : "calls" },
     focus: { node: focus ? focus.entity.id : null },
-    view: { mode: mode === "overlay" ? "changes" : "overview", bird: !!bird.on },
+    view: { mode: mode === "overlay" ? "changes" : "overview", bird: !!bird.on, gyro: gyro.on },
     sidebar: { shown: !hud.side.classList.contains("is-collapsed") },
     diff: { node: diffActive() ? diffNode : null },
   };
