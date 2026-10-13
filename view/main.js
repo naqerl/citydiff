@@ -1245,12 +1245,27 @@ function updateHalo() {
 // reach and the tallest roof the city is drawn with. A name never sits in the
 // way of the curves it is naming, and nothing it is showing off ends up buried
 // in a tower beside it.
+//
+// A module and the modules inside it share a footprint, so their spheres share
+// a place in the sky: only the lowest of a chain is drawn — the module whose
+// own terrace is the one at the bottom, the one the city prints its name on,
+// rather than the modules stacked on top of it. The deepest file of a package
+// has no name of its own in the city, and the eye reads the plate, not the
+// copy stand above it.
+function insidePackage(outer, id) {
+  for (let pkg = byPackage.get(id); pkg && pkg.parent; ) {
+    if (pkg.parent === outer) return true;
+    pkg = byPackage.get(pkg.parent);
+  }
+  return false;
+}
+
 function updateHolo() {
-  const list = [];
+  const all = [];
   const seen = new Set();
   let top = linkTop;
   for (const box of laid.packages) top = Math.max(top, shownOwnTop(box.id));
-  const add = (id, primary) => {
+  const add = (id) => {
     if (!id || seen.has(id)) return;
     const box = boxById.get(id);
     // A package outside the tree has no tower to stand over: the sidebar and
@@ -1258,9 +1273,9 @@ function updateHolo() {
     if (!box) return;
     seen.add(id);
     const pkg = byPackage.get(id);
-    list.push({
+    all.push({
       id,
-      primary: !!primary,
+      primary: false,
       apex: top,
       name: pkg ? pkg.name || pkg.id : id,
       x: box.x + box.w / 2,
@@ -1268,14 +1283,26 @@ function updateHolo() {
       z: box.z + box.d / 2,
     });
   };
-  if (selected && selected.kind === "package") add(selected.id, true);
+  const selectedId = selected && selected.kind === "package" ? selected.id : null;
+  if (selectedId) add(selectedId);
   if (lit && lit.packages) {
-    for (const id of lit.packages) add(id, false);
+    for (const id of lit.packages) add(id);
   } else if (lit && lit.entities) {
     for (const id of lit.entities) {
       const found = byEntity.get(id);
-      if (found && found.pkg) add(found.pkg.id, false);
+      if (found && found.pkg) add(found.pkg.id);
     }
+  }
+  const list = all.filter((item) => !all.some((other) => other !== item && insidePackage(other.id, item.id)));
+  // The module the user picked is the primary: full size, and the one that
+  // breaks the floor. It is the lowest of its own chain too, so it is normally
+  // the one that is drawn; when a link brought in a package that holds it, that
+  // package stands for it.
+  const spoke = list.find((item) => item.id === selectedId) || list.find((item) => selectedId && insidePackage(item.id, selectedId));
+  if (spoke) {
+    spoke.primary = true;
+    list.splice(list.indexOf(spoke), 1);
+    list.unshift(spoke);
   }
   holo.sync(list);
 }
@@ -5982,7 +6009,7 @@ function drawCity() {
     placeHover();
   }
   if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
-  holo.place(camera, renderer.domElement.clientHeight);
+  holo.place(camera, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
   renderer.render(scene, camera);
 }
 
