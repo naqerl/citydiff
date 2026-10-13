@@ -6838,8 +6838,18 @@ function showEditor(target) {
   return true;
 }
 
+// hasRange is true when the scene has two sides to compare. The overview is
+// one snapshot: a diff of it has no other side to ask the server for.
+function hasRange() {
+  return !!(sceneDoc && sceneDoc.range);
+}
+
 // D: the git diff of the subject, over the city. False when there is none.
+// The overview has no range, so the key does nothing there rather than raise
+// a panel whose only answer is the server's "this view is one snapshot"
+// error. The ring greys Diff out for the same reason.
 function diffSubject() {
+  if (!hasRange()) return false;
   const subject = keySubject();
   return !!showDiff(subject, diffTarget(subject, byEntity, byPackage));
 }
@@ -6881,6 +6891,14 @@ function ringState(id) {
   if (id === "forward") return can(jumpTarget(1) >= 0, "nothing later to go forward to");
   if (id === "deselect") return can(!!(selected || focus || entered || tourLit || tourLinks), "nothing is selected");
   if (id === "edit" || id === "diff") {
+    // A diff is between two sides, so the overview — one snapshot — has none
+    // to offer, whatever is selected. The ring is where that belongs and not
+    // the panel: the item never lights, so no key, mouse or finger reaches the
+    // panel to meet the server's refusal. Edit is left alone: the working tree
+    // is there in every view. The per-node reasons below are still what a
+    // ranged scene with no target says, so this test is an extra condition,
+    // not a replacement.
+    if (id === "diff" && !hasRange()) return can(false, "the overview has no range to diff");
     const target = id === "edit" ? editTarget(subject, byEntity, byPackage) : diffTarget(subject, byEntity, byPackage);
     if (target) return can(true);
     if (!subject) return can(false, "select something first");
