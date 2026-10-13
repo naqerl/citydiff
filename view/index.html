@@ -338,8 +338,12 @@
     .section-body { flex: 1 1 0; min-height: 0; overflow: hidden; }
     .section.open .section-body { overflow-y: auto; }
     /* Rows line up under the section's title, past the caret and its gap. The
-       `#detail` prefix is needed: `#detail button.row` above carries the id. */
-    #detail .section-body button.row { padding: 4px 14px 4px 32px; }
+       `#detail` prefix is needed: `#detail button.row` above carries the id.
+       A row inside an expander also reserves the search results' 3px accent
+       bar on its left edge, transparent until a hover paints it: the hover
+       mark reads the same in both lists, and the labels do not jump. The 3px
+       comes out of the padding, so the name stays where it was. */
+    #detail .section-body button.row { border-left: 3px solid transparent; padding: 4px 14px 4px 29px; }
     /* A list reads as a list when its rows alternate: the darker row, the
        lighter row, back and forth — the Finder list's stripe. The change of
        shade is the only separator there is; a rule between rows would just
@@ -386,6 +390,13 @@
        alternating list stays itself and the state still shows. The selected
        row comes after the hover, so it holds its own colour while hovered. */
     #detail button.row:hover { background-image: linear-gradient(var(--edge), var(--edge)); }
+    /* Inside an expander the hover mark is the search results' accent bar, not
+       a wash: a row lights the one node it names without recolouring itself.
+       The bar is on any hovered row, the cursor row included; only the wash
+       half is held back from `.on`, because that rule out-specifies
+       `#detail button.row.on` and would otherwise erase its `--current-bg`. */
+    #detail .section-body button.row:hover { border-left-color: var(--accent); }
+    #detail .section-body button.row:hover:not(.on) { background-image: none; }
     #detail button.row.on {
       background-image:
         linear-gradient(var(--current-bg), var(--current-bg)),

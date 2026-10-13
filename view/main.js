@@ -1430,6 +1430,12 @@ function placeHover() {
     }
   }
   hoverFills.count = boxes.length;
+  // The edge buffer is one fixed capacity, so the draw call has to stop at
+  // the boxes written above. Without this the LineSegments draws the whole
+  // buffer and the lines of every node from the last, larger hover stay on
+  // screen: the expander's head is written first, the pointer then moves down
+  // to one row, and the outline of the whole expander still shows.
+  hoverEdges.geometry.setDrawRange(0, boxes.length * HOVER_EDGES.length * 2);
   hoverFills.instanceMatrix.needsUpdate = true;
   position.needsUpdate = true;
   hoverMark.visible = true;
