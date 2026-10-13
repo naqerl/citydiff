@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"citydiff/lib"
+	"citydiff/lib/parser/internal/par"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 )
@@ -26,18 +27,22 @@ func New() Parser { return Parser{} }
 // Parse implements lib.Parser.
 // Every file is collected before calls are resolved, so a declaration in the
 // last file fills a call in the first file. Calls that do not resolve are kept.
+//
+// Parsing splits into three phases and only two of them are independent: read
+// each file into a draft, build the index, fill the calls. The first and the
+// third run across par.Workers, the index build stays between them because
+// every lookup below reads it. See resolve for the barrier and for why the
+// result is applied after the workers join.
 func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 	if src == nil {
 		return nil, errors.New("nil source")
 	}
-	parser := tree_sitter.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(tree_sitter.NewLanguage(tree_sitter_go.Language())); err != nil {
-		return nil, err
-	}
 
+	// Read the stream first. A file is the unit of the first phase, and reading
+	// in stream order is what fixes the order of the drafts, and so of the
+	// output. A go.mod yields a module root and no file of its own.
 	var mods []moduleRoot
-	var drafts []*draft
+	var files []lib.File
 	for {
 		file, err := src.Next()
 		if errors.Is(err, io.EOF) {
@@ -57,22 +62,48 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 		if !strings.HasSuffix(base, ".go") {
 			return nil, fmt.Errorf("%s is not a Go file", file.Path)
 		}
+		files = append(files, file)
+	}
+
+	// One tree-sitter parser per worker: a *tree_sitter.Parser is not safe for
+	// concurrent use, and it is cheap to give each worker its own.
+	parsers, err := newParsers(max(1, min(par.Workers(), len(files))))
+	if err != nil {
+		return nil, err
+	}
+	defer par.CloseAll(parsers)
+
+	// Phase 1: parse and walk every file. The files share nothing but the
+	// read-only source bytes, so each worker writes only its own draft and its
+	// own tree. Nothing here keeps a tree: the walk reads all it needs and the
+	// tree is closed at once, so peak memory does not hold the whole set.
+	drafts := make([]*draft, len(files))
+	errs := make([]error, len(files))
+	par.Do(len(files), parsers, func(parser *tree_sitter.Parser, i int) {
+		file := files[i]
 		tree := parser.Parse(file.Src, nil)
 		if tree == nil {
-			return nil, fmt.Errorf("parse %s returned no tree", file.Path)
+			errs[i] = fmt.Errorf("parse %s returned no tree", file.Path)
+			return
 		}
 		pkg, imports, entries, calls := walk(file.Src, tree.RootNode())
 		tree.Close()
 		assignMethodHashes(entries)
-		drafts = append(drafts, &draft{
+		drafts[i] = &draft{
 			path:     file.Path,
 			dir:      path.Dir(file.Path),
 			pkg:      pkg,
 			imports:  imports,
 			entities: entries,
 			calls:    calls,
-		})
+		}
+	})
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	assignImportPaths(drafts, mods)
 	resolve(drafts)
 
@@ -90,6 +121,21 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 }
 
 var _ lib.Parser = Parser{}
+
+// newParsers makes n parsers with the Go grammar, one per worker.
+func newParsers(n int) ([]*tree_sitter.Parser, error) {
+	out := make([]*tree_sitter.Parser, n)
+	for i := range out {
+		p := tree_sitter.NewParser()
+		if err := p.SetLanguage(tree_sitter.NewLanguage(tree_sitter_go.Language())); err != nil {
+			p.Close()
+			par.CloseAll(out[:i])
+			return nil, err
+		}
+		out[i] = p
+	}
+	return out, nil
+}
 
 func walk(src []byte, root *tree_sitter.Node) (pkg string, imports []importUse, entries []lib.Entity, calls [][]pending) {
 	cursor := root.Walk()

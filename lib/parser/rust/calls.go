@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"citydiff/lib"
+	"citydiff/lib/parser/internal/par"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -22,23 +23,49 @@ type found struct {
 	end   int
 }
 
-func resolve(drafts []*draft, parser *tree_sitter.Parser) {
+func resolve(drafts []*draft, parsers []*tree_sitter.Parser) {
+	// buildIndex is the barrier between the two independent phases: it fills
+	// every map collect reads, and it writes each method's resolved receiver
+	// back into its meta as m.recv, so no collect may start before it finishes.
+	// It is one serial pass over the entities — tens of milliseconds for a whole
+	// snapshot — so it is a shape barrier, not a cost one.
 	idx := buildIndex(drafts)
-	for _, d := range drafts {
-		for i, entity := range d.entities {
-			m := d.metas[i]
+
+	// Phase 3: collect is a second walk of a file, independent per draft and
+	// read-only against the index. Each worker fills a draft's replacement
+	// entities by index; the replacements are applied only after the workers
+	// join, so no worker can read an entity list another worker is rewriting.
+	// A draft's tree goes as soon as its entities are collected.
+	out := make([][]lib.Entity, len(drafts))
+	par.Do(len(drafts), parsers, func(parser *tree_sitter.Parser, i int) {
+		d := drafts[i]
+		ents := d.entities
+		if len(ents) > 0 {
+			ents = make([]lib.Entity, len(d.entities))
+			copy(ents, d.entities)
+		}
+		for j, entity := range d.entities {
+			m := d.metas[j]
 			cur := fullMod(d, m)
 			switch entity := entity.(type) {
 			case lib.ImportEntry:
-				d.entities[i] = lib.ImportEntry{Path: idx.importPath(d, cur, entity.Path)}
+				ents[j] = lib.ImportEntry{Path: idx.importPath(d, cur, entity.Path)}
 			case lib.FunctionEntry:
 				entity.Calls = collect(idx, parser, d, m, scope{d: d, mod: cur})
-				d.entities[i] = entity
+				ents[j] = entity
 			case lib.MethodEntry:
 				entity.Calls = collect(idx, parser, d, m, scope{d: d, mod: cur, self: m.recv})
-				d.entities[i] = entity
+				ents[j] = entity
 			}
 		}
+		out[i] = ents
+		if d.tree != nil {
+			d.tree.Close()
+			d.tree = nil
+		}
+	})
+	for i, d := range drafts {
+		d.entities = out[i]
 	}
 }
 
