@@ -5,27 +5,52 @@ import (
 	"strings"
 
 	"citydiff/lib"
+	"citydiff/lib/parser/internal/par"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // resolve links the imports, then fills every function's and method's calls.
 func resolve(drafts []*draft) {
+	// linkImports is the barrier between the two independent phases: it follows
+	// the import graph and records each file's resolved targets, which every
+	// collect below reads. It is one serial walk of the files.
 	linkImports(drafts)
-	for _, d := range drafts {
-		for i, e := range d.entities {
-			m := d.metas[i]
+
+	// Phase 3: a file's calls are collected independently of every other file's,
+	// but a collect reads the entities of the files it imports, so a draft's
+	// replacement entities go into a copy that is applied only after the workers
+	// join. Writing the shared entity list in place would race with that reader.
+	// A draft's tree goes as soon as its entities are collected.
+	out := make([][]lib.Entity, len(drafts))
+	par.For(len(drafts), func(i int) {
+		d := drafts[i]
+		ents := d.entities
+		if len(ents) > 0 {
+			ents = make([]lib.Entity, len(d.entities))
+			copy(ents, d.entities)
+		}
+		for j, e := range d.entities {
+			m := d.metas[j]
 			if m.node == nil {
 				continue
 			}
 			switch e := e.(type) {
 			case lib.FunctionEntry:
 				e.Calls = collect(d, m)
-				d.entities[i] = e
+				ents[j] = e
 			case lib.MethodEntry:
 				e.Calls = collect(d, m)
-				d.entities[i] = e
+				ents[j] = e
 			}
 		}
+		out[i] = ents
+		if d.tree != nil {
+			d.tree.Close()
+			d.tree = nil
+		}
+	})
+	for i, d := range drafts {
+		d.entities = out[i]
 	}
 }
 

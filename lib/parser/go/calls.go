@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"citydiff/lib"
+	"citydiff/lib/parser/internal/par"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -164,24 +165,45 @@ func dirUnder(dir, root string) bool {
 }
 
 func resolve(drafts []*draft) {
+	// importIndex and buildIndex are the two serial passes over all drafts:
+	// the per-package import map a draft's locals come from, and the
+	// declaration index every lookup reads. buildIndex is the barrier between
+	// the two independent phases — cheap, one pass over the entities, but every
+	// lookup below needs it complete — so it stays serial.
 	byImport := importIndex(drafts)
 	idx := buildIndex(drafts)
-	for _, d := range drafts {
+
+	// Phase 3: a draft's pending calls resolve independently of every other
+	// draft's, against read-only maps and index. Each worker fills a draft's
+	// replacement entities by index; the replacements are applied only after
+	// the workers join, so no worker reads an entity list another is rewriting.
+	out := make([][]lib.Entity, len(drafts))
+	par.For(len(drafts), func(i int) {
+		d := drafts[i]
 		locals, dots := d.localImports(byImport)
-		for i, pendingCalls := range d.calls {
+		ents := d.entities
+		if len(ents) > 0 {
+			ents = make([]lib.Entity, len(d.entities))
+			copy(ents, d.entities)
+		}
+		for j, pendingCalls := range d.calls {
 			if len(pendingCalls) == 0 {
 				continue
 			}
 			calls := make([]lib.Call, len(pendingCalls))
-			for j, call := range pendingCalls {
-				calls[j] = lib.Call{Expr: call.expr}
+			for k, call := range pendingCalls {
+				calls[k] = lib.Call{Expr: call.expr}
 				ref, ok := idx.lookup(d.id(), call, locals, dots)
 				if ok {
-					calls[j].Ref = ref
+					calls[k].Ref = ref
 				}
 			}
-			setCalls(d, i, calls)
+			setCalls(ents, j, calls)
 		}
+		out[i] = ents
+	})
+	for i, d := range drafts {
+		d.entities = out[i]
 	}
 }
 
@@ -414,14 +436,14 @@ func (d decl) ref() *lib.CallRef {
 	return &lib.CallRef{Path: d.path, Name: d.name, Recv: d.recv}
 }
 
-func setCalls(d *draft, i int, calls []lib.Call) {
-	switch entity := d.entities[i].(type) {
+func setCalls(entities []lib.Entity, i int, calls []lib.Call) {
+	switch entity := entities[i].(type) {
 	case lib.FunctionEntry:
 		entity.Calls = calls
-		d.entities[i] = entity
+		entities[i] = entity
 	case lib.MethodEntry:
 		entity.Calls = calls
-		d.entities[i] = entity
+		entities[i] = entity
 	}
 }
 

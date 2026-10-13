@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"citydiff/lib"
+	"citydiff/lib/parser/internal/par"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_rust "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 )
@@ -59,23 +60,22 @@ type meta struct {
 // src/net.rs is "acme/net". Package is the last module segment. Items in an
 // inline module carry its path: a function is named inner::f and a type
 // inner::T.
+//
+// Parsing splits into three phases and only two of them are independent: read
+// each file into a draft, build the index, fill the calls. The first and the
+// third run across par.Workers, the index build stays between them because
+// every collect below reads it. See resolve for the barrier and for why the
+// result is applied after the workers join.
 func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 	if src == nil {
 		return nil, errors.New("nil source")
 	}
-	parser := tree_sitter.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(tree_sitter.NewLanguage(tree_sitter_rust.Language())); err != nil {
-		return nil, err
-	}
 
+	// Read the stream first. A file is the unit of the first phase, and reading
+	// in stream order is what fixes the order of the drafts, and so of the
+	// output. A Cargo.toml yields a crate root and no file of its own.
 	var crates []crateRoot
-	var drafts []*draft
-	defer func() {
-		for _, d := range drafts {
-			d.tree.Close()
-		}
-	}()
+	var files []lib.File
 	for {
 		file, err := src.Next()
 		if errors.Is(err, io.EOF) {
@@ -95,18 +95,45 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 		if !strings.HasSuffix(base, ".rs") {
 			return nil, fmt.Errorf("%s is not a Rust file", file.Path)
 		}
+		files = append(files, file)
+	}
+
+	// One tree-sitter parser per worker: a *tree_sitter.Parser is not safe for
+	// concurrent use, and it is cheap to give each worker its own.
+	parsers, err := newParsers(max(1, min(par.Workers(), len(files))))
+	if err != nil {
+		return nil, err
+	}
+	defer par.CloseAll(parsers)
+
+	// Phase 1: parse and walk every file. The files share nothing but the
+	// read-only source bytes, so each worker writes only its own draft and its
+	// own tree. A draft keeps its tree: the walker's meta nodes point into it and
+	// collecting the calls is a second walk of it.
+	drafts := make([]*draft, len(files))
+	defer closeTrees(drafts)
+	errs := make([]error, len(files))
+	par.Do(len(files), parsers, func(parser *tree_sitter.Parser, i int) {
+		file := files[i]
 		tree := parser.Parse(file.Src, nil)
 		if tree == nil {
-			return nil, fmt.Errorf("parse %s returned no tree", file.Path)
+			errs[i] = fmt.Errorf("parse %s returned no tree", file.Path)
+			return
 		}
 		d := &draft{path: file.Path, src: file.Src, tree: tree}
 		w := walker{src: file.Src, d: d}
 		w.items(tree.RootNode(), nil, "", "", false)
 		assignMethodHashes(d.entities)
-		drafts = append(drafts, d)
+		drafts[i] = d
+	})
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	assignModules(drafts, crates)
-	resolve(drafts, parser)
+	resolve(drafts, parsers)
 
 	out := make([]lib.ParsedFile, len(drafts))
 	for i, d := range drafts {
@@ -122,6 +149,33 @@ func (Parser) Parse(src lib.Source) ([]lib.ParsedFile, error) {
 }
 
 var _ lib.Parser = Parser{}
+
+// newParsers makes n parsers with the Rust grammar, one per worker.
+func newParsers(n int) ([]*tree_sitter.Parser, error) {
+	out := make([]*tree_sitter.Parser, n)
+	for i := range out {
+		p := tree_sitter.NewParser()
+		if err := p.SetLanguage(tree_sitter.NewLanguage(tree_sitter_rust.Language())); err != nil {
+			p.Close()
+			par.CloseAll(out[:i])
+			return nil, err
+		}
+		out[i] = p
+	}
+	return out, nil
+}
+
+// closeTrees closes the tree of every draft that still holds one. Phase 3 frees
+// a tree as soon as its file's entities are collected; this catches the trees
+// left behind when a parse fails.
+func closeTrees(drafts []*draft) {
+	for _, d := range drafts {
+		if d != nil && d.tree != nil {
+			d.tree.Close()
+			d.tree = nil
+		}
+	}
+}
 
 type walker struct {
 	src []byte
