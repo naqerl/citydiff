@@ -585,6 +585,63 @@
     }
     #confirm button:hover, #confirm button:focus-visible { background: var(--on); outline: none; }
     #confirm button.primary { border-color: var(--fg); }
+    /* ?ar: the card that starts AR and then says where to put the city, and
+       the two buttons AR keeps on screen once it is down. In AR the page is
+       laid over the phone's camera, so nothing of it may paint the screen but
+       its panels: the canvas is drawn into the AR session instead. */
+    #ar-card {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(340px, calc(100vw - 32px));
+      background: var(--bg);
+      border: 1px solid var(--line-strong);
+      padding: 16px 18px 18px;
+      text-align: center;
+      z-index: 8;
+    }
+    #ar-card[hidden], #ar-card [hidden] { display: none; }
+    #ar-card.is-placing {
+      top: calc(16px + env(safe-area-inset-top));
+      transform: translateX(-50%);
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+    }
+    #ar-card svg { display: block; width: 48px; height: 48px; margin: 0 auto 10px; color: var(--accent); }
+    #ar-card h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    #ar-card p { margin: 0 0 14px; color: var(--muted); }
+    #ar-card .actions { display: flex; gap: 8px; }
+    #ar-card button, #ar-bar button {
+      flex: 1;
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--line-strong);
+      padding: 10px;
+      font: inherit;
+    }
+    #ar-card button.primary { border-color: var(--fg); }
+    #ar-card .ar-drop { animation: ar-drop 1.4s ease-in-out infinite; }
+    @keyframes ar-drop { 0%, 100% { transform: translateY(-3px); } 50% { transform: translateY(3px); } }
+    #ar-bar {
+      position: fixed;
+      top: calc(12px + env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 6px;
+      z-index: 8;
+    }
+    #ar-bar[hidden] { display: none; }
+    #ar-bar button { flex: none; padding: 7px 12px; background: color-mix(in srgb, var(--bg) 82%, transparent); }
+    html.is-ar, html.is-ar body, html.is-ar #app, html.is-ar #stage { background: transparent !important; }
+    html.is-ar #view, html.is-ar #load { visibility: hidden; }
+    html.ar-placing #side,
+    html.ar-placing #tour-side,
+    html.ar-placing #sheet-handle,
+    html.ar-placing #sheet-tabs,
+    html.ar-placing #results,
+    html.ar-placing #tour-drop,
+    html.ar-placing #tag { display: none !important; }
     #observe-menu {
       position: fixed;
       inset: 0;
@@ -1407,6 +1464,27 @@
         <button id="confirm-ignore" type="button">Ignore</button>
       </div>
     </div>
+  </div>
+  <div id="ar-card" hidden role="dialog" aria-live="polite" aria-labelledby="ar-title">
+    <svg id="ar-start-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+      <path d="M6 14V6h8M34 6h8v8M42 34v8h-8M14 42H6v-8"/>
+      <path d="M24 13l10 5.5v11L24 35l-10-5.5v-11zM14 18.5L24 24l10-5.5M24 24v11"/>
+    </svg>
+    <svg id="ar-place-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true" hidden>
+      <path d="M3 38l11-9h31l-11 9z"/>
+      <ellipse cx="24" cy="33.5" rx="7" ry="2.5"/>
+      <g class="ar-drop"><path d="M24 7v16M18.5 17.5L24 23l5.5-5.5"/></g>
+    </svg>
+    <h2 id="ar-title"></h2>
+    <p id="ar-text"></p>
+    <div class="actions">
+      <button id="ar-start" class="primary" type="button">Start AR</button>
+      <button id="ar-skip" type="button">Not now</button>
+    </div>
+  </div>
+  <div id="ar-bar" hidden>
+    <button id="ar-place" type="button">place again</button>
+    <button id="ar-exit" type="button">exit AR</button>
   </div>
   <div id="legend" hidden>
     <div class="legend-card">

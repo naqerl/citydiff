@@ -67,7 +67,7 @@ test("readNode picks the first of a shared path, and nothing for an unknown one"
 });
 
 test("the defaults leave the address bare", () => {
-  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true, gyro: false };
+  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true, gyro: false, ar: false };
   assert.equal(writeState("", state), "");
   assert.deepEqual(readState(""), state);
 });
@@ -82,9 +82,9 @@ test("a range and a tour stay put when the view is written", () => {
 });
 
 test("the state is written readably and reads back", () => {
-  const state = { select: "citydiff:lib:parser:rust:New", mode: "changes", refs: "callers", side: false, tourSide: false, gyro: true };
+  const state = { select: "citydiff:lib:parser:rust:New", mode: "changes", refs: "callers", side: false, tourSide: false, gyro: true, ar: true };
   const query = writeState("", state);
-  assert.equal(query, "?select=citydiff:lib:parser:rust:New&mode=changes&refs=callers&side=closed&tourside=closed&gyro");
+  assert.equal(query, "?select=citydiff:lib:parser:rust:New&mode=changes&refs=callers&side=closed&tourside=closed&gyro&ar");
   assert.deepEqual(readState(query), state);
 });
 
@@ -108,6 +108,15 @@ test("the gyroscope is off unless the address asks for it", () => {
   assert.equal(readState("?gyro=1").gyro, true);
   assert.equal(readState("?gyro=on").gyro, true);
   for (const off of ["0", "false", "off", "no", "OFF"]) assert.equal(readState("?gyro=" + off).gyro, false, off);
+});
+
+test("AR is off unless the address asks for it, and is written as a bare flag", () => {
+  assert.equal(readState("").ar, false);
+  assert.equal(readState("?ar").ar, true);
+  assert.equal(readState("?ar=off").ar, false);
+  const state = { select: "", mode: "overview", refs: "calls", side: true, tourSide: true };
+  assert.equal(writeState("?ar=1", { ...state, ar: true }), "?ar");
+  assert.equal(writeState("?ar&gyro", { ...state, gyro: true, ar: false }), "?gyro");
 });
 
 test("the gyroscope is written as a bare flag, and dropped when it is off", () => {

@@ -5,6 +5,7 @@ import { layoutCity, drawnSize, drawnBox, oldBodyBox, fitDistance } from "./layo
 import { rankMatches } from "./search.js";
 import { flyStep } from "./fly.js";
 import { GYRO_GAIN, attitude, createShake, orbitStep, turnBetween } from "./gyro.js";
+import { arRig, arScale, facing, level } from "./ar.js";
 import { mountTour } from "./tourui.js";
 import { insets, viewOffsetX, viewOffsetY, freeFov, fitPose, boxOf, clearDir, steepDir } from "./viewport.js";
 import { BirdToggle, chooseDistricts, districtStatus, depEdges, aggregateEdges, labelBox, placeLabels } from "./bird.js";
@@ -501,6 +502,15 @@ let diffNode = null;
 // while the gyroscope cannot start, and asking, while it waits for a tap to
 // ask the person, stops the waiting.
 const gyro = { wanted: false, on: false, last: null, motion: null, yaw: 0, pitch: 0, note: "", asking: null };
+// AR (?ar, see mountAR). wanted is what the address says; on is whether a
+// session is running, and placing whether the city still follows the surface
+// the phone points at. hit is this frame's hit on a level surface, spot where
+// the city stands in the room (metres), yaw and scale the rest of the rig,
+// anchor the room's own hold on the spot, and saved the camera from before.
+const ar = {
+  wanted: false, on: false, placing: false, session: null, space: null, source: null,
+  hit: null, spot: null, yaw: 0, scale: 1, anchor: null, saved: null, last: 0, note: "",
+};
 let searchHits = [];
 let commandHits = [];
 let searchCursor = 0;
@@ -1705,6 +1715,7 @@ async function main() {
   requestFrame();
   void loadPlugins();
   mountGyro();
+  void mountAR();
   tourUI = mountTour({
     apply: applyTourStep,
     clear: clearTour,
@@ -1932,6 +1943,7 @@ function applyQuery() {
   }
   tourSideWanted = state.tourSide;
   gyro.wanted = state.gyro;
+  ar.wanted = state.ar;
   urlReady = true;
   const node = readNode(state.select, nodeNames);
   if (node && node.kind === "package" && byPackage.has(node.id)) selectPackage(node.id, true);
@@ -1972,6 +1984,7 @@ function syncURL() {
     side: !hud.side.classList.contains("is-collapsed"),
     tourSide: !tourSide || tourSide.hidden ? tourSideWanted : !tourSide.classList.contains("is-collapsed"),
     gyro: gyro.wanted,
+    ar: ar.wanted,
   });
   if (query === location.search) return;
   // Safari throws once a page rewrites its address too often. A missed write
@@ -4511,9 +4524,12 @@ function clearGroup(group) {
   }
 }
 
-function hitTest() {
+// hitTest is what is under the pointer, or along ray when one is given (a tap
+// in AR).
+function hitTest(ray = null) {
   flushAllArcs();
-  raycaster.setFromCamera(pointer, camera);
+  if (ray) raycaster.ray.copy(ray);
+  else raycaster.setFromCamera(pointer, camera);
   const objects = [];
   const pushLinks = (root) => {
     if (!root.visible) return;
@@ -4689,7 +4705,7 @@ function updateHUD() {
 }
 
 // The line under the title: a snapshot's hint, a skin's warning, why the
-// gyroscope has not started.
+// gyroscope or AR has not started.
 function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
@@ -4698,6 +4714,7 @@ function updateNote() {
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   if (pluginWarning) note = note ? pluginWarning + "  ·  " + note : pluginWarning;
   if (gyro.note) note = note ? gyro.note + "  ·  " + note : gyro.note;
+  if (ar.note) note = note ? ar.note + "  ·  " + note : ar.note;
   hud.note.textContent = note;
 }
 
@@ -5673,8 +5690,13 @@ function resetView() {
 
 // 0 puts the camera back on the whole city without letting go of the node on
 // screen: the reset is the camera's, and the selection is the user's. Escape
-// is the key that drops the node and the camera with it.
+// is the key that drops the node and the camera with it. In AR the phone is
+// the camera, and the reset picks the city up to be put down again.
 function resetCamera() {
+  if (ar.on) {
+    placeAgain();
+    return;
+  }
   cityPose = frameCity();
   applyFitLimits(cityPose);
   flyTo(cityPose.pos, cityPose.target);
@@ -5954,9 +5976,9 @@ const GYRO_STILL = 0.0025;
 
 // The gyroscope moves the camera only where the keys could: not under the
 // theme menu, on the bird view's map, under the action ring, nvim or the
-// diff, or during /launch.
+// diff, during /launch, or in AR, where the phone itself is the camera.
 function gyroFree() {
-  return !!laid && !loading && !skinPicking && !skinRevealing && !bird.on && !ringUp &&
+  return !!laid && !loading && !skinPicking && !skinRevealing && !bird.on && !ringUp && !ar.on &&
     !rocket.showing() && !editorActive() && !diffActive();
 }
 
@@ -6135,6 +6157,329 @@ function gyroStep(dt) {
   return true;
 }
 
+// ?ar (ar.js): on an Android phone the city stands on a real table. With ?ar
+// in the address a card offers AR, since a browser starts it only from a tap.
+// In AR the camera feed is the background, a card says where to point, and
+// the city follows the surface until a tap puts it down; then the usual
+// sheet or sidebars come back over the camera, and a tap on a tower selects
+// it. Leaving AR drops ?ar from the address.
+const AR_NEAR_M = 0.01;
+const AR_FAR_M = 100;
+const arRigObj = new THREE.Object3D();
+const arCard = document.querySelector("#ar-card");
+const arBar = document.querySelector("#ar-bar");
+const arVec = new THREE.Vector3();
+const arQuat = new THREE.Quaternion();
+const AR_UP = new THREE.Vector3(0, 1, 0);
+
+function arSay(text) {
+  ar.note = text;
+  updateNote();
+}
+
+// mountAR offers AR when the address asks for it. A browser hands AR only to a
+// secure page, and only Chrome on an Android phone with ARCore has it.
+async function mountAR() {
+  if (!ar.wanted) return;
+  if (!window.isSecureContext) {
+    arSay("AR needs https.");
+    return;
+  }
+  let supported = false;
+  try {
+    supported = !!navigator.xr && await navigator.xr.isSessionSupported("immersive-ar");
+  } catch { /* no AR here */ }
+  if (!supported) {
+    arSay("AR needs Chrome on an Android phone.");
+    return;
+  }
+  showArCard("start");
+}
+
+// showArCard puts the card up for a step, or takes it down for null: "start"
+// offers AR, "place" says where to point and "seek" asks the phone to move
+// until the room shows it a surface.
+function showArCard(step) {
+  arCard.hidden = !step;
+  if (!step) return;
+  const start = step === "start";
+  arCard.classList.toggle("is-placing", !start);
+  // The icons are SVG, which has no hidden property: the attribute it is.
+  document.querySelector("#ar-start-icon").toggleAttribute("hidden", !start);
+  document.querySelector("#ar-place-icon").toggleAttribute("hidden", start);
+  document.querySelector("#ar-start").hidden = !start;
+  document.querySelector("#ar-skip").textContent = start ? "Not now" : "Exit AR";
+  document.querySelector("#ar-title").textContent = start ? "View in AR" : "Place the city";
+  document.querySelector("#ar-text").textContent = start
+    ? "Stand the city on a table or the floor, and walk round it."
+    : step === "seek"
+      ? "Move the phone slowly over a table or the floor."
+      : "Point at a table or the floor, and tap where the city should stand.";
+}
+
+function startAR() {
+  if (ar.on || !laid) return;
+  let request;
+  // The request must be made inside the tap, before anything waits.
+  try {
+    request = navigator.xr.requestSession("immersive-ar", {
+      requiredFeatures: ["hit-test"],
+      optionalFeatures: ["dom-overlay", "anchors"],
+      domOverlay: { root: document.body },
+    });
+  } catch (err) {
+    request = Promise.reject(err);
+  }
+  request.then(enterAR, (err) => arSay("AR did not start. " + (err && err.message ? err.message : err)));
+}
+
+async function enterAR(session) {
+  if (bird.on) leaveBird();
+  closeSearch();
+  hud.search.blur();
+  tween = null;
+  held.clear();
+  endIntro();
+  ar.saved = {
+    pos: camera.position.clone(),
+    quat: camera.quaternion.clone(),
+    target: controls.target.clone(),
+    near: camera.near,
+    far: camera.far,
+  };
+  Object.assign(ar, { on: true, placing: true, session, hit: null, spot: null, anchor: null, last: 0 });
+  ar.scale = arScale(citySpan() * 0.95);
+  arSay("");
+  controls.enabled = false;
+  camera.near = AR_NEAR_M;
+  camera.far = AR_FAR_M;
+  arRigObj.add(camera);
+  document.documentElement.classList.add("is-ar", "ar-placing");
+  showArCard("seek");
+  // three puts the canvas back to its own size when the session ends; the
+  // rest is put back after that.
+  session.addEventListener("end", () => setTimeout(leftAR, 0));
+  session.addEventListener("select", onArSelect);
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType("local");
+  try {
+    await renderer.xr.setSession(session);
+    ar.space = renderer.xr.getReferenceSpace();
+    const viewer = await session.requestReferenceSpace("viewer");
+    ar.source = await session.requestHitTestSource({ space: viewer });
+  } catch (err) {
+    arSay("AR did not start. " + (err && err.message ? err.message : err));
+    session.end().catch(() => {});
+    return;
+  }
+  renderer.setAnimationLoop(arFrame);
+}
+
+// The city's centre on the ground, and the way the camera looked at it before
+// AR, flat: the side it saw is the side that faces the person.
+function arCenter() {
+  const at = groundMesh ? groundMesh.getWorldPosition(arVec) : arVec.set(0, 0, 0);
+  return { x: at.x, y: 0, z: at.z };
+}
+
+function arFront() {
+  const center = arCenter();
+  return { x: ar.saved.pos.x - center.x, z: ar.saved.pos.z - center.z };
+}
+
+function placeRig() {
+  const rig = arRig(ar.spot, arCenter(), ar.scale, ar.yaw);
+  arRigObj.position.set(rig.position.x, rig.position.y, rig.position.z);
+  arRigObj.quaternion.setFromAxisAngle(AR_UP, rig.yaw);
+  arRigObj.scale.setScalar(rig.scale);
+  arRigObj.updateMatrixWorld(true);
+}
+
+function arFrame(t, frame) {
+  if (!frame || !ar.on || !ar.space) return;
+  const dt = ar.last ? Math.min(0.05, Math.max(0, (t - ar.last) / 1000)) : 0.016;
+  ar.last = t;
+  if (ar.placing) {
+    const viewer = frame.getViewerPose(ar.space);
+    let hit = null;
+    let pose = null;
+    for (const result of ar.source ? frame.getHitTestResults(ar.source) : []) {
+      pose = result.getPose(ar.space);
+      if (pose && level(pose.transform.orientation)) {
+        hit = result;
+        break;
+      }
+    }
+    if (!!hit !== !!ar.hit) showArCard(hit ? "place" : "seek");
+    ar.hit = hit;
+    if (hit && viewer) {
+      const p = pose.transform.position;
+      ar.spot = { x: p.x, y: p.y, z: p.z };
+      ar.yaw = facing(ar.spot, viewer.transform.position, arFront());
+      placeRig();
+    }
+  } else if (ar.anchor && frame.trackedAnchors && frame.trackedAnchors.has(ar.anchor)) {
+    // The room's hold on the spot moves as the phone learns the room better.
+    const pose = frame.getPose(ar.anchor.anchorSpace, ar.space);
+    if (pose) {
+      const p = pose.transform.position;
+      ar.spot = { x: p.x, y: p.y, z: p.z };
+      placeRig();
+    }
+  }
+  // Until the room shows the phone a surface there is nowhere to stand the city.
+  scene.visible = !ar.placing || !!ar.hit;
+  flushAllArcs();
+  tickFlows(dt);
+  tickThemeFade(t);
+  if (halo.visible) haloMaterial.uniforms.uTime.value += dt;
+  holo.tick(dt);
+  if (theme && theme.live) theme.uTime.value += dt;
+  if (instancesDirty && laid) {
+    instancesDirty = false;
+    refreshInstances();
+  }
+  // The room is the background: no sky, no fog, no field to the horizon. The
+  // city's own circle stays. What the theme set is put back after the frame,
+  // so a theme picked in AR is the one the city wears after it.
+  const background = scene.background;
+  const fog = scene.fog.density;
+  const field = planeMesh ? planeMesh.visible : false;
+  scene.background = null;
+  scene.fog.density = 0;
+  if (planeMesh) planeMesh.visible = false;
+  // The selection's moves set the camera's depth range for the city; in AR it
+  // is the room's, in metres.
+  camera.near = AR_NEAR_M;
+  camera.far = AR_FAR_M;
+  // A particle's size is in city units; the eye's distance is in metres.
+  const layer = ar.session.renderState.baseLayer;
+  const tall = layer ? layer.framebufferHeight : window.innerHeight * (window.devicePixelRatio || 1);
+  flowMaterial.uniforms.uScale.value = tall / (2 * Math.tan((camera.fov * Math.PI) / 360)) / ar.scale;
+  // The camera sits on the rig, so its own position is in the room's metres.
+  // The hologram sizes itself by the eye's place in the city and finds its
+  // place on screen through the camera's view and projection, which agree
+  // with each other in metres.
+  holo.place({
+    position: camera.getWorldPosition(arVec),
+    fov: camera.fov,
+    matrixWorldInverse: camera.matrixWorldInverse,
+    projectionMatrix: camera.projectionMatrix,
+  }, window.innerWidth, window.innerHeight);
+  renderer.render(scene, camera);
+  scene.background = background;
+  scene.fog.density = fog;
+  if (planeMesh) planeMesh.visible = field;
+}
+
+// A tap that the page's own panels did not take. While placing it puts the
+// city down; after that it selects what it lands on, or lets go on nothing,
+// the way a tap on the city does.
+function onArSelect(event) {
+  if (!ar.on) return;
+  if (ar.placing) {
+    if (ar.hit) placeCity(ar.hit);
+    return;
+  }
+  const pose = event.frame.getPose(event.inputSource.targetRaySpace, ar.space);
+  if (!pose) return;
+  const o = pose.transform.position;
+  const q = pose.transform.orientation;
+  const origin = new THREE.Vector3(o.x, o.y, o.z).applyMatrix4(arRigObj.matrixWorld);
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(arQuat.set(q.x, q.y, q.z, q.w)).applyQuaternion(arRigObj.quaternion).normalize();
+  const found = describeHit(hitTest(new THREE.Ray(origin, dir)));
+  if (found) activate(found);
+  else goBack();
+}
+
+function placeCity(hit) {
+  ar.placing = false;
+  if (typeof hit.createAnchor === "function") {
+    hit.createAnchor().then((anchor) => {
+      if (ar.on && !ar.placing && !ar.anchor) ar.anchor = anchor;
+      else anchor.delete();
+    }, () => { /* the spot stays where it was tapped */ });
+  }
+  document.documentElement.classList.remove("ar-placing");
+  showArCard(null);
+  arBar.hidden = false;
+}
+
+function placeAgain() {
+  if (!ar.on || ar.placing) return;
+  dropAnchor();
+  Object.assign(ar, { placing: true, hit: null, anchor: null });
+  arBar.hidden = true;
+  document.documentElement.classList.add("ar-placing");
+  showArCard("seek");
+}
+
+function dropAnchor() {
+  try { if (ar.anchor) ar.anchor.delete(); } catch { /* gone with the session */ }
+  ar.anchor = null;
+}
+
+// leftAR runs when the session ends, by the exit button, by the phone's back
+// gesture, or because the phone stopped it: the camera, the controls and the
+// page are put back the way AR found them.
+function leftAR() {
+  if (!ar.on) return;
+  renderer.setAnimationLoop(null);
+  renderer.xr.enabled = false;
+  // A session that ended has let go of these already.
+  try { if (ar.source) ar.source.cancel(); } catch { /* gone with the session */ }
+  dropAnchor();
+  arRigObj.remove(camera);
+  const saved = ar.saved;
+  camera.position.copy(saved.pos);
+  camera.quaternion.copy(saved.quat);
+  camera.scale.set(1, 1, 1);
+  camera.near = saved.near;
+  camera.far = saved.far;
+  camera.zoom = 1;
+  camera.updateMatrixWorld(true);
+  controls.target.copy(saved.target);
+  controls.enabled = true;
+  Object.assign(ar, { on: false, placing: false, session: null, space: null, source: null, hit: null, anchor: null, saved: null, last: 0 });
+  scene.visible = true;
+  tween = null;
+  document.documentElement.classList.remove("is-ar", "ar-placing");
+  showArCard(null);
+  arBar.hidden = true;
+  ar.wanted = false;
+  syncURL();
+  resizeView();
+  updatePointScale();
+  controls.update();
+  viewDirty = true;
+  instancesDirty = true;
+  noteActivity();
+  requestFrame();
+}
+
+document.querySelector("#ar-start").addEventListener("click", startAR);
+document.querySelector("#ar-skip").addEventListener("click", () => {
+  if (ar.on) {
+    ar.session.end().catch(() => {});
+    return;
+  }
+  showArCard(null);
+  ar.wanted = false;
+  syncURL();
+});
+document.querySelector("#ar-place").addEventListener("click", placeAgain);
+document.querySelector("#ar-exit").addEventListener("click", () => {
+  if (ar.session) ar.session.end().catch(() => {});
+});
+// A tap on the page's own panels is theirs: it does not also reach the room
+// as a tap that places the city or selects a tower. What lies under the
+// camera feed (the page's bare layers) lets it through.
+document.addEventListener("beforexrselect", (event) => {
+  const el = event.target;
+  const bare = !el || el === document.body || el === document.documentElement || (el.closest && el.closest("#stage")) || el.id === "app" || el.id === "work";
+  if (!bare) event.preventDefault();
+});
+
 // On a phone or a tablet the city's resolution follows how fast its frames
 // come. When the frames drawn back to back run slower than about 45 a second,
 // the pixel ratio steps down a quarter, to 1 at the least; when they run at
@@ -6225,6 +6570,11 @@ function animate(now) {
   // The editor covers the city: no frames, no halo, no idle orbit until it
   // closes, and the close starts the loop again.
   if (editorActive()) {
+    clearTimeout(idleTimer);
+    return;
+  }
+  // AR draws from its own loop (arFrame), and leaving it starts this one again.
+  if (ar.on) {
     clearTimeout(idleTimer);
     return;
   }
@@ -6639,7 +6989,7 @@ const COMMANDS = [
 // /launch is not in the list and completes from nothing: it runs only when
 // typed in full, and only under the starship skin.
 function launchRocket() {
-  if (storedSkin() !== LAUNCH_SKIN || !laid || bird.on || rocket.showing()) return;
+  if (storedSkin() !== LAUNCH_SKIN || !laid || bird.on || ar.on || rocket.showing()) return;
   const giveBack = () => {
     controls.enabled = true;
     tween = null;
@@ -8405,7 +8755,7 @@ function birdHide() {
 }
 
 function enterBird() {
-  if (!laid || !sceneDoc) return;
+  if (!laid || !sceneDoc || ar.on) return;
   if (!bird.enter({ pos: camera.position.toArray(), target: controls.target.toArray(), up: camera.up.toArray(), zoom: camera.zoom,
     extra: { maxDistance: controls.maxDistance, enableRotate: controls.enableRotate, mode } })) return;
   tween = null;

@@ -206,7 +206,14 @@ can open on a given node. On a phone or a tablet, `?gyro` lets the device turn t
 turning it left orbits the camera left around what it looks at, tipping its top away raises
 the camera to look down, and a shake is `0`. Without `?gyro` it is off unless a plugin turns
 it on (and the address follows), a screen with a mouse never has it, and the browser gives the
-page the device's motion only over https; iOS asks once, on the first tap.
+page the device's motion only over https; iOS asks once, on the first tap. On an Android phone
+whose Chrome has AR (ARCore), `?ar` offers to stand the city on a real table: a card starts AR
+(a browser starts it only from a tap), the phone's camera becomes the background, and the city,
+its circle about 60 cm across, follows the table or floor the phone points at until a tap puts
+it down. From then on it stays where it was put while you walk round it, the sheet or sidebars
+come back over the camera, and a tap on a tower selects it. `place again` (or `0`) picks it up,
+`exit AR` or the phone's back gesture leaves, and leaving drops `?ar` from the address. Where
+there is no AR, or over plain http, the line under the title says so.
 
 The node under the mouse is outlined in the skin's hover colour (`selection.hover`, or a hue
 none of the city's colours use). Holding the right button on the city opens the action ring
