@@ -18,6 +18,7 @@ import { createRocket } from "./rocket.js";
 import { dress, loadShade } from "./shade.js";
 import { applyGradient, applySky } from "./sky.js";
 import { buildSigns, hasPlate, signText } from "./signs.js";
+import { createHolo } from "./holo.js";
 import { showVersion } from "./version.js";
 import { escapeHTML, renderMarkdown } from "./markdown.js";
 import { apiNodes, createPlugins, freezeDeep } from "./plugins.js";
@@ -74,6 +75,7 @@ function useTheme(next) {
   ring.material.color.set(next.selection.ring);
   ring.material.opacity = next.selection.ringOpacity;
   haloMaterial.uniforms.uColor.value.copy(paint.selection);
+  holo.setInk(next.selection.color, next.label.text);
   paintHover();
   themeReady = true;
   document.documentElement.classList.add("theme-ready");
@@ -345,6 +347,7 @@ function fadeToTheme(next) {
   const fromSky = skyColors(theme);
   theme = next;
   syncPaint(next);
+  holo.setInk(next.selection.color, next.label.text);
   repaintScene();
   const to = captureLook();
   const glideSky = fromSky && skyColors(next);
@@ -877,6 +880,9 @@ let linkPoints = null;
 // The other points a fit of the current links must keep in view: tower
 // bases and arc crowns.
 let linkFrame = [];
+// The highest point the selection's own arcs reach: the hologram stands above
+// it rather than across it (see updateHolo).
+let linkTop = 0;
 const held = new Set();
 const flyDir = new THREE.Vector3();
 let lastFrame = 0;
@@ -1193,6 +1199,12 @@ halo.visible = false;
 halo.frustumCulled = false;
 scene.add(halo);
 
+// The hologram that names the selected module: a sphere of light over the
+// roof with the name curved round it, the one thing in the city that stays
+// the same size on screen however tight the street is.
+const holo = createHolo();
+scene.add(holo.group);
+
 // The halo travels on the node the user is on: the focused entity while the
 // call diff is open, otherwise the selection. It stays on that node whichever
 // way the call arcs run, so watching its callers does not move the animation
@@ -1222,6 +1234,50 @@ function updateHalo() {
   const change = (byPackage.get(subject.kind === "package" ? subject.id : "") || {}).change;
   haloMaterial.uniforms.uColor.value.copy(change && change !== "same" ? changeColor(change) : paint.selection);
   halo.visible = true;
+}
+
+// The holograms. Every module the city is highlighting gets one — the selected
+// package, the whole lit set it brought up (the packages on both ends of every
+// arc the view is drawing), and for a focused entity the packages its own calls
+// reach. Naming all of them at once is what makes a tight city readable.
+//
+// They all stand on the same floor: the highest point the selection's arcs
+// reach and the tallest roof the city is drawn with. A name never sits in the
+// way of the curves it is naming, and nothing it is showing off ends up buried
+// in a tower beside it.
+function updateHolo() {
+  const list = [];
+  const seen = new Set();
+  let top = linkTop;
+  for (const box of laid.packages) top = Math.max(top, shownOwnTop(box.id));
+  const add = (id, primary) => {
+    if (!id || seen.has(id)) return;
+    const box = boxById.get(id);
+    // A package outside the tree has no tower to stand over: the sidebar and
+    // the arcs name it.
+    if (!box) return;
+    seen.add(id);
+    const pkg = byPackage.get(id);
+    list.push({
+      id,
+      primary: !!primary,
+      apex: top,
+      name: pkg ? pkg.name || pkg.id : id,
+      x: box.x + box.w / 2,
+      y: shownOwnTop(id),
+      z: box.z + box.d / 2,
+    });
+  };
+  if (selected && selected.kind === "package") add(selected.id, true);
+  if (lit && lit.packages) {
+    for (const id of lit.packages) add(id, false);
+  } else if (lit && lit.entities) {
+    for (const id of lit.entities) {
+      const found = byEntity.get(id);
+      if (found && found.pkg) add(found.pkg.id, false);
+    }
+  }
+  holo.sync(list);
 }
 
 // The node under the mouse is outlined in the skin's hover colour, with a
@@ -3288,6 +3344,12 @@ function addArc(group, from, to, color, lift, data, fromId, toId) {
   if (!from || !to) return;
   const shape = arcShape(from, to, lift, fromId ? packageRoof(fromId) : null, toId ? packageRoof(toId) : null, !!data.thin);
   if (!shape) return;
+  // The bow is a cubic whose control points stand a lift above each end, so
+  // its apex is three quarters of that lift over the middle of the two ends,
+  // and the tube is as thick as its radius.
+  if (group === selectArcs) {
+    linkTop = Math.max(linkTop, (shape.from[1] + shape.to[1]) / 2 + shape.lift * 0.75 + shape.radius + 0.2);
+  }
   const tint = { kind: data.kind, change: data.change, std: !!data.std };
   data.tint = tint;
   const batch = arcBatch(group);
@@ -3387,6 +3449,7 @@ function paintPlinths() {
 
 function applyMode() {
   linkFrame = [];
+  linkTop = 0;
   syncLit();
   instancesDirty = true;
   updateHalo();
@@ -3430,8 +3493,11 @@ function applyMode() {
     else {
       clearGroup(selectArcs);
       linkFrame = [];
+      linkTop = 0;
     }
   }
+  // After the arcs: the hologram reads the height they bow to.
+  updateHolo();
   paintPlinths();
   updateHUD();
   syncURL();
@@ -5916,6 +5982,7 @@ function drawCity() {
     placeHover();
   }
   if (planeMesh) planeMesh.visible = planeMesh.material.opacity > 0.001 || !!theme.plane.fragmentSource;
+  holo.place(camera, renderer.domElement.clientHeight);
   renderer.render(scene, camera);
 }
 
@@ -5980,6 +6047,7 @@ function animate(now) {
   const fading = tickThemeFade(t);
   const launching = !!show;
   if (halo.visible) haloMaterial.uniforms.uTime.value += dt > 0 ? dt : 0;
+  holo.tick(dt);
   const live = theme && theme.live;
   if (live) theme.uTime.value += dt > 0 ? dt : 0;
   // A hover asks for a frame only when its outline moved: the name that
@@ -6007,13 +6075,13 @@ function animate(now) {
   decorBudget = Math.min(DECOR_FRAME_MS, decorBudget + (t - lastDecor));
   lastDecor = t;
   const decorDue = decorBudget >= DECOR_FRAME_MS - 1.5;
-  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || live || fading || launching) && (driven || decorDue)) {
+  if (themeReady && (moved || flowing || viewDirty || hovered || halo.visible || holo.live() || live || fading || launching) && (driven || decorDue)) {
     drawCity();
     viewDirty = false;
     if (decorDue) decorBudget -= DECOR_FRAME_MS;
     adaptResolution(t);
   }
-  if (motion || idleSpin || flowing || halo.visible || introSpin || live || fading || launching) {
+  if (motion || idleSpin || flowing || halo.visible || holo.live() || introSpin || live || fading || launching) {
     requestFrame();
   } else {
     parkLoop();
@@ -8094,7 +8162,7 @@ function birdHide() {
   const keep = BIRD_KEEP();
   if (!birdHidden) {
     birdHidden = new Map();
-    for (const o of [...city.children, arcGroup, selectArcs, focusGroup, halo, ring]) birdHidden.set(o, o.visible);
+    for (const o of [...city.children, arcGroup, selectArcs, focusGroup, halo, ring, holo.group]) birdHidden.set(o, o.visible);
   }
   for (const o of birdHidden.keys()) if (!keep.has(o)) o.visible = false;
   birdGroup.visible = true;
