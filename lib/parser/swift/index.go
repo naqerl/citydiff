@@ -215,6 +215,13 @@ func cleanType(t string) (string, bool) {
 // A bare name is looked up in the enclosing types, then the module, then the
 // package modules the file imports; several imported matches are ambiguous.
 func (idx *index) resolveType(at scope, text string) string {
+	return idx.resolveTypeSeen(at, text, nil)
+}
+
+// resolveTypeSeen is resolveType carrying the ids it has already followed, so
+// the alias chain below cannot walk a cycle forever. `typealias Loop = Loop`
+// is legal Swift, and it used to take the process's stack with it.
+func (idx *index) resolveTypeSeen(at scope, text string, seen map[string]bool) string {
 	t, _ := cleanType(text)
 	if t == "" || strings.ContainsAny(t, "[]()-&:") {
 		return ""
@@ -225,13 +232,13 @@ func (idx *index) resolveType(at scope, text string) string {
 	}
 	segs := strings.Split(t, ".")
 	if strings.HasPrefix(t, "Self.") && at.self != "" {
-		return idx.alias(idx.typeIn(nsOf(at.self), fullName(at.self)+"."+strings.Join(segs[1:], ".")))
+		return idx.aliasSeen(idx.typeIn(nsOf(at.self), fullName(at.self)+"."+strings.Join(segs[1:], ".")), seen)
 	}
 	d := at.d
 	if len(segs) > 1 {
 		if ns := modNS(rootOf(d.ns), segs[0]); idx.modules[ns] && ns != d.ns {
 			if id := idx.typeIn(ns, strings.Join(segs[1:], ".")); id != "" {
-				return idx.alias(id)
+				return idx.aliasSeen(id, seen)
 			}
 		}
 	}
@@ -240,13 +247,13 @@ func (idx *index) resolveType(at scope, text string) string {
 		chain := strings.Split(fullName(at.self), ".")
 		for n := len(chain); n > 0; n-- {
 			if id := idx.typeIn(ns, strings.Join(chain[:n], ".")+"."+t); id != "" {
-				return idx.alias(id)
+				return idx.aliasSeen(id, seen)
 			}
 			// A type's own name, and its supertypes' nested types.
 		}
 	}
 	if id := idx.typeIn(d.ns, t); id != "" {
-		return idx.alias(id)
+		return idx.aliasSeen(id, seen)
 	}
 	found := ""
 	for _, imp := range d.imports {
@@ -261,7 +268,7 @@ func (idx *index) resolveType(at scope, text string) string {
 			found = id
 		}
 	}
-	return idx.alias(found)
+	return idx.aliasSeen(found, seen)
 }
 
 func (idx *index) typeIn(ns, full string) string {
@@ -275,12 +282,26 @@ func (idx *index) typeIn(ns, full string) string {
 // alias follows a typealias to the type it names. An alias of something
 // outside the snapshot stays the alias.
 func (idx *index) alias(id string) string {
+	return idx.aliasSeen(id, nil)
+}
+
+// aliasSeen follows a typealias to what it names, carrying the ids it has
+// already followed so a cycle stops here instead of recursing through
+// resolveTypeSeen and back until the stack is gone.
+func (idx *index) aliasSeen(id string, seen map[string]bool) string {
 	for range 4 {
 		t := idx.types[id]
 		if t == nil || t.kind != "typealias" || t.alias == "" {
 			return id
 		}
-		next := idx.resolveType(t.at, t.alias)
+		if seen[id] {
+			return id
+		}
+		if seen == nil {
+			seen = map[string]bool{}
+		}
+		seen[id] = true
+		next := idx.resolveTypeSeen(t.at, t.alias, seen)
 		if next == "" || next == id {
 			return id
 		}

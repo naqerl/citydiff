@@ -231,6 +231,17 @@ func (idx *index) find(d *draft, cur, segs []string, has func(string) bool) stri
 // resolveType is the id of the snapshot type a type expression names, or
 // empty. Self is the scope's own type. An alias resolves to its target.
 func (idx *index) resolveType(at scope, text string) string {
+	return idx.resolveTypeSeen(at, text, nil)
+}
+
+// resolveTypeSeen is resolveType carrying the ids it has already followed. A
+// type that aliases itself, or a cycle of aliases, otherwise recurses until the
+// stack is gone — and the compiler cannot catch it, so it arrives as real code:
+// tokio writes `type Handle = Handle;` four times in one file, and
+// `type Error = Error;` again in tokio-util. A cycle stops on the id it came
+// back to, the same id the four-step cap below returns for a chain that merely
+// runs long.
+func (idx *index) resolveTypeSeen(at scope, text string, seen map[string]bool) string {
 	t := stripRef(text)
 	if i := strings.IndexByte(t, '<'); i >= 0 {
 		t = t[:i]
@@ -245,10 +256,14 @@ func (idx *index) resolveType(at scope, text string) string {
 	id := idx.find(at.d, at.mod, segs, func(id string) bool { return idx.types[id] })
 	for range 4 {
 		alias, ok := idx.aliases[id]
-		if !ok {
+		if !ok || seen[id] {
 			break
 		}
-		next := idx.resolveType(alias.at, alias.text)
+		if seen == nil {
+			seen = map[string]bool{}
+		}
+		seen[id] = true
+		next := idx.resolveTypeSeen(alias.at, alias.text, seen)
 		if next == "" {
 			return id
 		}

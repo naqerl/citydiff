@@ -147,3 +147,21 @@ func h(a: Alias) { a.f() }
 		t.Fatalf("h = %v", got)
 	}
 }
+
+// `typealias Loop = Loop` is legal Swift. resolveType and alias used to follow
+// each other through it until the goroutine stack was gone, which is a
+// `fatal error: stack overflow` — unrecoverable, so the whole process died with
+// the file. The cycle now stops on the id it came back to.
+func TestSelfReferentialTypealiasStopsResolving(t *testing.T) {
+	files := parse(t, file("A/a.swift", `
+typealias Loop = Loop
+struct Holder { var value: Loop }
+func make() -> Loop { Loop() }
+`))
+	if len(files) != 1 {
+		t.Fatalf("parsed %d files, want 1", len(files))
+	}
+	if got := calls(t, files, "A/a.swift", "", "make"); got == nil {
+		t.Fatal("make has no calls recorded")
+	}
+}
