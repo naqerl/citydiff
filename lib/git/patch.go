@@ -56,7 +56,7 @@ func Patch(path, commitRange string, contextLines int) ([]FileDiff, error) {
 		return nil, err
 	}
 	if spec.Snapshot {
-		return nil, errors.New("this view is one snapshot: start citydiff with -range to diff a node")
+		return nil, errors.New("this scene is one snapshot of a single ref: pass -range A..B to diff a node")
 	}
 	if contextLines < 0 {
 		contextLines = 0

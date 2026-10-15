@@ -132,8 +132,8 @@ export function tourRequest(tour) {
 }
 
 // rangeSpec is a typed A..B, A...B, or one ref. A two-ref spec is a diff;
-// one ref is the tree at that commit. Anything else is not a spec, and the
-// command opens the picker instead.
+// one ref is the tree at that commit. An empty arg, or a range with an end
+// missing, opens the picker instead.
 export function rangeSpec(arg) {
   const s = String(arg || "").trim();
   if (!s) return "";

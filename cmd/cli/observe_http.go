@@ -457,14 +457,5 @@ func sameCommits(repo, a, b string) error {
 }
 
 func fmtRange(a, al, ar, b, bl, br string) error {
-	return errors.New("range " + a + " is " + spanName(al, ar) + " but the tour targets " + spanName(bl, br))
-}
-
-// spanName names a resolved spec the way it reads: one hash for a snapshot
-// (left empty), two hashes joined for a range.
-func spanName(left, right string) string {
-	if left == "" {
-		return "the tree at " + short(right)
-	}
-	return short(left) + ".." + short(right)
+	return errors.New("range " + a + " is " + spanLabel(al, ar) + " but the tour targets " + spanLabel(bl, br))
 }
