@@ -101,15 +101,22 @@ func (h *hub) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	query := ""
+	cardQuery := url.Values{}
 	if name != "" {
-		query = url.Values{"tour": {name}}.Encode()
+		cardQuery.Set("tour", name)
 	} else if commitRange != "" {
-		query = url.Values{"range": {commitRange}}.Encode()
+		cardQuery.Set("range", commitRange)
+	}
+	// Every observation can be opened without a query, so the overview card
+	// is warmed here; a tour or range warms its own card too. The scene these
+	// read was already built above, so the draw is cheap.
+	h.warmCard(r.Context(), obs, url.Values{})
+	if len(cardQuery) > 0 {
+		h.warmCard(r.Context(), obs, cardQuery)
 	}
 	writeJSON(w, http.StatusCreated, openReply{
 		ID:     obs.ID,
-		URL:    pageURL(r, obs.ID, query),
+		URL:    pageURL(r, obs.ID, cardQuery.Encode()),
 		Remote: canonical,
 	})
 }
@@ -293,6 +300,7 @@ func (h *hub) postTour(w http.ResponseWriter, r *http.Request, obs observe.Obs) 
 		problem(w, "script", err)
 		return
 	}
+	h.warmCard(r.Context(), obs, url.Values{"tour": {name}})
 	reply := map[string]any{
 		"name":      name,
 		"title":     script.Title,

@@ -144,13 +144,23 @@ func (v cardView) description() string {
 	return v.Title
 }
 
+// cardView is the card this request's query names. A tour or range that
+// cannot be resolved — a deleted tour, a bad range — falls back to the
+// observation's overview, so a shared link always has a title, a description
+// and a picture. It errors only when even the overview cannot be read.
 func (h *hub) cardView(obs observe.Obs, q url.Values) (cardView, error) {
 	name := q.Get("tour")
 	if name != "" && !remoteTour(name) {
-		return h.tourCard(obs, name)
+		if v, err := h.tourCard(obs, name); err == nil {
+			return v, nil
+		}
+		return h.overviewCard(obs)
 	}
 	if commitRange := strings.TrimSpace(q.Get("range")); commitRange != "" {
-		return h.rangeCard(obs, commitRange)
+		if v, err := h.rangeCard(obs, commitRange); err == nil {
+			return v, nil
+		}
+		return h.overviewCard(obs)
 	}
 	return h.overviewCard(obs)
 }
@@ -483,13 +493,17 @@ func writeCard(path string, png []byte) error {
 	return os.Chmod(path, 0o644)
 }
 
+// warmCard draws and stores the card a mutation's URL will need while that
+// mutation is still in flight, so the crawler that follows the reply reads a
+// file instead of building a scene. A card that cannot be drawn is not the
+// mutation's problem: the request is valid, and the next reader retries.
+func (h *hub) warmCard(ctx context.Context, obs observe.Obs, q url.Values) {
+	_, _ = h.cardPNG(context.WithoutCancel(ctx), obs, q)
+}
+
 func (h *hub) card(w http.ResponseWriter, r *http.Request, obs observe.Obs) {
 	png, err := h.cardPNG(r.Context(), obs, r.URL.Query())
 	if err != nil {
-		if _, miss := err.(cardMiss); miss {
-			http.NotFound(w, r)
-			return
-		}
 		problem(w, "range", err)
 		return
 	}
