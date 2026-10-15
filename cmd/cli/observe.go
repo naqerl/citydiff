@@ -295,9 +295,19 @@ func sceneKey(repo, commitRange string) (string, bool, error) {
 		}
 		return observe.OverviewKey(hash), true, nil
 	}
+	spec, err := git.ParseSpec(commitRange)
+	if err != nil {
+		return "", false, err
+	}
 	left, right, err := git.Revs(repo, commitRange)
 	if err != nil {
 		return "", false, err
+	}
+	if spec.Snapshot {
+		// A snapshot at a ref is a range scene with one side, so it is kept
+		// in the range cache beside the diffs rather than replacing the
+		// clone's own overview.
+		return observe.SnapshotKey(right), false, nil
 	}
 	return observe.RangeKey(left, right), false, nil
 }

@@ -22,7 +22,7 @@ import { createHolo } from "./holo.js";
 import { showVersion } from "./version.js";
 import { escapeHTML, renderMarkdown } from "./markdown.js";
 import { apiNodes, createPlugins, freezeDeep } from "./plugins.js";
-import { mountObserve, observationInfo, projectSubtitle, projectTitle, tourRequest } from "./observe.js";
+import { mountObserve, observationInfo, projectSubtitle, projectTitle, shortRange, tourRequest } from "./observe.js";
 
 let theme = null;
 let themeReady = false;
@@ -4685,7 +4685,10 @@ function updateHUD() {
 function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
-    if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
+    if (mode === "overlay") {
+      const at = sceneDoc.range ? " of " + shortRange(sceneDoc.range) : "";
+      note = "This view is one snapshot" + at + ". A range A..B lays a diff on the city.";
+    }
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   if (pluginWarning) note = note ? pluginWarning + "  ·  " + note : pluginWarning;

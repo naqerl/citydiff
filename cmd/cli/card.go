@@ -178,10 +178,14 @@ func (h *hub) rangeCard(obs observe.Obs, commitRange string) (cardView, error) {
 	if err != nil {
 		return cardView{}, err
 	}
+	title := shortSpan(commitRange)
+	if left == "" {
+		title = "tree at " + title
+	}
 	return cardView{
 		Kind:    "range",
 		Eyebrow: repoLabel(obs.Remote),
-		Title:   shortSpan(commitRange),
+		Title:   title,
 		Left:    left,
 		Right:   right,
 		Range:   commitRange,
@@ -210,6 +214,9 @@ func (h *hub) tourCard(obs observe.Obs, name string) (cardView, error) {
 	}
 	n := len(script.Steps)
 	sub := shortSpan(script.Range)
+	if left == "" {
+		sub = "tree at " + sub
+	}
 	switch n {
 	case 1:
 		sub += " · 1 step"

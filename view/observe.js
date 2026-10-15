@@ -131,12 +131,15 @@ export function tourRequest(tour) {
   return "./tour.json?tour=" + encodeURIComponent(tour);
 }
 
-// rangeSpec is a typed A..B or A...B. Anything else is not a range, and the
+// rangeSpec is a typed A..B, A...B, or one ref. A two-ref spec is a diff;
+// one ref is the tree at that commit. Anything else is not a spec, and the
 // command opens the picker instead.
 export function rangeSpec(arg) {
   const s = String(arg || "").trim();
+  if (!s) return "";
   const dots = s.includes("...") ? s.indexOf("...") : s.indexOf("..");
-  if (dots <= 0) return "";
+  if (dots < 0) return s;
+  if (dots === 0) return "";
   const width = s.includes("...") ? 3 : 2;
   if (!s.slice(dots + width).trim()) return "";
   return s;
@@ -310,8 +313,11 @@ export async function mountObserve() {
       show("Range", "This clone has no refs to pick.", [], () => {});
       return;
     }
-    show("Base", "The start of the range. Then the head.", choices, (base) => {
-      show("Head", shortRev(base.value) + "..", choices, (head) => go("range", shortRange(base.value + ".." + head.value)));
+    show("Base", "The start of the range. Then the head, or the tree there alone.", choices, (base) => {
+      const alone = { kind: "tree", label: "The whole tree at " + shortRev(base.value), value: "" };
+      show("Head", shortRev(base.value) + "..", [alone, ...choices], (head) => {
+        go("range", head.value ? shortRange(base.value + ".." + head.value) : shortRange(base.value));
+      });
     });
   }
 
@@ -350,7 +356,7 @@ export async function mountObserve() {
     { name: "/overview", does: "the whole tree", run: () => go("", "") },
     {
       name: "/range",
-      does: "show a commit range",
+      does: "show a commit range, or the tree at one ref",
       run: (arg) => {
         const spec = rangeSpec(arg);
         if (spec) go("range", shortRange(spec));

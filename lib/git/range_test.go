@@ -18,13 +18,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-func TestSplitRange(t *testing.T) {
+func TestParseSpec(t *testing.T) {
 	cases := []struct {
-		spec    string
-		left    string
-		right   string
-		three   bool
-		wantErr bool
+		spec     string
+		left     string
+		right    string
+		three    bool
+		snapshot bool
+		wantErr  bool
 	}{
 		{spec: "a..b", left: "a", right: "b"},
 		{spec: "a...b", left: "a", right: "b", three: true},
@@ -34,15 +35,16 @@ func TestSplitRange(t *testing.T) {
 		{spec: "a...", left: "a", three: true},
 		{spec: "  a..b  ", left: "a", right: "b"},
 		{spec: "HEAD^{/fix bug}..other", left: "HEAD^{/fix bug}", right: "other"},
+		{spec: "HEAD", right: "HEAD", snapshot: true},
+		{spec: "v1.2.0", right: "v1.2.0", snapshot: true},
 		{spec: "", wantErr: true},
-		{spec: "HEAD", wantErr: true},
 		{spec: "a..b..c", wantErr: true},
 		{spec: "a...b...c", wantErr: true},
 		{spec: "a..b...c", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.spec, func(t *testing.T) {
-			got, err := splitRange(tc.spec)
+			got, err := ParseSpec(tc.spec)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected an error")
@@ -52,7 +54,7 @@ func TestSplitRange(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.left != tc.left || got.right != tc.right || got.threeDot != tc.three {
+			if got.Left != tc.left || got.Right != tc.right || got.ThreeDot != tc.three || got.Snapshot != tc.snapshot {
 				t.Fatalf("got %+v", got)
 			}
 		})
@@ -372,8 +374,8 @@ func TestVersionsWorktreeFileWhenCommitHasDirectory(t *testing.T) {
 func TestVersionsRejectsBadInput(t *testing.T) {
 	repo := newRepo(t)
 	file := repo.commit("p.go", "package p\n\nfunc A() {}\n", "add")
-	if _, _, err := Versions(file, "HEAD", golang.New()); err == nil {
-		t.Fatal("expected range syntax error")
+	if _, _, err := Versions(file, "no-such-ref", golang.New()); err == nil {
+		t.Fatal("expected resolve error")
 	}
 	if _, _, err := Versions(file, "does-not-exist..HEAD", golang.New()); err == nil {
 		t.Fatal("expected resolve error")

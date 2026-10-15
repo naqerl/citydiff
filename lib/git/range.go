@@ -28,7 +28,8 @@ import (
 // snapshot are relative to path, matching files.Tree. commitRange uses
 // Git's two-dot and three-dot notation. A..B compares those two commits.
 // A...B compares their merge base with B, which is how git diff treats a
-// three-dot range. An empty side means HEAD.
+// three-dot range. An empty side means HEAD. One ref alone is not a diff:
+// it is a snapshot, the whole tree at that ref, and left comes back nil.
 //
 // parser turns each side's files into entities, so this package stays
 // free of any one language. Each side is its own snapshot. A file missing
@@ -41,6 +42,13 @@ func Versions(path, commitRange string, parser lib.Parser) (left, right []lib.Pa
 	sides, err := Sources(path, commitRange)
 	if err != nil {
 		return nil, nil, err
+	}
+	if sides.Snapshot {
+		right, err = parser.Parse(lib.Mem(sides.Right))
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse %s at %s: %w", sides.Path, sides.RightRev, err)
+		}
+		return nil, right, nil
 	}
 	left, err = parser.Parse(lib.Mem(sides.Left))
 	if err != nil {
@@ -55,8 +63,10 @@ func Versions(path, commitRange string, parser lib.Parser) (left, right []lib.Pa
 
 // Revs resolves both ends of commitRange in the repository that holds
 // path, to full commit hashes. A three-dot range starts at the merge base.
+// A one-ref spec names a snapshot: left comes back empty and right is that
+// ref's commit.
 func Revs(path, commitRange string) (left, right string, err error) {
-	span, err := splitRange(commitRange)
+	spec, err := ParseSpec(commitRange)
 	if err != nil {
 		return "", "", err
 	}
@@ -64,15 +74,22 @@ func Revs(path, commitRange string) (left, right string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	l, err := resolve(repo, span.left)
+	if spec.Snapshot {
+		commit, err := resolve(repo, spec.Right)
+		if err != nil {
+			return "", "", err
+		}
+		return "", commit.Hash.String(), nil
+	}
+	l, err := resolve(repo, spec.Left)
 	if err != nil {
 		return "", "", err
 	}
-	r, err := resolve(repo, span.right)
+	r, err := resolve(repo, spec.Right)
 	if err != nil {
 		return "", "", err
 	}
-	if span.threeDot {
+	if spec.ThreeDot {
 		if l, err = mergeBase(l, r); err != nil {
 			return "", "", err
 		}
@@ -81,20 +98,23 @@ func Revs(path, commitRange string) (left, right string, err error) {
 }
 
 // Sides is the source of both sides of a range, before parsing.
-// LeftRev and RightRev are the resolved commit hashes.
+// LeftRev and RightRev are the resolved commit hashes. Snapshot is true
+// when there is one side: the whole tree at RightRev, with no Left.
 type Sides struct {
 	Path              string
 	LeftRev, RightRev string
 	Left, Right       []lib.File
+	Snapshot          bool
 }
 
 // Sources reads the files of both sides of commitRange the way Versions
-// does, without parsing them.
+// does, without parsing them. A one-ref spec yields a snapshot: Left stays
+// nil and Right is the whole tree at that ref.
 func Sources(path, commitRange string) (Sides, error) {
 	if strings.TrimSpace(path) == "" {
 		return Sides{}, errors.New("empty file path")
 	}
-	span, err := splitRange(commitRange)
+	spec, err := ParseSpec(commitRange)
 	if err != nil {
 		return Sides{}, err
 	}
@@ -103,15 +123,38 @@ func Sources(path, commitRange string) (Sides, error) {
 	if err != nil {
 		return Sides{}, err
 	}
-	leftCommit, err := resolve(repo, span.left)
+	if spec.Snapshot {
+		commit, err := resolve(repo, spec.Right)
+		if err != nil {
+			return Sides{}, err
+		}
+		dir, err := directorySnapshot(disk, gitPath, commit)
+		if err != nil {
+			return Sides{}, err
+		}
+		found, ok, err := listFiles(commit, gitPath, !dir)
+		if err != nil {
+			return Sides{}, err
+		}
+		if !dir && !ok {
+			return Sides{}, fmt.Errorf("file %s not found at %s", gitPath, commit.Hash)
+		}
+		return Sides{
+			Path:     gitPath,
+			RightRev: commit.Hash.String(),
+			Right:    found,
+			Snapshot: true,
+		}, nil
+	}
+	leftCommit, err := resolve(repo, spec.Left)
 	if err != nil {
 		return Sides{}, err
 	}
-	rightCommit, err := resolve(repo, span.right)
+	rightCommit, err := resolve(repo, spec.Right)
 	if err != nil {
 		return Sides{}, err
 	}
-	if span.threeDot {
+	if spec.ThreeDot {
 		leftCommit, err = mergeBase(leftCommit, rightCommit)
 		if err != nil {
 			return Sides{}, fmt.Errorf("merge base for %q: %w", strings.TrimSpace(commitRange), err)
@@ -144,7 +187,9 @@ func Sources(path, commitRange string) (Sides, error) {
 
 // Tree reads the source files files.Include accepts at rev under worktree.
 // worktree is a file or directory inside the repository. An empty rev
-// means HEAD. Paths in the stream are slash-separated and relative to
+// means HEAD. Tree reads one ref, exactly what a one-ref spec names, so a
+// snapshot at a ref and -range <ref> read the same files.
+// Paths in the stream are slash-separated and relative to
 // worktree: the base name when worktree is a file, and paths relative to
 // the directory when worktree is a directory. vendor and hidden directories
 // are skipped.
@@ -171,16 +216,25 @@ func Tree(worktree, rev string) (lib.Source, error) {
 	return lib.Mem(found), nil
 }
 
-// span is one revision range. Empty left or right means HEAD.
-type span struct {
-	left, right string
-	threeDot    bool
+// Spec is what a commit range names. A two-ref spec, A..B or A...B, diffs
+// two trees. A one-ref spec is a snapshot: the whole tree at that ref,
+// which is the scene a later range is laid on. An empty side means HEAD.
+type Spec struct {
+	Left, Right string
+	ThreeDot    bool
+	Snapshot    bool
 }
 
-func splitRange(spec string) (span, error) {
+// ParseSpec reads a -range value. The empty string is not a spec — it is
+// the working tree, which the caller handles on its own — and is an error.
+func ParseSpec(spec string) (Spec, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
-		return span{}, errors.New("empty commit range")
+		return Spec{}, errors.New("empty commit range")
+	}
+	if !strings.Contains(spec, "..") {
+		// One ref names the tree at it, with nothing to compare against.
+		return Spec{Right: spec, Snapshot: true}, nil
 	}
 	sep := ".."
 	three := false
@@ -190,12 +244,12 @@ func splitRange(spec string) (span, error) {
 	}
 	left, right, ok := strings.Cut(spec, sep)
 	if !ok || strings.Contains(left, "..") || strings.Contains(right, "..") {
-		return span{}, fmt.Errorf("commit range %q must use .. or ...", spec)
+		return Spec{}, fmt.Errorf("commit range %q has more than one .. separator", spec)
 	}
-	return span{
-		left:     strings.TrimSpace(left),
-		right:    strings.TrimSpace(right),
-		threeDot: three,
+	return Spec{
+		Left:     strings.TrimSpace(left),
+		Right:    strings.TrimSpace(right),
+		ThreeDot: three,
 	}, nil
 }
 

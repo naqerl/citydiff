@@ -8,9 +8,9 @@ test("a stored tour is fetched from this observation", () => {
   assert.equal(tourRequest("https://example.com/t.json"), "https://example.com/t.json");
 });
 
-test("a typed range needs both ends", () => {
+test("a typed range needs both ends, a lone ref is a snapshot", () => {
   assert.equal(rangeSpec(""), "");
-  assert.equal(rangeSpec("main"), "");
+  assert.equal(rangeSpec("main"), "main");
   assert.equal(rangeSpec("..head"), "");
   assert.equal(rangeSpec("base.."), "");
   assert.equal(rangeSpec("base..head"), "base..head");
