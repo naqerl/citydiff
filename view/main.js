@@ -22,7 +22,7 @@ import { createHolo } from "./holo.js";
 import { showVersion } from "./version.js";
 import { escapeHTML, renderMarkdown } from "./markdown.js";
 import { apiNodes, createPlugins, freezeDeep } from "./plugins.js";
-import { mountObserve, observationInfo, projectSubtitle, projectTitle, tourRequest } from "./observe.js";
+import { mountObserve, observationInfo, projectSubtitle, projectTitle, shortRange, tourRequest } from "./observe.js";
 
 let theme = null;
 let themeReady = false;
@@ -4685,7 +4685,10 @@ function updateHUD() {
 function updateNote() {
   let note = "";
   if (sceneDoc && !sceneDoc.diff) {
-    if (mode === "overlay") note = "This view is one snapshot. Pass -range to lay a diff on the city.";
+    if (mode === "overlay") {
+      const at = sceneDoc.range ? " of " + shortRange(sceneDoc.range) : "";
+      note = "This view is one snapshot" + at + ". A range A..B lays a diff on the city.";
+    }
   }
   if (skinWarning) note = note ? skinWarning + "  ·  " + note : skinWarning;
   if (pluginWarning) note = note ? pluginWarning + "  ·  " + note : pluginWarning;
@@ -6838,10 +6841,11 @@ function showEditor(target) {
   return true;
 }
 
-// hasRange is true when the scene has two sides to compare. The overview is
-// one snapshot: a diff of it has no other side to ask the server for.
+// hasRange is true when the scene has two sides to compare. A snapshot — the
+// overview, or one ref opened with -range REF — is one tree: a diff of it has
+// no other side to ask the server for.
 function hasRange() {
-  return !!(sceneDoc && sceneDoc.range);
+  return !!(sceneDoc && sceneDoc.diff);
 }
 
 // D: the git diff of the subject, over the city. False when there is none.
@@ -6891,14 +6895,14 @@ function ringState(id) {
   if (id === "forward") return can(jumpTarget(1) >= 0, "nothing later to go forward to");
   if (id === "deselect") return can(!!(selected || focus || entered || tourLit || tourLinks), "nothing is selected");
   if (id === "edit" || id === "diff") {
-    // A diff is between two sides, so the overview — one snapshot — has none
-    // to offer, whatever is selected. The ring is where that belongs and not
+    // A diff is between two sides, so a snapshot — the overview, or one ref —
+    // has none to offer, whatever is selected. The ring is where that belongs and not
     // the panel: the item never lights, so no key, mouse or finger reaches the
     // panel to meet the server's refusal. Edit is left alone: the working tree
     // is there in every view. The per-node reasons below are still what a
     // ranged scene with no target says, so this test is an extra condition,
     // not a replacement.
-    if (id === "diff" && !hasRange()) return can(false, "the overview has no range to diff");
+    if (id === "diff" && !hasRange()) return can(false, "this snapshot has no range to diff");
     const target = id === "edit" ? editTarget(subject, byEntity, byPackage) : diffTarget(subject, byEntity, byPackage);
     if (target) return can(true);
     if (!subject) return can(false, "select something first");

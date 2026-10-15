@@ -27,7 +27,7 @@ const hubKeyEnv = "CITYDIFF_HUB_KEY"
 
 const observeUsage = `Usage:
   citydiff hub serve [-addr host:port]
-  citydiff hub open [-range A..B] [-tour file.json] https://host/owner/repo
+  citydiff hub open [-range A..B|REF] [-tour file.json] https://host/owner/repo
 
 serve is the observation hub. Every write requires $CITYDIFF_HUB_KEY.
 When that variable is empty, serve prints an export line and exits.
@@ -125,8 +125,8 @@ type openReply struct {
 func runObserveOpen(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("citydiff hub open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	commitRange := fs.String("range", "", "commit range, A..B or A...B")
-	fs.StringVar(commitRange, "r", "", "commit range, A..B or A...B")
+	commitRange := fs.String("range", "", "commit range A..B or A...B, or one ref for a snapshot of the tree there")
+	fs.StringVar(commitRange, "r", "", "commit range A..B or A...B, or one ref for a snapshot of the tree there")
 	tourFile := fs.String("tour", "", "tour script to submit")
 	fs.Usage = func() { fmt.Fprint(stderr, observeUsage) }
 	if err := fs.Parse(args); err != nil {
@@ -295,9 +295,19 @@ func sceneKey(repo, commitRange string) (string, bool, error) {
 		}
 		return observe.OverviewKey(hash), true, nil
 	}
+	spec, err := git.ParseSpec(commitRange)
+	if err != nil {
+		return "", false, err
+	}
 	left, right, err := git.Revs(repo, commitRange)
 	if err != nil {
 		return "", false, err
+	}
+	if spec.Snapshot {
+		// A snapshot at a ref is a range scene with one side, so it is kept
+		// in the range cache beside the diffs rather than replacing the
+		// clone's own overview.
+		return observe.SnapshotKey(right), false, nil
 	}
 	return observe.RangeKey(left, right), false, nil
 }

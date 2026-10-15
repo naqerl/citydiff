@@ -6,9 +6,11 @@ import (
 	"sync"
 )
 
-// OverviewKey and RangeKey name a built scene. A three-dot range is keyed by
-// the commits it resolves to, which already start at the merge base.
+// OverviewKey, SnapshotKey and RangeKey name a built scene. A three-dot
+// range is keyed by the commits it resolves to, which already start at the
+// merge base. A snapshot is keyed by the one commit it is the tree of.
 func OverviewKey(head string) string { return "overview " + head }
+func SnapshotKey(rev string) string  { return "snapshot " + rev }
 func RangeKey(left, right string) string {
 	return "left " + left + " right " + right
 }

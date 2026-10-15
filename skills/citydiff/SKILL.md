@@ -69,7 +69,7 @@ from source, the commit. Tell the person; re-running the installer is the upgrad
 
 ```
 __BIN_NAME__ -path FILE|DIR              a file or directory tree to read
-           -range A..B | A...B         diff two refs; works with git repos (reads the tree at a ref)
+           -range A..B | A...B | REF  diff two refs, or one ref for the whole tree there
            -json                       machine-readable entries (pipe into jq) and exit
            -scene                      print the 3D scene as JSON (input for the viewer) and exit
            -text                       print the plain text diff (or the file list) and exit
@@ -86,14 +86,17 @@ Note: the viewer is **long-running** — always launch it in the background, nev
 foreground call (see below).
 
 ```
-__BIN_NAME__ nodes [-path DIR] [-range A..B] [-changed] [-kind K] [-json]   # nodes a tour can name
+__BIN_NAME__ nodes [-path DIR] [-range A..B|REF] [-changed] [-kind K] [-json]   # nodes a tour can name
 __BIN_NAME__ tour validate|serve|schema ...                                 # see Tours
 __BIN_NAME__ hub serve [-addr host:port]                                    # the shared hub
-__BIN_NAME__ hub open [-range A..B] [-tour file] REMOTE                     # print a shareable URL
+__BIN_NAME__ hub open [-range A..B|REF] [-tour file] REMOTE                 # print a shareable URL
 ```
 
-Note: for a commit range the path must be a **git repository**, not a plain directory;
-go-git reads the trees at the two refs, so the working tree does not need to be checked out.
+Note: a range and a one-ref snapshot both need a **git repository**, not a plain
+directory; go-git reads the trees at the refs, so the working tree does not need to be
+checked out. One ref means a **snapshot**: the whole tree at that ref, with nothing to diff
+against. Use it to show or tour a project as it stands (onboarding to a new repository),
+not to review what changed.
 
 ## Recipes
 
@@ -118,6 +121,18 @@ cd "__REPO_DIR__"
 base=$(git rev-parse HEAD~20)
 __BIN_NAME__ -path . -range "$base..HEAD" -json > /tmp/range.json
 ```
+
+Show the whole project at one ref — a snapshot, no diff. Use this to read or tour a
+repository you do not know yet:
+
+```sh
+cd "__REPO_DIR__"
+__BIN_NAME__ -path . -range HEAD -json | jq '.[] | {path, decls: (.entries | length)}'
+__BIN_NAME__ -path . -range v1.2.0 -scene     # the scene at a tag, as the viewer draws it
+__BIN_NAME__ -path . -range main -text        # the file list at a branch
+```
+
+The same spec can be a tour's `range`, and the viewer's `/range main` opens that tree.
 
 ### The viewer is long-running — launch it in the background
 
@@ -164,6 +179,7 @@ overview, and the address carries what to show:
 ```sh
 __BIN_NAME__ hub open https://github.com/org/repo                 # overview
 __BIN_NAME__ hub open https://github.com/org/repo -range A..B     # that diff
+__BIN_NAME__ hub open https://github.com/org/repo -range v1.2.0   # the tree at a ref
 __BIN_NAME__ hub open https://github.com/org/repo -tour tour.json # the tour's range
 ```
 
@@ -271,15 +287,16 @@ CGO is mandatory: `CGO_ENABLED=0` fails with *"build constraints exclude all Go 
 
 ## Reading the output
 
-**Plain parse (`-json` without `-range`)** — one object per file:
+**Plain parse (`-json` without `-range`, or with one ref)** — one object per file:
 
 ```json
 [{"path": "pkg/x.go", "entries": [{"name": "...", "kind": "...", "calls": [...]}]}]
 ```
 
-**Diff (`-range`)** — one object per file, `action` = `added` / `modified` / `deleted`, and
+**Diff (`-range A..B`)** — one object per file, `action` = `added` / `modified` / `deleted`, and
 `changes[]` holds one entry per declaration change, each with its own `action` and a `left`
-and/or `right` side:
+and/or `right` side. A one-ref `-range` is the plain-parse shape above instead — a snapshot
+has no action to report:
 
 ```json
 [{"path": "db/flashcard.sql.go", "action": "modified",
@@ -306,7 +323,8 @@ returns exactly that for whatever the process was launched with.
 
 ## Tours
 
-A tour is a JSON script over the citydiff scene of one commit range. The viewer plays it:
+A tour is a JSON script over the citydiff scene of one commit range, or over the whole tree
+at one ref. The viewer plays it:
 each step moves the camera, lights nodes or a call path, and shows a markdown note in the
 tour sidebar on the right. The sidebar holds the tour title and range, the description, and
 play/pause, prev/next and a step counter at the bottom. It does not show source or a diff.
@@ -437,8 +455,9 @@ for reading the diff. It is the shortest honest path from "what changed" to "wha
 }
 ```
 
-Top level: `version` (must be `1`), `title`, `range` (`base..head` as for `-range`;
-abbreviated hashes and refs are fine, they are compared by commit), `steps` (one or more).
+Top level: `version` (must be `1`), `title`, `range` (`base..head` as for `-range`, or one
+ref for a snapshot of the whole tree there; abbreviated hashes and refs are fine, they are
+compared by commit), `steps` (one or more).
 
 Step fields (only `title` is required). Each step starts from a clean view; nothing carries
 over from the step before except the mode.

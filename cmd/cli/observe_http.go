@@ -457,5 +457,5 @@ func sameCommits(repo, a, b string) error {
 }
 
 func fmtRange(a, al, ar, b, bl, br string) error {
-	return errors.New("range " + a + " is " + short(al) + ".." + short(ar) + " but the tour targets " + short(bl) + ".." + short(br))
+	return errors.New("range " + a + " is " + spanLabel(al, ar) + " but the tour targets " + spanLabel(bl, br))
 }

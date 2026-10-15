@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/naqerl/citydiff/main/lib/tour/tour.schema.json",
   "title": "citydiff tour, version 1",
-  "description": "An ordered script of steps over the citydiff scene of one commit range. Names are resolved against that scene by `citydiff tour validate`.",
+  "description": "An ordered script of steps over the citydiff scene of one commit range, or over the whole tree at one ref. Names are resolved against that scene by `citydiff tour validate`.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "steps"],
   "properties": {
     "version": { "const": 1 },
     "title": { "type": "string", "description": "Shown above the note panel." },
-    "range": { "type": "string", "description": "The base..head the tour was written for, as passed to -range.", "examples": ["dbdafc00..061e9aed"] },
+    "range": { "type": "string", "description": "The base..head the tour was written for, as passed to -range. One ref alone is a snapshot: the whole tree at that ref, with nothing to diff against.", "examples": ["dbdafc00..061e9aed", "main"] },
     "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } }
   },
   "$defs": {

@@ -39,6 +39,11 @@ The command line stays tight. It is a small set of flags that name what to read 
 it grows only when a new *input* cannot be expressed any other way. With no output flag it
 serves the viewer — the richest view is the default, the flat printouts are the flags.
 
+`-range` names what to read in one value. `A..B` and `A...B` diff two refs. One ref alone
+has nothing to diff against, so it is a **snapshot**: the whole tree at that ref, the scene
+a later range is laid on. That is how a project is read or toured as it stands, without a
+change to frame it, and it needs no new flag.
+
 A new feature does not get a flag. A flag is not free: the usage line, the flag list and the
 README are the context an agent reads before it can use the tool at all, and every entry in
 that context competes with the work itself. A longer flag list makes the tool harder to hold

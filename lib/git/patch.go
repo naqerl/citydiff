@@ -45,10 +45,18 @@ type Line struct {
 // into hunks with contextLines lines either side of every change.
 //
 // An empty range has no two sides to compare and is an error rather than an
-// empty diff.
+// empty diff. A one-ref spec is the same: a snapshot has nothing behind it
+// to patch against.
 func Patch(path, commitRange string, contextLines int) ([]FileDiff, error) {
-	if strings.TrimSpace(commitRange) == "" {
-		return nil, errors.New("this view is one snapshot: start citydiff with -range to diff a node")
+	spec, err := ParseSpec(commitRange)
+	if err != nil {
+		if strings.TrimSpace(commitRange) == "" {
+			return nil, errors.New("this view is one snapshot: start citydiff with -range to diff a node")
+		}
+		return nil, err
+	}
+	if spec.Snapshot {
+		return nil, errors.New("this scene is one snapshot of a single ref: pass -range A..B to diff a node")
 	}
 	if contextLines < 0 {
 		contextLines = 0

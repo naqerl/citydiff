@@ -82,8 +82,8 @@ func main() {
 func legacy() {
 	path := flag.String("path", "", "path to a Go, Rust, Swift or JavaScript file or directory")
 	flag.StringVar(path, "p", "", "path to a Go, Rust, Swift or JavaScript file or directory")
-	commitRange := flag.String("range", "", "commit range to diff, A..B or A...B")
-	flag.StringVar(commitRange, "r", "", "commit range to diff, A..B or A...B")
+	commitRange := flag.String("range", "", "commit range A..B or A...B, or one ref for a snapshot of the tree there")
+	flag.StringVar(commitRange, "r", "", "commit range A..B or A...B, or one ref for a snapshot of the tree there")
 	asJSON := flag.Bool("json", false, "print entries as JSON")
 	asScene := flag.Bool("scene", false, "print the 3D scene as JSON")
 	asText := flag.Bool("text", false, "print the plain text diff or file list")
@@ -134,7 +134,7 @@ func legacy() {
 		}
 		return
 	}
-	left, right, err := load(*path, *commitRange)
+	left, right, isSnapshot, err := load(*path, *commitRange)
 	if err != nil {
 		fail(err)
 	}
@@ -146,7 +146,7 @@ func legacy() {
 		}
 		return
 	}
-	if *commitRange != "" {
+	if *commitRange != "" && !isSnapshot {
 		if err := printDiff(diff.Files(left, right), *asJSON); err != nil {
 			fail(err)
 		}
@@ -157,16 +157,24 @@ func legacy() {
 	}
 }
 
-func load(path, commitRange string) (left, right []lib.ParsedFile, err error) {
+// load reads the side or sides of commitRange. A one-ref spec is a
+// snapshot: right is the tree at that ref and left is nil, so a caller can
+// tell it apart from a diff (an empty, non-nil left side).
+func load(path, commitRange string) (left, right []lib.ParsedFile, isSnapshot bool, err error) {
 	if commitRange != "" {
-		return git.Versions(path, commitRange, parser.New())
+		spec, err := git.ParseSpec(commitRange)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		left, right, err = git.Versions(path, commitRange, parser.New())
+		return left, right, spec.Snapshot, err
 	}
 	src, err := files.Tree(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	right, err = parser.New().Parse(src)
-	return nil, right, err
+	return nil, right, false, err
 }
 
 func printScene(sc scene.Scene) error {
@@ -321,9 +329,9 @@ func usageErr(msg string) {
 }
 
 func usageText() string {
-	return "Usage: citydiff -path file-or-directory [-range A..B] [-addr addr] [-tour file]\n" +
-		"       citydiff [-json | -scene | -text] -path file-or-directory [-range A..B]\n" +
-		"       citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]\n" +
+	return "Usage: citydiff -path file-or-directory [-range A..B|REF] [-addr addr] [-tour file]\n" +
+		"       citydiff [-json | -scene | -text] -path file-or-directory [-range A..B|REF]\n" +
+		"       citydiff nodes [-path dir] [-range A..B|REF] [-changed] [-kind k] [-json]\n" +
 		"       citydiff tour validate|serve|schema ...\n" +
 		"       citydiff hub serve|open ...\n\n" +
 		"With no output flag, citydiff serves the 3D viewer and does not return.\n\n"

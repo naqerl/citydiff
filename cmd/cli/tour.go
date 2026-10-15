@@ -32,15 +32,25 @@ type snapshot struct {
 func buildSnapshot(path, commitRange string) (*snapshot, error) {
 	snap := &snapshot{path: path, commitRange: commitRange, after: map[string][]byte{}}
 	var leftFiles, rightFiles []lib.File
+	// A one-ref spec is a snapshot, not a diff: the scene is the whole tree
+	// at that ref, and there is no left side.
+	snapshotOnly := false
 	if commitRange != "" {
+		spec, err := git.ParseSpec(commitRange)
+		if err != nil {
+			return nil, err
+		}
+		snapshotOnly = spec.Snapshot
 		sides, err := git.Sources(path, commitRange)
 		if err != nil {
 			return nil, err
 		}
 		leftFiles, rightFiles = sides.Left, sides.Right
-		snap.before = map[string][]byte{}
-		for _, f := range leftFiles {
-			snap.before[f.Path] = f.Src
+		if !snapshotOnly {
+			snap.before = map[string][]byte{}
+			for _, f := range leftFiles {
+				snap.before[f.Path] = f.Src
+			}
 		}
 	} else {
 		src, err := files.Tree(path)
@@ -66,7 +76,7 @@ func buildSnapshot(path, commitRange string) (*snapshot, error) {
 		return nil, err
 	}
 	var left []lib.ParsedFile
-	if commitRange != "" {
+	if commitRange != "" && !snapshotOnly {
 		if left, err = parser.New().Parse(lib.Mem(leftFiles)); err != nil {
 			return nil, err
 		}
@@ -80,7 +90,8 @@ func buildSnapshot(path, commitRange string) (*snapshot, error) {
 }
 
 // sameRange compares a script's range with the snapshot's by commit hash,
-// so an abbreviated or symbolic ref still matches.
+// so an abbreviated or symbolic ref still matches. A one-ref spec and a
+// two-ref spec never match: one is a snapshot, the other a diff.
 func (s *snapshot) sameRange(script string) error {
 	if s.commitRange == "" {
 		return fmt.Errorf("script targets %q but the scene is the plain tree; pass -range", script)
@@ -94,9 +105,18 @@ func (s *snapshot) sameRange(script string) error {
 		return fmt.Errorf("cannot resolve %q: %w", script, err)
 	}
 	if wl != gl || wr != gr {
-		return fmt.Errorf("script targets %s..%s but the scene is %s..%s", short(gl), short(gr), short(wl), short(wr))
+		return fmt.Errorf("script targets %s but the scene is %s", spanLabel(gl, gr), spanLabel(wl, wr))
 	}
 	return nil
+}
+
+// spanLabel names a resolved spec the way it reads: one hash for a
+// snapshot (left empty), two hashes joined for a range.
+func spanLabel(left, right string) string {
+	if left == "" {
+		return "the tree at " + short(right)
+	}
+	return short(left) + ".." + short(right)
 }
 
 func short(hash string) string {
@@ -129,8 +149,8 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 func commonFlags(fs *flag.FlagSet) (path, commitRange *string) {
 	path = fs.String("path", ".", "path to a Go, Rust, Swift or JavaScript file or directory")
 	fs.StringVar(path, "p", ".", "path to a Go, Rust, Swift or JavaScript file or directory")
-	commitRange = fs.String("range", "", "commit range, A..B or A...B")
-	fs.StringVar(commitRange, "r", "", "commit range, A..B or A...B")
+	commitRange = fs.String("range", "", "commit range A..B or A...B, or one ref for a snapshot of the tree there")
+	fs.StringVar(commitRange, "r", "", "commit range A..B or A...B, or one ref for a snapshot of the tree there")
 	return path, commitRange
 }
 
@@ -141,7 +161,7 @@ func runNodes(args []string, stdout io.Writer) error {
 	kind := fs.String("kind", "", "only this kind: package, external, type, function, method, variable")
 	asJSON := fs.Bool("json", false, "print JSON")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: citydiff nodes [-path dir] [-range A..B] [-changed] [-kind k] [-json]\n\nLists every name a tour can use.\n\n")
+		fmt.Fprint(fs.Output(), "Usage: citydiff nodes [-path dir] [-range A..B|REF] [-changed] [-kind k] [-json]\n\nLists every name a tour can use.\n\n")
 		fs.PrintDefaults()
 	}
 	if _, err := parseArgs(fs, args); err != nil {
@@ -178,11 +198,12 @@ func runNodes(args []string, stdout io.Writer) error {
 }
 
 const tourUsage = `Usage:
-  citydiff tour validate [-path dir] [-range A..B] [-json] tour.json
-  citydiff tour serve    [-path dir] [-range A..B] [-addr host:port] tour.json
+  citydiff tour validate [-path dir] [-range A..B|REF] [-json] tour.json
+  citydiff tour serve    [-path dir] [-range A..B|REF] [-addr host:port] tour.json
   citydiff tour schema
 
--range defaults to the script's own "range".
+-range defaults to the script's own "range". One ref names a snapshot:
+  the whole tree at that ref, with nothing to diff against.
 `
 
 func runTour(args []string, stdout, stderr io.Writer) error {
