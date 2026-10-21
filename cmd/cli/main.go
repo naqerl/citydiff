@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -55,6 +56,7 @@ type jsonFileDiff struct {
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if len(os.Args) > 1 {
 		var err error
 		switch os.Args[1] {

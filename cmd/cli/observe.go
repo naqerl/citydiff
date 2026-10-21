@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,6 +82,7 @@ func runObserveServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	slog.Info("hub serving", "addr", ln.Addr().String())
 	fmt.Fprintf(stderr, "citydiff: http://%s\n", ln.Addr())
 	return http.Serve(ln, newHub(store, key).handler())
 }
